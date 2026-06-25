@@ -28,14 +28,14 @@ export default defineConfig({
     host: true,
     port: 5173,
     strictPort: true,
-    allowedHosts: ['dev-agent-rider.aicrmtech.com'],
+    allowedHosts: ['dev-agent-rider.aicrmtech.com', 'hermes-agent-yen.tailf0a6a7.ts.net'],
     proxy: apiProxy,
   },
   preview: {
     host: true,
     port: 5173,
     strictPort: true,
-    allowedHosts: ['dev-agent-rider.aicrmtech.com'],
+    allowedHosts: ['dev-agent-rider.aicrmtech.com', 'hermes-agent-yen.tailf0a6a7.ts.net'],
     proxy: apiProxy,
   },
 })

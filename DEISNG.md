@@ -218,6 +218,17 @@ Future versions may add:
 - better artifact preview
 - workspace switching
 - automation templates
+- Web Terminal
+- Web App preview via iframe for development
+- Resource creation and management
+
+These features should continue to support the same product direction:
+
+- the app starts blank
+- the workspace grows from conversation
+- the hierarchy emerges progressively
+- resources remain reusable and assignable
+- the UI stays calm, readable, and productivity-focused
 
 Those additions should preserve the current principle:
 

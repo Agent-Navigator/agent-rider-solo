@@ -389,6 +389,7 @@ function ConversationCard({
   onCategoryChange,
   onProjectChange,
   onOpenPicker,
+  onClose,
 }: {
   run: RunNode
   turns: TurnItem[]
@@ -401,6 +402,7 @@ function ConversationCard({
   onCategoryChange: (value: string) => void
   onProjectChange: (value: string) => void
   onOpenPicker: () => void
+  onClose: () => void
 }) {
   const [draft, setDraft] = useState('')
   const [askParentId, setAskParentId] = useState<string | null>(null)
@@ -579,6 +581,18 @@ function ConversationCard({
           {isNewDone ? <span className="new-dot" title="New result" /> : null}
         </div>
         <span className={`conv-caret ${collapsed ? '' : 'open'}`} aria-hidden>▾</span>
+        <button
+          type="button"
+          className="card-close"
+          title="Close conversation card"
+          aria-label="Close conversation card"
+          onClick={(event) => {
+            event.stopPropagation()
+            onClose()
+          }}
+        >
+          ×
+        </button>
       </div>
 
       {!collapsed ? (
@@ -643,10 +657,12 @@ function ConversationTreeSidebar({
   tree,
   activeRunId,
   onSelect,
+  onDeleteRequest,
 }: {
   tree: ConversationTreeCategory[]
   activeRunId: string | null
   onSelect: (runId: string) => void
+  onDeleteRequest: (runId: string) => void
 }) {
   const total = tree.reduce((sum, category) => sum + category.projects.reduce((projectSum, project) => projectSum + project.runs.length, 0), 0)
 
@@ -670,16 +686,26 @@ function ConversationTreeSidebar({
                   <div className="tree-nav-label">{project.project}</div>
                   <div className="tree-nav-runs">
                     {project.runs.map((run) => (
-                      <button
-                        key={run.id}
-                        type="button"
-                        className={`tree-nav-run ${activeRunId === run.id ? 'active' : ''}`}
-                        onClick={() => onSelect(run.id)}
-                        aria-current={activeRunId === run.id ? 'true' : undefined}
-                      >
-                        <span className="tree-run-title">{conversationTitle(run)}</span>
-                        <span className={`tree-run-status ${run.jobStatus}`} aria-label={run.jobStatus} title={run.jobStatus} />
-                      </button>
+                      <div key={run.id} className="tree-nav-run-row">
+                        <button
+                          type="button"
+                          className={`tree-nav-run ${activeRunId === run.id ? 'active' : ''}`}
+                          onClick={() => onSelect(run.id)}
+                          aria-current={activeRunId === run.id ? 'true' : undefined}
+                        >
+                          <span className="tree-run-title">{conversationTitle(run)}</span>
+                          <span className={`tree-run-status ${run.jobStatus}`} aria-label={run.jobStatus} title={run.jobStatus} />
+                        </button>
+                        <button
+                          type="button"
+                          className="tree-run-delete card-close"
+                          title="Delete conversation"
+                          aria-label={`Delete ${conversationTitle(run)}`}
+                          onClick={() => onDeleteRequest(run.id)}
+                        >
+                          ×
+                        </button>
+                      </div>
                     ))}
                   </div>
                 </div>
@@ -694,7 +720,43 @@ function ConversationTreeSidebar({
   )
 }
 
-function WebTerminal({ initialCwd }: { initialCwd: string }) {
+function ResourceSidebar({
+  terminalOpen,
+  onLaunchTerminal,
+}: {
+  terminalOpen: boolean
+  onLaunchTerminal: () => void
+}) {
+  return (
+    <nav className="resource-sidebar card" aria-label="Resource view">
+      <div className="sidebar-head">
+        <div>
+          <div className="eyebrow">Resource</div>
+          <h2>Resources</h2>
+        </div>
+      </div>
+
+      <div className="tree-nav">
+        <section className="tree-nav-category">
+          <h3>Tools</h3>
+          <div className="tree-nav-runs">
+            <button
+              type="button"
+              className={`tree-nav-run resource-tool ${terminalOpen ? 'active' : ''}`}
+              onClick={onLaunchTerminal}
+              title={terminalOpen ? 'Local Terminal is open' : 'Launch Local Terminal'}
+            >
+              <span className="tree-run-title">Local Terminal</span>
+              <span className="resource-tool-action">{terminalOpen ? 'Open' : 'Launch'}</span>
+            </button>
+          </div>
+        </section>
+      </div>
+    </nav>
+  )
+}
+
+function WebTerminal({ initialCwd, onClose }: { initialCwd: string; onClose: () => void }) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const terminalRef = useRef<XTermTerminal | null>(null)
   const socketRef = useRef<WebSocket | null>(null)
@@ -800,7 +862,7 @@ function WebTerminal({ initialCwd }: { initialCwd: string }) {
   }
 
   return (
-    <section className={`web-terminal ${terminalCollapsed ? 'collapsed' : ''} ${fullWindow ? 'full-window' : ''}`} aria-label="Web Terminal">
+    <section className={`web-terminal ${terminalCollapsed ? 'collapsed' : ''} ${fullWindow ? 'full-window' : ''}`} aria-label="Local Terminal">
       <div
         className="terminal-head"
         role="button"
@@ -813,8 +875,8 @@ function WebTerminal({ initialCwd }: { initialCwd: string }) {
           ▾
         </span>
         <div>
-          <div className="eyebrow">Hermes Environment</div>
-          <h2>Web Terminal</h2>
+          <div className="eyebrow">Resource · Tools</div>
+          <h2>Local Terminal</h2>
         </div>
         <div className="terminal-actions">
           <span className={`terminal-state ${connectionState}`}>{connectionState}</span>
@@ -839,6 +901,18 @@ function WebTerminal({ initialCwd }: { initialCwd: string }) {
             }}
           >
             Restart
+          </button>
+          <button
+            type="button"
+            className="card-close"
+            title="Close Local Terminal"
+            aria-label="Close Local Terminal"
+            onClick={(event) => {
+              event.stopPropagation()
+              onClose()
+            }}
+          >
+            ×
           </button>
         </div>
       </div>
@@ -1018,8 +1092,15 @@ export default function App() {
   const [workspaceColumns, setWorkspaceColumns] = useState<1 | 2>(1)
   // Which conversation's workspace picker is open (null = closed).
   const [pickerRunId, setPickerRunId] = useState<string | null>(null)
+  const [deletePromptRunId, setDeletePromptRunId] = useState<string | null>(null)
+  // Closed (hidden) conversation cards — re-launchable from the Navigator.
+  const [closedRunIds, setClosedRunIds] = useState<Set<string>>(new Set())
+  // Whether the Local Terminal window is open — re-launchable from Resources.
+  const [terminalOpen, setTerminalOpen] = useState(true)
 
   const hasContent = runs.length > 0
+  // Cards hidden via their close button drop out of the stack but stay in the tree.
+  const visibleRuns = useMemo(() => runs.filter((run) => !closedRunIds.has(run.id)), [runs, closedRunIds])
 
   function toggleCollapse(runId: string) {
     setActiveRunId(runId)
@@ -1106,6 +1187,11 @@ export default function App() {
     return Array.from(set).sort((a, b) => a.localeCompare(b))
   }, [runs])
 
+  const deleteTargetRun = useMemo(
+    () => (deletePromptRunId ? runs.find((run) => run.id === deletePromptRunId) ?? null : null),
+    [deletePromptRunId, runs],
+  )
+
   const conversationTree = useMemo<ConversationTreeCategory[]>(() => {
     const categoryMap = new Map<string, Map<string, RunNode[]>>()
 
@@ -1128,8 +1214,68 @@ export default function App() {
     }))
   }, [runs])
 
+  function closeConversation(runId: string) {
+    setClosedRunIds((current) => {
+      const next = new Set(current)
+      next.add(runId)
+      return next
+    })
+  }
+
+  function requestDeleteConversation(runId: string) {
+    setDeletePromptRunId(runId)
+  }
+
+  function deleteConversation(runId: string) {
+    if (activeRunRef.current === runId) {
+      activeRunRef.current = null
+      activeTurnRef.current = null
+      assistantBufferRef.current = ''
+    }
+
+    if (pickerRunId === runId) {
+      setPickerRunId(null)
+    }
+
+    if (activeRunId === runId) {
+      setActiveRunId(null)
+    }
+
+    sessionByRunRef.current.delete(runId)
+    queuedPromptsRef.current = queuedPromptsRef.current.filter((entry) => entry.runId !== runId)
+    setQueuedCount(queuedPromptsRef.current.length)
+
+    setRuns((current) => current.filter((run) => run.id !== runId))
+    setTurns((current) => current.filter((turn) => turn.runId !== runId))
+    setClosedRunIds((current) => {
+      if (!current.has(runId)) return current
+      const next = new Set(current)
+      next.delete(runId)
+      return next
+    })
+    setCollapsedIds((current) => {
+      if (!current.has(runId)) return current
+      const next = new Set(current)
+      next.delete(runId)
+      return next
+    })
+    setNewDoneIds((current) => {
+      if (!current.has(runId)) return current
+      const next = new Set(current)
+      next.delete(runId)
+      return next
+    })
+  }
+
   function selectConversation(runId: string) {
     setActiveRunId(runId)
+    // Clicking a card in the Navigator re-launches it if it was closed.
+    setClosedRunIds((current) => {
+      if (!current.has(runId)) return current
+      const next = new Set(current)
+      next.delete(runId)
+      return next
+    })
     setCollapsedIds((current) => {
       if (!current.has(runId)) return current
       const next = new Set(current)
@@ -1420,7 +1566,7 @@ export default function App() {
   }
 
   return (
-    <div className={`app-shell ${hasContent ? 'has-content' : 'blank'}`}>
+    <div className={`app-shell ${hasContent ? 'has-content' : 'blank'} ${workspaceColumns === 2 ? 'full-width' : ''}`}>
       <header className="topbar card">
         <div>
           <div className="eyebrow">Hermes chat bridge</div>
@@ -1436,7 +1582,15 @@ export default function App() {
 
       <main className="main-stage">
         <div className="main-layout">
-          <ConversationTreeSidebar tree={conversationTree} activeRunId={activeRunId} onSelect={selectConversation} />
+          <div className="left-rail">
+            <ConversationTreeSidebar
+              tree={conversationTree}
+              activeRunId={activeRunId}
+              onSelect={selectConversation}
+              onDeleteRequest={requestDeleteConversation}
+            />
+            <ResourceSidebar terminalOpen={terminalOpen} onLaunchTerminal={() => setTerminalOpen(true)} />
+          </div>
 
           <section className="conversation-workspace" aria-label="Conversation cards">
             <div className="stack-toolbar">
@@ -1468,12 +1622,16 @@ export default function App() {
             </datalist>
 
             <div className={`workspace-panels columns-${workspaceColumns}`}>
-              <WebTerminal initialCwd={DEFAULT_TERMINAL_CWD} />
+              {terminalOpen ? (
+                <WebTerminal initialCwd={DEFAULT_TERMINAL_CWD} onClose={() => setTerminalOpen(false)} />
+              ) : null}
 
               <div className="conversation-card-column">
-                {hasContent ? (
+                {!hasContent ? (
+                  <div className="conv-empty">Click “New conversation” to begin.</div>
+                ) : visibleRuns.length ? (
                   <div className="conv-stack">
-                    {runs.map((run) => (
+                    {visibleRuns.map((run) => (
                       <ConversationCard
                         key={run.id}
                         run={run}
@@ -1489,17 +1647,54 @@ export default function App() {
                         }
                         onProjectChange={(value) => updateRunProject(run.id, value)}
                         onOpenPicker={() => setPickerRunId(run.id)}
+                        onClose={() => closeConversation(run.id)}
                       />
                     ))}
                   </div>
                 ) : (
-                  <div className="conv-empty">Click “New conversation” to begin.</div>
+                  <div className="conv-empty">All cards closed — reopen one from the Navigator.</div>
                 )}
               </div>
             </div>
           </section>
         </div>
       </main>
+
+      {deleteTargetRun ? (
+        <div className="confirm-overlay" onClick={() => setDeletePromptRunId(null)}>
+          <div className="confirm-dialog card" onClick={(event) => event.stopPropagation()}>
+            <div className="picker-head">
+              <div>
+                <div className="eyebrow">Confirm delete</div>
+                <h3>{conversationTitle(deleteTargetRun)}</h3>
+              </div>
+              <button type="button" className="picker-close" onClick={() => setDeletePromptRunId(null)} aria-label="Close">
+                ×
+              </button>
+            </div>
+
+            <p className="confirm-copy">
+              Delete this conversation and all {turnsByRun.get(deleteTargetRun.id)?.length ?? 0} turn(s)? This cannot be undone.
+            </p>
+
+            <div className="picker-actions confirm-actions">
+              <button type="button" className="picker-cancel" onClick={() => setDeletePromptRunId(null)}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="send-button danger-button"
+                onClick={() => {
+                  deleteConversation(deleteTargetRun.id)
+                  setDeletePromptRunId(null)
+                }}
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {pickerRunId ? (
         <WorkspacePicker
