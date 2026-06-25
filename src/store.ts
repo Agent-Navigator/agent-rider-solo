@@ -31,3 +31,40 @@ export async function persistState(runs: unknown[], turns: unknown[], sessionId:
     // ignore — persistence is best-effort
   }
 }
+
+export interface FsEntry {
+  name: string
+  path: string
+}
+
+export interface FsListing {
+  root: string
+  path: string
+  parent: string | null
+  dirs: FsEntry[]
+}
+
+export async function listDir(path?: string): Promise<FsListing | null> {
+  try {
+    const res = await fetch(`/store/fs/list?path=${encodeURIComponent(path ?? '')}`)
+    if (!res.ok) return null
+    return (await res.json()) as FsListing
+  } catch {
+    return null
+  }
+}
+
+export async function makeDir(parent: string, name: string): Promise<{ path: string } | { error: string }> {
+  try {
+    const res = await fetch('/store/fs/mkdir', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ parent, name }),
+    })
+    const data = (await res.json()) as { path?: string; error?: string }
+    if (!res.ok || !data.path) return { error: data.error || 'Failed to create folder' }
+    return { path: data.path }
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : String(error) }
+  }
+}

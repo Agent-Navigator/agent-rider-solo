@@ -3,8 +3,8 @@
 // Uses Node's built-in node:sqlite (Node >= 22.5). No native deps to compile.
 import { createServer } from 'node:http'
 import { DatabaseSync } from 'node:sqlite'
-import { mkdirSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { mkdirSync, readdirSync, statSync } from 'node:fs'
+import { dirname, join, resolve, basename } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -149,6 +149,62 @@ function sendJson(res, status, payload) {
   res.end(body)
 }
 
+// ── Workspace filesystem browsing ──────────────────────────────────────────
+// Browsing is sandboxed to BROWSE_ROOT to avoid exposing the whole filesystem.
+const BROWSE_ROOT = resolve(process.env.BROWSE_ROOT || '/root')
+
+function safeResolve(input) {
+  const target = resolve(input ? String(input) : BROWSE_ROOT)
+  if (target !== BROWSE_ROOT && !target.startsWith(BROWSE_ROOT + '/')) return null
+  return target
+}
+
+function listDirectory(input) {
+  const path = safeResolve(input)
+  if (!path) return { error: 'path outside allowed root', status: 403 }
+  let stat
+  try {
+    stat = statSync(path)
+  } catch {
+    return { error: 'path not found', status: 404 }
+  }
+  if (!stat.isDirectory()) return { error: 'not a directory', status: 400 }
+
+  let dirs = []
+  try {
+    dirs = readdirSync(path, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.'))
+      .map((entry) => ({ name: entry.name, path: join(path, entry.name) }))
+      .sort((a, b) => a.name.localeCompare(b.name))
+  } catch {
+    return { error: 'cannot read directory', status: 403 }
+  }
+
+  return {
+    root: BROWSE_ROOT,
+    path,
+    parent: path === BROWSE_ROOT ? null : dirname(path),
+    dirs,
+  }
+}
+
+function makeDirectory(parent, name) {
+  const cleanName = String(name || '').trim()
+  if (!cleanName || cleanName.includes('/') || cleanName === '.' || cleanName === '..') {
+    return { error: 'invalid folder name', status: 400 }
+  }
+  const parentPath = safeResolve(parent)
+  if (!parentPath) return { error: 'parent outside allowed root', status: 403 }
+  const target = join(parentPath, cleanName)
+  if (!safeResolve(target)) return { error: 'target outside allowed root', status: 403 }
+  try {
+    mkdirSync(target, { recursive: true })
+  } catch (error) {
+    return { error: String(error?.message || error), status: 400 }
+  }
+  return { path: target, name: basename(target) }
+}
+
 const server = createServer((req, res) => {
   const url = (req.url || '').split('?')[0]
 
@@ -169,6 +225,31 @@ const server = createServer((req, res) => {
       try {
         saveState(JSON.parse(body || '{}'))
         sendJson(res, 200, { ok: true })
+      } catch (error) {
+        sendJson(res, 400, { error: String(error?.message || error) })
+      }
+    })
+    return
+  }
+
+  if (req.method === 'GET' && url === '/store/fs/list') {
+    const query = new URL(req.url, 'http://localhost').searchParams
+    const result = listDirectory(query.get('path') || '')
+    sendJson(res, result.error ? result.status : 200, result)
+    return
+  }
+
+  if (req.method === 'POST' && url === '/store/fs/mkdir') {
+    let body = ''
+    req.on('data', (chunk) => {
+      body += chunk
+      if (body.length > 100_000) req.destroy()
+    })
+    req.on('end', () => {
+      try {
+        const { parent, name } = JSON.parse(body || '{}')
+        const result = makeDirectory(parent, name)
+        sendJson(res, result.error ? result.status : 200, result)
       } catch (error) {
         sendJson(res, 400, { error: String(error?.message || error) })
       }

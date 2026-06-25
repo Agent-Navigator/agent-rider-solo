@@ -33,7 +33,30 @@ export class HermesBridge {
   public lastGatewaySkin: string | null = null
   public sessionInfo: Record<string, unknown> | null = null
 
-  constructor(private readonly defaults: CreateSessionOptions = {}) {}
+  private workspace: string
+
+  constructor(private readonly defaults: CreateSessionOptions = {}) {
+    this.workspace = defaults.cwd ?? DEFAULT_CWD
+  }
+
+  /**
+   * Set the working directory for Hermes sessions. Hermes can't change a live
+   * session's cwd, so if a session already exists and the workspace differs,
+   * the current session is dropped and the next prompt creates a fresh one.
+   * Returns true if the workspace actually changed.
+   */
+  setWorkspace(cwd: string) {
+    const next = (cwd || '').trim() || DEFAULT_CWD
+    if (next === this.workspace) return false
+    this.workspace = next
+    if (this.sessionId) {
+      this.activeSource?.close()
+      this.activeSource = null
+      this.sessionId = null
+      this.sessionInfo = null
+    }
+    return true
+  }
 
   onEvent(listener: Listener) {
     this.listeners.add(listener)
@@ -69,7 +92,7 @@ export class HermesBridge {
   async ensureSession(options: CreateSessionOptions = {}) {
     if (this.sessionId) return this.sessionId
 
-    const workspace = options.cwd ?? this.defaults.cwd ?? DEFAULT_CWD
+    const workspace = options.cwd ?? this.workspace ?? DEFAULT_CWD
     const res = await fetch('/api/session/new', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -95,7 +118,7 @@ export class HermesBridge {
     const sessionId = await this.ensureSession()
     this.setStatus('busy', 'Hermes is running…')
 
-    const workspace = this.defaults.cwd ?? DEFAULT_CWD
+    const workspace = this.workspace ?? DEFAULT_CWD
     const res = await fetch('/api/chat/start', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

@@ -2,7 +2,7 @@ import { type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } 
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { HermesBridge, type HermesConnectionState } from './hermesBridge'
-import { loadPersistedState, persistState } from './store'
+import { loadPersistedState, persistState, listDir, makeDir, type FsListing } from './store'
 
 type JobStatus = 'queued' | 'running' | 'done' | 'error'
 type ResourceHealth = 'Ready' | 'Needs setup' | 'Draft'
@@ -245,20 +245,37 @@ function deriveResources(message: string) {
   return resourceTemplates.filter((template) => template.always || hasAnyTerm(message, template.terms))
 }
 
-function buildRun(prompt: string, index: number) {
-  const category = inferCategory(prompt)
+interface RunOverrides {
+  category?: string
+  project?: string
+  workspace?: string
+}
+
+function tagsForCategory(name: string) {
+  const match = categoryRules.find((rule) => rule.name.toLowerCase() === name.toLowerCase())
+  if (match) return match.tags
+  const slug = slugify(name)
+  return slug ? [slug] : ['custom']
+}
+
+function buildRun(prompt: string, index: number, overrides: RunOverrides = {}) {
+  const inferred = inferCategory(prompt)
+  const categoryName = (overrides.category ?? '').trim() || inferred.name
+  const categoryTags = (overrides.category ?? '').trim() ? tagsForCategory(categoryName) : inferred.tags
+
   const words = importantWords(prompt)
-  const label = titleCase(words.slice(0, 3)) || `${category.name} Flow`
-  const project = `${label} Project`
-  const workspacePath = `${DEFAULT_CWD}/${slugify(project || category.name)}`
+  const label = titleCase(words.slice(0, 3)) || `${categoryName} Flow`
+  const project = (overrides.project ?? '').trim() || `${label} Project`
+
+  const workspacePath = (overrides.workspace ?? '').trim() || `${DEFAULT_CWD}/${slugify(project || categoryName)}`
   const resourceTemplatesMatched = deriveResources(prompt)
 
   return {
     run: {
       id: makeId('run'),
       prompt,
-      category: category.name,
-      categoryTags: category.tags,
+      category: categoryName,
+      categoryTags,
       project,
       workspace: `${project} workspace`,
       workspacePath,
@@ -395,6 +412,128 @@ function isBusyError(error: unknown) {
   return /session busy|subagent still running|busy/i.test(message)
 }
 
+function WorkspacePicker({
+  initialPath,
+  onSelect,
+  onClose,
+}: {
+  initialPath: string
+  onSelect: (path: string) => void
+  onClose: () => void
+}) {
+  const [listing, setListing] = useState<FsListing | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [newName, setNewName] = useState('')
+  const [error, setError] = useState<string | null>(null)
+
+  async function navigate(path?: string) {
+    setLoading(true)
+    setError(null)
+    const result = await listDir(path)
+    if (!result) {
+      setError('Unable to read this folder.')
+      setLoading(false)
+      return
+    }
+    setListing(result)
+    setLoading(false)
+  }
+
+  useEffect(() => {
+    void (async () => {
+      setLoading(true)
+      setError(null)
+      // Fall back to the allowed root if the starting path doesn't exist yet.
+      const result = (await listDir(initialPath)) ?? (await listDir(''))
+      if (!result) {
+        setError('Unable to read this folder.')
+        setLoading(false)
+        return
+      }
+      setListing(result)
+      setLoading(false)
+    })()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  async function createFolder() {
+    if (!listing || !newName.trim()) return
+    const result = await makeDir(listing.path, newName.trim())
+    if ('error' in result) {
+      setError(result.error)
+      return
+    }
+    setNewName('')
+    await navigate(result.path)
+  }
+
+  return (
+    <div className="picker-overlay" onClick={onClose}>
+      <div className="picker" onClick={(event) => event.stopPropagation()}>
+        <div className="picker-head">
+          <div>
+            <div className="eyebrow">Select workspace folder</div>
+            <h3>{listing?.path ?? initialPath}</h3>
+          </div>
+          <button type="button" className="picker-close" onClick={onClose} aria-label="Close">×</button>
+        </div>
+
+        {error ? <p className="error-text">{error}</p> : null}
+
+        <div className="picker-list">
+          {listing?.parent ? (
+            <button type="button" className="picker-row up" onClick={() => navigate(listing.parent!)}>
+              ↑ ..
+            </button>
+          ) : null}
+          {loading ? (
+            <div className="picker-empty">Loading…</div>
+          ) : listing && listing.dirs.length ? (
+            listing.dirs.map((dir) => (
+              <button type="button" key={dir.path} className="picker-row" onClick={() => navigate(dir.path)}>
+                📁 {dir.name}
+              </button>
+            ))
+          ) : (
+            <div className="picker-empty">No subfolders here.</div>
+          )}
+        </div>
+
+        <div className="picker-newfolder">
+          <input
+            value={newName}
+            onChange={(event) => setNewName(event.target.value)}
+            placeholder="New folder name…"
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault()
+                void createFolder()
+              }
+            }}
+          />
+          <button type="button" className="picker-mkdir" onClick={createFolder} disabled={!newName.trim()}>
+            Create
+          </button>
+        </div>
+
+        <div className="picker-actions">
+          <button type="button" className="picker-cancel" onClick={onClose}>
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="send-button"
+            onClick={() => listing && onSelect(listing.path)}
+            disabled={!listing}
+          >
+            Use this folder
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function App() {
   const bridgeRef = useRef<HermesBridge | null>(null)
   const activeTurnRef = useRef<string | null>(null)
@@ -416,7 +555,26 @@ export default function App() {
   const [error, setError] = useState<string | null>(null)
   const [expandedRunId, setExpandedRunId] = useState<string | null>(null)
 
+  // Editable active context applied to the next prompt's run.
+  const [activeCategory, setActiveCategory] = useState('')
+  const [activeProject, setActiveProject] = useState('')
+  const [activeWorkspace, setActiveWorkspace] = useState(DEFAULT_CWD)
+  const [pickerOpen, setPickerOpen] = useState(false)
+
   const hasContent = runs.length > 0
+
+  // Known values for the Category/Project comboboxes: built-ins + anything seen in history.
+  const knownCategories = useMemo(() => {
+    const set = new Set<string>(categoryRules.map((rule) => rule.name))
+    for (const run of runs) if (run.category) set.add(run.category)
+    return Array.from(set).sort((a, b) => a.localeCompare(b))
+  }, [runs])
+
+  const knownProjects = useMemo(() => {
+    const set = new Set<string>()
+    for (const run of runs) if (run.project) set.add(run.project)
+    return Array.from(set).sort((a, b) => a.localeCompare(b))
+  }, [runs])
 
   useEffect(() => {
     const bridge = new HermesBridge({ title: DEFAULT_TITLE, cwd: DEFAULT_CWD, source: 'web' })
@@ -534,7 +692,17 @@ export default function App() {
       if (cancelled) return
       if (state) {
         // Merge defensively: never clobber content the user already created this session.
-        if (state.runs.length) setRuns((current) => (current.length ? current : (state.runs as RunNode[])))
+        if (state.runs.length) {
+          const restored = state.runs as RunNode[]
+          setRuns((current) => (current.length ? current : restored))
+          // Seed the editable context from the most recent persisted run.
+          const last = restored[restored.length - 1]
+          if (last) {
+            setActiveCategory(last.category ?? '')
+            setActiveProject(last.project ?? '')
+            if (last.workspacePath) setActiveWorkspace(last.workspacePath)
+          }
+        }
         if (state.turns.length) setTurns((current) => (current.length ? current : (state.turns as TurnItem[])))
       }
       hydratedRef.current = true
@@ -552,6 +720,17 @@ export default function App() {
     }, 700)
     return () => clearTimeout(handle)
   }, [runs, turns, sessionId])
+
+  // Workspace drives the Hermes cwd. Changing it starts a fresh session on the next prompt.
+  useEffect(() => {
+    const bridge = bridgeRef.current
+    if (!bridge) return
+    const changed = bridge.setWorkspace(activeWorkspace)
+    if (changed) {
+      setSessionId(null)
+      setSessionInfoText(`Workspace set to ${activeWorkspace}`)
+    }
+  }, [activeWorkspace])
 
   const summaryLine = useMemo(() => {
     if (!initialized) return 'Preparing Hermes bridge…'
@@ -612,7 +791,16 @@ export default function App() {
     if (!bridge) return
 
     const existingIndex = turns.length
-    const { run, resources: matchedTemplates } = buildRun(prompt, existingIndex)
+    const { run, resources: matchedTemplates } = buildRun(prompt, existingIndex, {
+      category: activeCategory,
+      project: activeProject,
+      workspace: activeWorkspace,
+    })
+
+    // Reflect resolved category/project back so they persist for the next prompt.
+    // Workspace is left untouched — it only changes when the user explicitly picks a folder.
+    setActiveCategory(run.category)
+    setActiveProject(run.project)
 
     const turnId = makeId('turn')
     const turn: TurnItem = {
@@ -680,7 +868,6 @@ export default function App() {
   }
 
   const conversation = turns
-  const latestRun = runs[runs.length - 1] ?? null
 
   return (
     <div className={`app-shell ${hasContent ? 'has-content' : 'blank'}`}>
@@ -723,22 +910,45 @@ export default function App() {
                   <StatusPill state={connectionState} detail={connectionDetail} />
                 </div>
 
-                {latestRun ? (
-                  <div className="conv-meta">
-                    <div className="conv-meta-row">
-                      <span className="tree-label">Category</span>
-                      <strong className="tree-value">{latestRun.category}</strong>
-                    </div>
-                    <div className="conv-meta-row">
-                      <span className="tree-label">Project</span>
-                      <strong className="tree-value">{latestRun.project}</strong>
-                    </div>
-                    <div className="conv-meta-row">
-                      <span className="tree-label">Workspace</span>
-                      <strong className="tree-value">{latestRun.workspacePath}</strong>
-                    </div>
+                <div className="conv-meta">
+                  <div className="conv-meta-row">
+                    <span className="tree-label">Category</span>
+                    <input
+                      className="conv-input"
+                      list="known-categories"
+                      value={activeCategory}
+                      onChange={(event) => setActiveCategory(event.target.value)}
+                      placeholder="Auto from prompt — or type / pick"
+                    />
                   </div>
-                ) : null}
+                  <div className="conv-meta-row">
+                    <span className="tree-label">Project</span>
+                    <input
+                      className="conv-input"
+                      list="known-projects"
+                      value={activeProject}
+                      onChange={(event) => setActiveProject(event.target.value)}
+                      placeholder="Auto from prompt — or type / pick"
+                    />
+                  </div>
+                  <div className="conv-meta-row">
+                    <span className="tree-label">Workspace</span>
+                    <button type="button" className="conv-workspace-btn" onClick={() => setPickerOpen(true)} title={activeWorkspace}>
+                      <span className="conv-workspace-path">{activeWorkspace}</span>
+                      <span className="conv-workspace-action">Change…</span>
+                    </button>
+                  </div>
+                  <datalist id="known-categories">
+                    {knownCategories.map((name) => (
+                      <option key={name} value={name} />
+                    ))}
+                  </datalist>
+                  <datalist id="known-projects">
+                    {knownProjects.map((name) => (
+                      <option key={name} value={name} />
+                    ))}
+                  </datalist>
+                </div>
 
                 <div className="conversation-feed">
                   {conversation.map((turn) => (
@@ -842,6 +1052,17 @@ export default function App() {
             </div>
           </form>
         </footer>
+      ) : null}
+
+      {pickerOpen ? (
+        <WorkspacePicker
+          initialPath={activeWorkspace}
+          onSelect={(path) => {
+            setActiveWorkspace(path)
+            setPickerOpen(false)
+          }}
+          onClose={() => setPickerOpen(false)}
+        />
       ) : null}
     </div>
   )
