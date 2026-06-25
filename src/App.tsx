@@ -1,6 +1,9 @@
-import { type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
+import { type FormEvent, type KeyboardEvent, type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { FitAddon } from '@xterm/addon-fit'
+import { Terminal as XTermTerminal } from '@xterm/xterm'
+import '@xterm/xterm/css/xterm.css'
 import { HermesBridge, type HermesConnectionState } from './hermesBridge'
 import { loadPersistedState, persistState, listDir, makeDir, type FsListing } from './store'
 
@@ -41,7 +44,13 @@ interface TurnItem {
   response: string
   status: JobStatus
   runId: string
+  parentTurnId?: string | null
   createdAt: string
+}
+
+interface TurnTreeNode {
+  turn: TurnItem
+  children: TurnTreeNode[]
 }
 
 interface QueuedPromptEntry {
@@ -77,6 +86,7 @@ interface ConversationTreeCategory {
 }
 
 const DEFAULT_CWD = '/root/agent-work/DEV/agent-rider'
+const DEFAULT_TERMINAL_CWD = '/root'
 const DEFAULT_TITLE = 'Agent Rider'
 
 const categoryRules: CategoryRule[] = [
@@ -188,6 +198,23 @@ function compactText(value: string, max = 96) {
   return `${normalized.slice(0, max - 1)}…`
 }
 
+async function copyToClipboard(value: string) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(value)
+    return
+  }
+
+  const textarea = document.createElement('textarea')
+  textarea.value = value
+  textarea.setAttribute('readonly', '')
+  textarea.style.position = 'fixed'
+  textarea.style.opacity = '0'
+  document.body.appendChild(textarea)
+  textarea.select()
+  document.execCommand('copy')
+  document.body.removeChild(textarea)
+}
+
 function titleCase(words: string[]) {
   if (!words.length) return ''
   return words.map((word) => `${word.charAt(0).toUpperCase()}${word.slice(1)}`).join(' ')
@@ -297,6 +324,27 @@ function conversationTitle(run: RunNode) {
   return run.task.trim() || run.project.trim() || compactText(run.prompt, 48) || 'Untitled conversation'
 }
 
+function buildTurnTree(turns: TurnItem[]) {
+  const nodes = new Map<string, TurnTreeNode>()
+  const roots: TurnTreeNode[] = []
+
+  for (const turn of turns) {
+    nodes.set(turn.id, { turn, children: [] })
+  }
+
+  for (const turn of turns) {
+    const node = nodes.get(turn.id)
+    if (!node) continue
+
+    const parentId = turn.parentTurnId ?? null
+    const parent = parentId ? nodes.get(parentId) : null
+    if (parent) parent.children.push(node)
+    else roots.push(node)
+  }
+
+  return roots
+}
+
 function timeLabel(iso: string) {
   return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 }
@@ -335,58 +383,33 @@ function ConversationCard({
   collapsed,
   active,
   isNewDone,
-  dragging,
-  dragOver,
   onToggle,
   onSend,
   onTitleChange,
   onCategoryChange,
   onProjectChange,
   onOpenPicker,
-  onDragStart,
-  onDragEnd,
-  onDragOver,
-  onDrop,
 }: {
   run: RunNode
   turns: TurnItem[]
   collapsed: boolean
   active: boolean
   isNewDone: boolean
-  dragging: boolean
-  dragOver: boolean
   onToggle: () => void
-  onSend: (text: string) => void
+  onSend: (text: string, parentTurnId?: string | null) => void
   onTitleChange: (value: string) => void
   onCategoryChange: (value: string) => void
   onProjectChange: (value: string) => void
   onOpenPicker: () => void
-  onDragStart: () => void
-  onDragEnd: () => void
-  onDragOver: () => void
-  onDrop: () => void
 }) {
   const [draft, setDraft] = useState('')
-  // Past turns auto-collapse to keep the card short; only the latest stays open
-  // unless the user manually expands an earlier one.
-  const [expandedTurns, setExpandedTurns] = useState<Set<string>>(new Set())
+  const [askParentId, setAskParentId] = useState<string | null>(null)
+  const [askDraft, setAskDraft] = useState('')
+  const [copiedTurnId, setCopiedTurnId] = useState<string | null>(null)
+  const [collapsedTurnIds, setCollapsedTurnIds] = useState<Set<string>>(new Set())
+  const turnTree = useMemo(() => buildTurnTree(turns), [turns])
   const status = run.jobStatus
   const isDraft = turns.length === 0
-  const lastTurnId = turns.length ? turns[turns.length - 1].id : null
-
-  // When a new turn arrives, re-collapse everything except the new latest turn.
-  useEffect(() => {
-    setExpandedTurns(new Set())
-  }, [lastTurnId])
-
-  function toggleTurn(id: string) {
-    setExpandedTurns((current) => {
-      const next = new Set(current)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
-  }
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -396,30 +419,144 @@ function ConversationCard({
     onSend(text)
   }
 
+  function toggleTurnCollapsed(turnId: string) {
+    setCollapsedTurnIds((current) => {
+      const next = new Set(current)
+      if (next.has(turnId)) next.delete(turnId)
+      else next.add(turnId)
+      return next
+    })
+    if (askParentId === turnId) {
+      setAskParentId(null)
+      setAskDraft('')
+    }
+  }
+
+  function toggleTurnFromKey(event: KeyboardEvent<HTMLDivElement>, turnId: string) {
+    if (event.key !== 'Enter' && event.key !== ' ') return
+    event.preventDefault()
+    toggleTurnCollapsed(turnId)
+  }
+
+  function submitAskMore(event: FormEvent<HTMLFormElement>, parentTurnId: string) {
+    event.preventDefault()
+    const text = askDraft.trim()
+    if (!text) return
+    setAskDraft('')
+    setAskParentId(null)
+    onSend(text, parentTurnId)
+  }
+
+  async function copyPrompt(turn: TurnItem) {
+    try {
+      await copyToClipboard(turn.prompt)
+      setCopiedTurnId(turn.id)
+      window.setTimeout(() => {
+        setCopiedTurnId((current) => (current === turn.id ? null : current))
+      }, 1200)
+    } catch {
+      // Clipboard access can be blocked by browser settings.
+    }
+  }
+
+  function renderTurnNode(node: TurnTreeNode, depth = 0): ReactNode {
+    const { turn, children } = node
+    const canAskMore = turn.status !== 'running' && turn.status !== 'queued'
+    const isTurnCollapsed = collapsedTurnIds.has(turn.id)
+
+    return (
+      <div key={turn.id} className={`turn-node depth-${Math.min(depth, 4)}`}>
+        <article className={`turn ${turn.status} ${isTurnCollapsed ? 'collapsed' : ''}`}>
+          <div
+            className={`bubble user turn-toggle ${isTurnCollapsed ? 'collapsed' : ''}`}
+            role="button"
+            tabIndex={0}
+            aria-expanded={!isTurnCollapsed}
+            onClick={() => toggleTurnCollapsed(turn.id)}
+            onKeyDown={(event) => toggleTurnFromKey(event, turn.id)}
+          >
+            <div className="bubble-head">
+              <span className="role-group">
+                <span className={`turn-toggle-caret ${isTurnCollapsed ? '' : 'open'}`} aria-hidden>
+                  ▾
+                </span>
+                <span className="role">You</span>
+              </span>
+              <button
+                type="button"
+                className="copy-prompt-button"
+                onKeyDown={(event) => event.stopPropagation()}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  void copyPrompt(turn)
+                }}
+              >
+                {copiedTurnId === turn.id ? 'Copied' : 'Copy'}
+              </button>
+            </div>
+            <p>{turn.prompt}</p>
+          </div>
+          {!isTurnCollapsed ? (
+            <div className="bubble assistant">
+              <span className="role">Hermes · {turnRoleLabel(turn.status)}</span>
+              <div className="md-body">
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{turn.response || '…'}</ReactMarkdown>
+              </div>
+              <div className="assistant-actions">
+                <button
+                  type="button"
+                  className="ask-more-button"
+                  disabled={!canAskMore}
+                  onClick={() => {
+                    setAskParentId(turn.id)
+                    setAskDraft('')
+                  }}
+                >
+                  Ask More
+                </button>
+              </div>
+              {askParentId === turn.id ? (
+                <form className="ask-more-form" onSubmit={(event) => submitAskMore(event, turn.id)}>
+                  <textarea
+                    value={askDraft}
+                    onChange={(event) => setAskDraft(event.target.value)}
+                    placeholder="Ask a follow-up from this reply…"
+                    rows={2}
+                    autoFocus
+                  />
+                  <div className="ask-more-controls">
+                    <button
+                      type="button"
+                      className="ask-more-cancel"
+                      onClick={() => {
+                        setAskParentId(null)
+                        setAskDraft('')
+                      }}
+                    >
+                      Cancel
+                    </button>
+                    <button type="submit" className="send-button">
+                      Send
+                    </button>
+                  </div>
+                </form>
+              ) : null}
+            </div>
+          ) : null}
+        </article>
+        {!isTurnCollapsed && children.length ? (
+          <div className="turn-children">{children.map((child) => renderTurnNode(child, depth + 1))}</div>
+        ) : null}
+      </div>
+    )
+  }
+
   return (
     <article
       id={`conversation-${run.id}`}
-      className={`conv-card ${dragging ? 'dragging' : ''} ${dragOver ? 'drag-over' : ''} ${collapsed ? 'collapsed' : ''} ${active ? 'active' : ''}`}
-      onDragOver={(event) => {
-        event.preventDefault()
-        onDragOver()
-      }}
-      onDrop={(event) => {
-        event.preventDefault()
-        onDrop()
-      }}
+      className={`conv-card ${collapsed ? 'collapsed' : ''} ${active ? 'active' : ''}`}
     >
       <div className="conv-card-head" onClick={onToggle}>
-        <span
-          className="conv-drag"
-          draggable
-          onClick={(event) => event.stopPropagation()}
-          onDragStart={onDragStart}
-          onDragEnd={onDragEnd}
-          title="Drag to reorder"
-        >
-          ⠿
-        </span>
         <div className="conv-card-titles">
           <span className="eyebrow">
             {timeLabel(run.createdAt)}
@@ -478,37 +615,7 @@ function ConversationCard({
 
           {turns.length ? (
             <div className="conversation-feed">
-              {turns.map((turn) => {
-                const open = turn.id === lastTurnId || expandedTurns.has(turn.id)
-                if (!open) {
-                  return (
-                    <button key={turn.id} type="button" className="turn-collapsed" onClick={() => toggleTurn(turn.id)}>
-                      <span className="turn-collapsed-role">You</span>
-                      <span className="turn-collapsed-text">{turn.prompt}</span>
-                      <span className="turn-collapsed-caret">▾</span>
-                    </button>
-                  )
-                }
-                return (
-                  <article key={turn.id} className={`turn ${turn.status}`}>
-                    <div className="bubble user">
-                      <span className="role">You</span>
-                      <p>{turn.prompt}</p>
-                    </div>
-                    <div className="bubble assistant">
-                      <span className="role">Hermes · {turnRoleLabel(turn.status)}</span>
-                      <div className="md-body">
-                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{turn.response || '…'}</ReactMarkdown>
-                      </div>
-                    </div>
-                    {turn.id !== lastTurnId ? (
-                      <button type="button" className="turn-collapse-link" onClick={() => toggleTurn(turn.id)}>
-                        Collapse turn
-                      </button>
-                    ) : null}
-                  </article>
-                )
-              })}
+              {turnTree.map((node) => renderTurnNode(node))}
             </div>
           ) : null}
 
@@ -584,6 +691,175 @@ function ConversationTreeSidebar({
         <div className="tree-empty">No conversations</div>
       )}
     </nav>
+  )
+}
+
+function WebTerminal({ initialCwd }: { initialCwd: string }) {
+  const containerRef = useRef<HTMLDivElement | null>(null)
+  const terminalRef = useRef<XTermTerminal | null>(null)
+  const socketRef = useRef<WebSocket | null>(null)
+  const fitRef = useRef<() => void>(() => {})
+  const [connectionState, setConnectionState] = useState<'connecting' | 'connected' | 'closed' | 'error'>('connecting')
+  const [terminalKey, setTerminalKey] = useState(0)
+  const [terminalCollapsed, setTerminalCollapsed] = useState(false)
+  const [fullWindow, setFullWindow] = useState(false)
+
+  useEffect(() => {
+    const container = containerRef.current
+    if (!container) return
+
+    const terminal = new XTermTerminal({
+      cursorBlink: true,
+      convertEol: true,
+      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+      fontSize: 13,
+      lineHeight: 1.3,
+      scrollback: 5000,
+      theme: {
+        background: '#050a12',
+        foreground: '#d7e7f8',
+        cursor: '#79b9ff',
+        selectionBackground: '#1d4ed8',
+      },
+    })
+    const fitAddon = new FitAddon()
+    terminal.loadAddon(fitAddon)
+    terminal.open(container)
+    terminal.focus()
+    terminalRef.current = terminal
+
+    const fit = () => {
+      try {
+        fitAddon.fit()
+        if (socketRef.current?.readyState === WebSocket.OPEN) {
+          socketRef.current.send(JSON.stringify({ type: 'resize', cols: terminal.cols, rows: terminal.rows }))
+        }
+      } catch {
+        // The terminal can be temporarily unmeasurable during layout changes.
+      }
+    }
+    fitRef.current = fit
+
+    window.requestAnimationFrame(fit)
+
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+    const socket = new WebSocket(
+      `${protocol}//${window.location.host}/store/terminal/ws?cwd=${encodeURIComponent(initialCwd)}&cols=${terminal.cols}&rows=${terminal.rows}`,
+    )
+    socketRef.current = socket
+    setConnectionState('connecting')
+
+    const inputDisposable = terminal.onData((data) => {
+      if (socket.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({ type: 'input', data }))
+      }
+    })
+
+    const resizeObserver = new ResizeObserver(fit)
+    resizeObserver.observe(container)
+    window.addEventListener('resize', fit)
+
+    socket.addEventListener('open', () => {
+      setConnectionState('connected')
+      fit()
+    })
+    socket.addEventListener('message', (event) => {
+      if (typeof event.data === 'string') {
+        terminal.write(event.data)
+        return
+      }
+      if (event.data instanceof Blob) {
+        void event.data.text().then((text) => terminal.write(text))
+      }
+    })
+    socket.addEventListener('close', () => setConnectionState('closed'))
+    socket.addEventListener('error', () => {
+      setConnectionState('error')
+      terminal.writeln('\r\n\x1b[31mTerminal connection error\x1b[0m')
+    })
+
+    return () => {
+      resizeObserver.disconnect()
+      window.removeEventListener('resize', fit)
+      inputDisposable.dispose()
+      socket.close()
+      terminal.dispose()
+      if (socketRef.current === socket) socketRef.current = null
+      if (terminalRef.current === terminal) terminalRef.current = null
+    }
+  }, [initialCwd, terminalKey])
+
+  useEffect(() => {
+    if (!terminalCollapsed) window.requestAnimationFrame(() => fitRef.current())
+  }, [terminalCollapsed, fullWindow, terminalKey])
+
+  function toggleTerminalFromKey(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.key !== 'Enter' && event.key !== ' ') return
+    event.preventDefault()
+    setTerminalCollapsed((current) => !current)
+  }
+
+  return (
+    <section className={`web-terminal ${terminalCollapsed ? 'collapsed' : ''} ${fullWindow ? 'full-window' : ''}`} aria-label="Web Terminal">
+      <div
+        className="terminal-head"
+        role="button"
+        tabIndex={0}
+        aria-expanded={!terminalCollapsed}
+        onClick={() => setTerminalCollapsed((current) => !current)}
+        onKeyDown={toggleTerminalFromKey}
+      >
+        <span className={`terminal-caret ${terminalCollapsed ? '' : 'open'}`} aria-hidden>
+          ▾
+        </span>
+        <div>
+          <div className="eyebrow">Hermes Environment</div>
+          <h2>Web Terminal</h2>
+        </div>
+        <div className="terminal-actions">
+          <span className={`terminal-state ${connectionState}`}>{connectionState}</span>
+          <button
+            type="button"
+            className="terminal-icon-button"
+            title={fullWindow ? 'Exit full window' : 'Expand to full window'}
+            aria-label={fullWindow ? 'Exit full window' : 'Expand to full window'}
+            onClick={(event) => {
+              event.stopPropagation()
+              setFullWindow((current) => !current)
+            }}
+          >
+            {fullWindow ? '↙' : '⛶'}
+          </button>
+          <button
+            type="button"
+            className="terminal-clear"
+            onClick={(event) => {
+              event.stopPropagation()
+              setTerminalKey((current) => current + 1)
+            }}
+          >
+            Restart
+          </button>
+        </div>
+      </div>
+
+      <div className="terminal-body" aria-hidden={terminalCollapsed}>
+        <div
+          className="terminal-screen"
+          ref={containerRef}
+          role="application"
+          aria-label="Interactive shell terminal"
+          onClick={() => terminalRef.current?.focus()}
+        />
+
+        <div className="terminal-footer">
+          <span>{initialCwd === DEFAULT_TERMINAL_CWD ? '~/' : initialCwd}</span>
+          <button type="button" className="terminal-clear" onClick={() => terminalRef.current?.clear()}>
+            Clear
+          </button>
+        </div>
+      </div>
+    </section>
   )
 }
 
@@ -739,8 +1015,7 @@ export default function App() {
   const [collapsedIds, setCollapsedIds] = useState<Set<string>>(new Set())
   const [newDoneIds, setNewDoneIds] = useState<Set<string>>(new Set())
   const [activeRunId, setActiveRunId] = useState<string | null>(null)
-  const [dragId, setDragId] = useState<string | null>(null)
-  const [dragOverId, setDragOverId] = useState<string | null>(null)
+  const [workspaceColumns, setWorkspaceColumns] = useState<1 | 2>(1)
   // Which conversation's workspace picker is open (null = closed).
   const [pickerRunId, setPickerRunId] = useState<string | null>(null)
 
@@ -759,19 +1034,6 @@ export default function App() {
       if (!current.has(runId)) return current
       const next = new Set(current)
       next.delete(runId)
-      return next
-    })
-  }
-
-  function reorderRuns(draggedId: string, targetId: string) {
-    if (draggedId === targetId) return
-    setRuns((current) => {
-      const from = current.findIndex((run) => run.id === draggedId)
-      const to = current.findIndex((run) => run.id === targetId)
-      if (from === -1 || to === -1) return current
-      const next = [...current]
-      const [moved] = next.splice(from, 1)
-      next.splice(to, 0, moved)
       return next
     })
   }
@@ -1106,7 +1368,7 @@ export default function App() {
     void startTurn(entry)
   }
 
-  function newTurn(runId: string, prompt: string): { turn: TurnItem; turnId: string } {
+  function newTurn(runId: string, prompt: string, parentTurnId: string | null = null): { turn: TurnItem; turnId: string } {
     const turnId = makeId('turn')
     return {
       turnId,
@@ -1116,6 +1378,7 @@ export default function App() {
         response: 'Thinking…',
         status: 'running',
         runId,
+        parentTurnId,
         createdAt: new Date().toISOString(),
       },
     }
@@ -1123,7 +1386,7 @@ export default function App() {
 
   // Send a message inside a conversation card. The first turn derives the
   // card's metadata from the prompt (honoring any context the user set).
-  function sendInConversation(runId: string, prompt: string) {
+  function sendInConversation(runId: string, prompt: string, parentTurnId: string | null = null) {
     if (!bridgeRef.current) {
       setError('Hermes bridge is not ready yet.')
       return
@@ -1150,7 +1413,7 @@ export default function App() {
       setRuns((current) => current.map((item) => (item.id === runId ? { ...item, jobStatus: 'running' } : item)))
     }
 
-    const { turn, turnId } = newTurn(runId, prompt)
+    const { turn, turnId } = newTurn(runId, prompt, parentTurnId)
     setTurns((current) => [turn, ...current])
     setError(null)
     enqueueOrStart({ turnId, runId, prompt, workspace })
@@ -1180,6 +1443,15 @@ export default function App() {
               <button type="button" className="send-button new-conversation-btn" onClick={startNewConversation}>
                 + New conversation
               </button>
+              <button
+                type="button"
+                className="layout-toggle-button"
+                title={workspaceColumns === 1 ? 'Switch to two columns' : 'Switch to one column'}
+                aria-label={workspaceColumns === 1 ? 'Switch to two columns' : 'Switch to one column'}
+                onClick={() => setWorkspaceColumns((current) => (current === 1 ? 2 : 1))}
+              >
+                {workspaceColumns === 1 ? '▥' : '▤'}
+              </button>
               {error ? <span className="error-text inline">{error}</span> : null}
             </div>
 
@@ -1195,43 +1467,36 @@ export default function App() {
               ))}
             </datalist>
 
-            {hasContent ? (
-              <div className="conv-stack">
-                {runs.map((run) => (
-                  <ConversationCard
-                    key={run.id}
-                    run={run}
-                    turns={turnsByRun.get(run.id) ?? []}
-                    collapsed={collapsedIds.has(run.id)}
-                    active={activeRunId === run.id}
-                    isNewDone={newDoneIds.has(run.id)}
-                    dragging={dragId === run.id}
-                    dragOver={dragOverId === run.id && dragId !== run.id}
-                    onToggle={() => toggleCollapse(run.id)}
-                    onSend={(text) => sendInConversation(run.id, text)}
-                    onTitleChange={(value) => updateRunContext(run.id, { task: value })}
-                    onCategoryChange={(value) =>
-                      updateRunContext(run.id, { category: value, categoryTags: tagsForCategory(value) })
-                    }
-                    onProjectChange={(value) => updateRunProject(run.id, value)}
-                    onOpenPicker={() => setPickerRunId(run.id)}
-                    onDragStart={() => setDragId(run.id)}
-                    onDragEnd={() => {
-                      setDragId(null)
-                      setDragOverId(null)
-                    }}
-                    onDragOver={() => setDragOverId(run.id)}
-                    onDrop={() => {
-                      if (dragId) reorderRuns(dragId, run.id)
-                      setDragId(null)
-                      setDragOverId(null)
-                    }}
-                  />
-                ))}
+            <div className={`workspace-panels columns-${workspaceColumns}`}>
+              <WebTerminal initialCwd={DEFAULT_TERMINAL_CWD} />
+
+              <div className="conversation-card-column">
+                {hasContent ? (
+                  <div className="conv-stack">
+                    {runs.map((run) => (
+                      <ConversationCard
+                        key={run.id}
+                        run={run}
+                        turns={turnsByRun.get(run.id) ?? []}
+                        collapsed={collapsedIds.has(run.id)}
+                        active={activeRunId === run.id}
+                        isNewDone={newDoneIds.has(run.id)}
+                        onToggle={() => toggleCollapse(run.id)}
+                        onSend={(text, parentTurnId) => sendInConversation(run.id, text, parentTurnId ?? null)}
+                        onTitleChange={(value) => updateRunContext(run.id, { task: value })}
+                        onCategoryChange={(value) =>
+                          updateRunContext(run.id, { category: value, categoryTags: tagsForCategory(value) })
+                        }
+                        onProjectChange={(value) => updateRunProject(run.id, value)}
+                        onOpenPicker={() => setPickerRunId(run.id)}
+                      />
+                    ))}
+                  </div>
+                ) : (
+                  <div className="conv-empty">Click “New conversation” to begin.</div>
+                )}
               </div>
-            ) : (
-              <div className="conv-empty">Click “New conversation” to begin.</div>
-            )}
+            </div>
           </section>
         </div>
       </main>

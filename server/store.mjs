@@ -2,16 +2,20 @@
 // Stores interaction data (runs + conversation turns) so they survive reloads.
 // Uses Node's built-in node:sqlite (Node >= 22.5). No native deps to compile.
 import { createServer } from 'node:http'
+import { spawn } from 'node:child_process'
 import { DatabaseSync } from 'node:sqlite'
 import { mkdirSync, readdirSync, statSync } from 'node:fs'
 import { dirname, join, resolve, basename } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import * as pty from 'node-pty'
+import { WebSocket, WebSocketServer } from 'ws'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const DB_DIR = join(__dirname, '..', 'data')
 mkdirSync(DB_DIR, { recursive: true })
 const DB_PATH = join(DB_DIR, 'agent-rider.db')
 const PORT = Number(process.env.STORE_PORT || 5174)
+const DEFAULT_CWD = resolve(process.env.HOME || '/root')
 
 const db = new DatabaseSync(DB_PATH)
 db.exec(`
@@ -36,6 +40,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS turns (
     id TEXT PRIMARY KEY,
     run_id TEXT,
+    parent_turn_id TEXT,
     session_id TEXT,
     prompt TEXT,
     response TEXT,
@@ -48,6 +53,11 @@ db.exec(`
 // Migration: add sort_index to pre-existing DBs (ignore if it already exists).
 try {
   db.exec('ALTER TABLE runs ADD COLUMN sort_index INTEGER')
+} catch {
+  // column already present
+}
+try {
+  db.exec('ALTER TABLE turns ADD COLUMN parent_turn_id TEXT')
 } catch {
   // column already present
 }
@@ -64,10 +74,11 @@ const upsertRun = db.prepare(`
     created_at = excluded.created_at, updated_at = excluded.updated_at
 `)
 const upsertTurn = db.prepare(`
-  INSERT INTO turns (id, run_id, session_id, prompt, response, status, created_at, updated_at)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  INSERT INTO turns (id, run_id, parent_turn_id, session_id, prompt, response, status, created_at, updated_at)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   ON CONFLICT(id) DO UPDATE SET
-    run_id = excluded.run_id, session_id = excluded.session_id, prompt = excluded.prompt,
+    run_id = excluded.run_id, parent_turn_id = excluded.parent_turn_id,
+    session_id = excluded.session_id, prompt = excluded.prompt,
     response = excluded.response, status = excluded.status,
     created_at = excluded.created_at, updated_at = excluded.updated_at
 `)
@@ -104,6 +115,7 @@ function turnRowToApi(t) {
   return {
     id: t.id,
     runId: t.run_id,
+    parentTurnId: t.parent_turn_id || null,
     prompt: t.prompt,
     response: t.response,
     status: t.status,
@@ -139,6 +151,7 @@ function saveState({ runs = [], turns = [], sessionId = null }) {
       upsertTurn.run(
         String(t.id),
         t.runId ?? '',
+        t.parentTurnId ?? null,
         sessionId,
         t.prompt ?? '',
         t.response ?? '',
@@ -216,6 +229,149 @@ function makeDirectory(parent, name) {
   return { path: target, name: basename(target) }
 }
 
+function parseTerminalOutput(output, fallbackCwd) {
+  const exitMatch = output.match(/\n?__AGENT_RIDER_EXIT__(\d+)\n?/)
+  const cwdMatch = output.match(/\n?__AGENT_RIDER_CWD__(.*)\n?$/)
+  const markerIndex = output.indexOf('__AGENT_RIDER_EXIT__')
+  const cleanOutput = markerIndex >= 0 ? output.slice(0, markerIndex).replace(/\n+$/, '') : output.replace(/\n+$/, '')
+
+  return {
+    output: cleanOutput,
+    exitCode: exitMatch ? Number(exitMatch[1]) : null,
+    nextCwd: cwdMatch?.[1]?.trim() || fallbackCwd,
+  }
+}
+
+function runTerminalCommand({ command, cwd }) {
+  const cleanCommand = String(command || '').trim()
+  const startCwd = safeResolve(cwd || DEFAULT_CWD) || DEFAULT_CWD
+  if (!cleanCommand) return Promise.resolve({ output: '', exitCode: 0, cwd: startCwd, nextCwd: startCwd, timedOut: false })
+
+  return new Promise((resolveCommand) => {
+    const script = `${cleanCommand}
+__agent_rider_status=$?
+printf '\\n__AGENT_RIDER_EXIT__%s\\n' "$__agent_rider_status"
+printf '__AGENT_RIDER_CWD__%s\\n' "$PWD"
+exit "$__agent_rider_status"
+`
+    const child = spawn('/bin/bash', ['-lc', script], {
+      cwd: startCwd,
+      env: { ...process.env, TERM: process.env.TERM || 'xterm-256color' },
+    })
+    let output = ''
+    let timedOut = false
+    const maxOutput = 500_000
+
+    const appendOutput = (chunk) => {
+      output += chunk.toString()
+      if (output.length > maxOutput) {
+        output = `${output.slice(0, maxOutput)}\n[output truncated]\n`
+        child.kill('SIGTERM')
+      }
+    }
+
+    const timeout = setTimeout(() => {
+      timedOut = true
+      child.kill('SIGTERM')
+    }, 120_000)
+
+    child.stdout.on('data', appendOutput)
+    child.stderr.on('data', appendOutput)
+    child.on('error', (error) => {
+      clearTimeout(timeout)
+      resolveCommand({
+        output: String(error?.message || error),
+        exitCode: 1,
+        cwd: startCwd,
+        nextCwd: startCwd,
+        timedOut,
+      })
+    })
+    child.on('close', (code, signal) => {
+      clearTimeout(timeout)
+      const parsed = parseTerminalOutput(output, startCwd)
+      resolveCommand({
+        output: timedOut ? `${parsed.output}${parsed.output ? '\n' : ''}[command timed out]` : parsed.output,
+        exitCode: parsed.exitCode ?? code,
+        signal,
+        cwd: startCwd,
+        nextCwd: safeResolve(parsed.nextCwd) || startCwd,
+        timedOut,
+      })
+    })
+  })
+}
+
+function parseTerminalSize(searchParams) {
+  const cols = Number(searchParams.get('cols') || 100)
+  const rows = Number(searchParams.get('rows') || 28)
+  return {
+    cols: Number.isFinite(cols) ? Math.max(20, Math.min(240, Math.floor(cols))) : 100,
+    rows: Number.isFinite(rows) ? Math.max(6, Math.min(80, Math.floor(rows))) : 28,
+  }
+}
+
+function attachTerminalSocket(server) {
+  const terminalWss = new WebSocketServer({ server, path: '/store/terminal/ws' })
+
+  terminalWss.on('connection', (socket, req) => {
+    const requestUrl = new URL(req.url || '/store/terminal/ws', 'http://localhost')
+    const cwd = safeResolve(requestUrl.searchParams.get('cwd') || DEFAULT_CWD) || DEFAULT_CWD
+    const { cols, rows } = parseTerminalSize(requestUrl.searchParams)
+    const shell = process.env.SHELL || '/bin/bash'
+    const terminal = pty.spawn(shell, ['-l'], {
+      name: 'xterm-256color',
+      cols,
+      rows,
+      cwd,
+      env: {
+        ...process.env,
+        TERM: 'xterm-256color',
+        COLORTERM: process.env.COLORTERM || 'truecolor',
+      },
+    })
+
+    const writeSocket = (data) => {
+      if (socket.readyState === WebSocket.OPEN) socket.send(data)
+    }
+
+    writeSocket(`\r\n\x1b[32mConnected to Agent Rider terminal\x1b[0m\r\n`)
+
+    const terminalData = terminal.onData((data) => writeSocket(data))
+    terminal.onExit(({ exitCode, signal }) => {
+      writeSocket(`\r\n\x1b[33mTerminal exited with code ${exitCode}${signal ? ` signal ${signal}` : ''}\x1b[0m\r\n`)
+      socket.close()
+    })
+
+    socket.on('message', (raw) => {
+      let message
+      try {
+        message = JSON.parse(raw.toString())
+      } catch {
+        return
+      }
+
+      if (message?.type === 'input') {
+        terminal.write(String(message.data ?? ''))
+        return
+      }
+
+      if (message?.type === 'resize') {
+        const nextCols = Number(message.cols)
+        const nextRows = Number(message.rows)
+        if (Number.isFinite(nextCols) && Number.isFinite(nextRows)) {
+          terminal.resize(Math.max(20, Math.min(240, Math.floor(nextCols))), Math.max(6, Math.min(80, Math.floor(nextRows))))
+        }
+      }
+    })
+
+    socket.on('close', () => {
+      terminalData.dispose()
+      terminal.kill()
+    })
+  })
+}
+
 const server = createServer((req, res) => {
   const url = (req.url || '').split('?')[0]
 
@@ -268,8 +424,27 @@ const server = createServer((req, res) => {
     return
   }
 
+  if (req.method === 'POST' && url === '/store/terminal/run') {
+    let body = ''
+    req.on('data', (chunk) => {
+      body += chunk
+      if (body.length > 100_000) req.destroy()
+    })
+    req.on('end', () => {
+      try {
+        const payload = JSON.parse(body || '{}')
+        void runTerminalCommand(payload).then((result) => sendJson(res, 200, result))
+      } catch (error) {
+        sendJson(res, 400, { error: String(error?.message || error) })
+      }
+    })
+    return
+  }
+
   sendJson(res, 404, { error: 'not found' })
 })
+
+attachTerminalSocket(server)
 
 server.listen(PORT, '127.0.0.1', () => {
   console.log(`[store] Agent Rider SQLite backend on http://127.0.0.1:${PORT} → ${DB_PATH}`)

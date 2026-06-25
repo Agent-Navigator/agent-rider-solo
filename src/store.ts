@@ -68,3 +68,30 @@ export async function makeDir(parent: string, name: string): Promise<{ path: str
     return { error: error instanceof Error ? error.message : String(error) }
   }
 }
+
+export interface TerminalRunResult {
+  cwd: string
+  nextCwd: string
+  output: string
+  exitCode: number | null
+  signal?: string | null
+  timedOut: boolean
+}
+
+export async function runTerminalCommand(command: string, cwd: string): Promise<TerminalRunResult> {
+  const res = await fetch('/store/terminal/run', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ command, cwd }),
+  })
+  const data = (await res.json()) as Partial<TerminalRunResult> & { error?: string }
+  if (!res.ok) throw new Error(data.error || 'Terminal command failed')
+  return {
+    cwd: String(data.cwd ?? cwd),
+    nextCwd: String(data.nextCwd ?? cwd),
+    output: String(data.output ?? ''),
+    exitCode: typeof data.exitCode === 'number' ? data.exitCode : null,
+    signal: data.signal ?? null,
+    timedOut: Boolean(data.timedOut),
+  }
+}
