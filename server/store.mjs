@@ -29,6 +29,7 @@ db.exec(`
     job TEXT,
     job_status TEXT,
     resource_ids TEXT,
+    sort_index INTEGER,
     created_at TEXT,
     updated_at TEXT
   );
@@ -44,14 +45,22 @@ db.exec(`
   );
 `)
 
+// Migration: add sort_index to pre-existing DBs (ignore if it already exists).
+try {
+  db.exec('ALTER TABLE runs ADD COLUMN sort_index INTEGER')
+} catch {
+  // column already present
+}
+
 const upsertRun = db.prepare(`
-  INSERT INTO runs (id, session_id, prompt, category, category_tags, project, workspace, workspace_path, task, job, job_status, resource_ids, created_at, updated_at)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  INSERT INTO runs (id, session_id, prompt, category, category_tags, project, workspace, workspace_path, task, job, job_status, resource_ids, sort_index, created_at, updated_at)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   ON CONFLICT(id) DO UPDATE SET
     session_id = excluded.session_id, prompt = excluded.prompt, category = excluded.category,
     category_tags = excluded.category_tags, project = excluded.project, workspace = excluded.workspace,
     workspace_path = excluded.workspace_path, task = excluded.task, job = excluded.job,
     job_status = excluded.job_status, resource_ids = excluded.resource_ids,
+    sort_index = excluded.sort_index,
     created_at = excluded.created_at, updated_at = excluded.updated_at
 `)
 const upsertTurn = db.prepare(`
@@ -62,7 +71,7 @@ const upsertTurn = db.prepare(`
     response = excluded.response, status = excluded.status,
     created_at = excluded.created_at, updated_at = excluded.updated_at
 `)
-const selectRuns = db.prepare('SELECT * FROM runs ORDER BY created_at ASC, rowid ASC')
+const selectRuns = db.prepare('SELECT * FROM runs ORDER BY sort_index ASC, created_at ASC, rowid ASC')
 const selectTurns = db.prepare('SELECT * FROM turns ORDER BY created_at ASC, rowid ASC')
 
 const nowIso = () => new Date().toISOString()
@@ -87,6 +96,7 @@ function runRowToApi(r) {
     job: r.job,
     jobStatus: r.job_status,
     resourceIds: parseJson(r.resource_ids, []),
+    sessionId: r.session_id || null,
     createdAt: r.created_at,
   }
 }
@@ -104,11 +114,11 @@ function turnRowToApi(t) {
 function saveState({ runs = [], turns = [], sessionId = null }) {
   db.exec('BEGIN')
   try {
-    for (const r of runs) {
-      if (!r || !r.id) continue
+    runs.forEach((r, index) => {
+      if (!r || !r.id) return
       upsertRun.run(
         String(r.id),
-        sessionId,
+        r.sessionId ?? sessionId ?? null,
         r.prompt ?? '',
         r.category ?? '',
         JSON.stringify(r.categoryTags ?? []),
@@ -119,10 +129,11 @@ function saveState({ runs = [], turns = [], sessionId = null }) {
         r.job ?? '',
         r.jobStatus ?? 'queued',
         JSON.stringify(r.resourceIds ?? []),
+        index,
         r.createdAt ?? nowIso(),
         nowIso(),
       )
-    }
+    })
     for (const t of turns) {
       if (!t || !t.id) continue
       upsertTurn.run(

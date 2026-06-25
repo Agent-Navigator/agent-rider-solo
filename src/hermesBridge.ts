@@ -33,30 +33,7 @@ export class HermesBridge {
   public lastGatewaySkin: string | null = null
   public sessionInfo: Record<string, unknown> | null = null
 
-  private workspace: string
-
-  constructor(private readonly defaults: CreateSessionOptions = {}) {
-    this.workspace = defaults.cwd ?? DEFAULT_CWD
-  }
-
-  /**
-   * Set the working directory for Hermes sessions. Hermes can't change a live
-   * session's cwd, so if a session already exists and the workspace differs,
-   * the current session is dropped and the next prompt creates a fresh one.
-   * Returns true if the workspace actually changed.
-   */
-  setWorkspace(cwd: string) {
-    const next = (cwd || '').trim() || DEFAULT_CWD
-    if (next === this.workspace) return false
-    this.workspace = next
-    if (this.sessionId) {
-      this.activeSource?.close()
-      this.activeSource = null
-      this.sessionId = null
-      this.sessionInfo = null
-    }
-    return true
-  }
+  constructor(private readonly defaults: CreateSessionOptions = {}) {}
 
   onEvent(listener: Listener) {
     this.listeners.add(listener)
@@ -89,14 +66,13 @@ export class HermesBridge {
     }
   }
 
-  async ensureSession(options: CreateSessionOptions = {}) {
-    if (this.sessionId) return this.sessionId
-
-    const workspace = options.cwd ?? this.workspace ?? DEFAULT_CWD
+  /** Create a fresh Hermes session rooted at `workspace`; returns its session_id. */
+  async createSession(workspace: string) {
+    const cwd = (workspace || '').trim() || this.defaults.cwd || DEFAULT_CWD
     const res = await fetch('/api/session/new', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ workspace }),
+      body: JSON.stringify({ workspace: cwd }),
     })
 
     if (!res.ok) {
@@ -114,20 +90,20 @@ export class HermesBridge {
     return sessionId
   }
 
-  async submitPrompt(text: string) {
-    const sessionId = await this.ensureSession()
+  /** Submit a prompt to a specific session and stream the response. */
+  async submitPrompt(sessionId: string, text: string, workspace?: string) {
     this.setStatus('busy', 'Hermes is running…')
 
-    const workspace = this.workspace ?? DEFAULT_CWD
+    const cwd = (workspace || '').trim() || this.defaults.cwd || DEFAULT_CWD
     const res = await fetch('/api/chat/start', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ session_id: sessionId, message: text, workspace }),
+      body: JSON.stringify({ session_id: sessionId, message: text, workspace: cwd }),
     })
 
     if (!res.ok) {
-      const text = await res.text().catch(() => '')
-      throw new Error(`chat/start failed (${res.status})${text ? ': ' + text : ''}`)
+      const body = await res.text().catch(() => '')
+      throw new Error(`chat/start failed (${res.status})${body ? ': ' + body : ''}`)
     }
 
     const data = (await res.json()) as { stream_id?: string }

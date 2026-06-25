@@ -21,6 +21,7 @@ interface RunNode {
   job: string
   jobStatus: JobStatus
   resourceIds: string[]
+  sessionId?: string | null
   createdAt: string
 }
 
@@ -47,6 +48,7 @@ interface QueuedPromptEntry {
   turnId: string
   runId: string
   prompt: string
+  workspace: string
 }
 
 interface CategoryRule {
@@ -258,7 +260,9 @@ function tagsForCategory(name: string) {
   return slug ? [slug] : ['custom']
 }
 
-function buildRun(prompt: string, index: number, overrides: RunOverrides = {}) {
+// Derive a conversation's metadata from its first prompt, honoring any
+// context the user already set on the card (category / project / workspace).
+function deriveRunFields(prompt: string, overrides: RunOverrides = {}) {
   const inferred = inferCategory(prompt)
   const categoryName = (overrides.category ?? '').trim() || inferred.name
   const categoryTags = (overrides.category ?? '').trim() ? tagsForCategory(categoryName) : inferred.tags
@@ -266,26 +270,17 @@ function buildRun(prompt: string, index: number, overrides: RunOverrides = {}) {
   const words = importantWords(prompt)
   const label = titleCase(words.slice(0, 3)) || `${categoryName} Flow`
   const project = (overrides.project ?? '').trim() || `${label} Project`
-
-  const workspacePath = (overrides.workspace ?? '').trim() || `${DEFAULT_CWD}/${slugify(project || categoryName)}`
-  const resourceTemplatesMatched = deriveResources(prompt)
+  const workspacePath = (overrides.workspace ?? '').trim() || DEFAULT_CWD
 
   return {
-    run: {
-      id: makeId('run'),
-      prompt,
-      category: categoryName,
-      categoryTags,
-      project,
-      workspace: `${project} workspace`,
-      workspacePath,
-      task: compactText(prompt, 72),
-      job: index === 0 ? 'Draft automation run' : `Hermes run #${index + 1}`,
-      jobStatus: 'queued' as JobStatus,
-      resourceIds: resourceTemplatesMatched.map((template) => template.id),
-      createdAt: new Date().toISOString(),
-    },
-    resources: resourceTemplatesMatched,
+    prompt,
+    category: categoryName,
+    categoryTags,
+    project,
+    workspace: `${project} workspace`,
+    workspacePath,
+    task: compactText(prompt, 72),
+    job: 'Hermes run',
   }
 }
 
@@ -317,92 +312,162 @@ function TreeRow({ label, value, depth }: { label: string; value: string; depth:
   )
 }
 
-function ResourceCard({ resource }: { resource: ResourceItem }) {
-  return (
-    <article className="resource-card">
-      <div className="resource-head">
-        <div>
-          <h4>{resource.kind}</h4>
-          <span>{resource.name}</span>
-        </div>
-        <StatusPill state="ready" detail={resource.health} />
-      </div>
-      <p>{resource.detail}</p>
-      <div className="tag-row">
-        {resource.assignedRunIds.length ? (
-          resource.assignedRunIds.map((runId) => <span key={runId} className="tag">{runId}</span>)
-        ) : (
-          <span className="tag muted">Unassigned</span>
-        )}
-      </div>
-    </article>
-  )
+function turnRoleLabel(status: JobStatus) {
+  return status === 'queued' ? 'Queued' : status === 'error' ? 'Error' : status === 'done' ? 'Done' : 'Running'
 }
 
-function RunCard({
+function ConversationCard({
   run,
-  response,
-  expanded,
+  turns,
+  collapsed,
+  isNewDone,
+  dragging,
+  dragOver,
   onToggle,
+  onSend,
+  onCategoryChange,
+  onProjectChange,
+  onOpenPicker,
+  onDragStart,
+  onDragEnd,
+  onDragOver,
+  onDrop,
 }: {
   run: RunNode
-  response: string
-  expanded: boolean
+  turns: TurnItem[]
+  collapsed: boolean
+  isNewDone: boolean
+  dragging: boolean
+  dragOver: boolean
   onToggle: () => void
+  onSend: (text: string) => void
+  onCategoryChange: (value: string) => void
+  onProjectChange: (value: string) => void
+  onOpenPicker: () => void
+  onDragStart: () => void
+  onDragEnd: () => void
+  onDragOver: () => void
+  onDrop: () => void
 }) {
-  return (
-    <article className={`run-card ${expanded ? 'expanded' : ''}`}>
-      <button className="run-card-top" type="button" onClick={onToggle}>
-        <div>
-          <span className="eyebrow">{timeLabel(run.createdAt)} · {run.category}</span>
-          <h3>{run.task}</h3>
-        </div>
-        <StatusPill state={run.jobStatus} detail={run.jobStatus === 'running' ? 'Running' : run.jobStatus === 'queued' ? 'Queued' : run.jobStatus === 'done' ? 'Done' : 'Error'} />
-      </button>
+  const [draft, setDraft] = useState('')
+  const status = run.jobStatus
+  const isDraft = turns.length === 0
 
-      <div className="run-tree">
-        <TreeRow label="Category" value={`${run.category} · ${run.categoryTags.join(' / ')}`} depth={0} />
-        <TreeRow label="Project" value={run.project} depth={1} />
-        <TreeRow label="Workspace" value={run.workspacePath} depth={2} />
-        <TreeRow label="Task" value={run.task} depth={3} />
-        <TreeRow label="Job" value={run.job} depth={4} />
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const text = draft.trim()
+    if (!text) return
+    setDraft('')
+    onSend(text)
+  }
+
+  return (
+    <article
+      className={`conv-card ${dragging ? 'dragging' : ''} ${dragOver ? 'drag-over' : ''} ${collapsed ? 'collapsed' : ''}`}
+      onDragOver={(event) => {
+        event.preventDefault()
+        onDragOver()
+      }}
+      onDrop={(event) => {
+        event.preventDefault()
+        onDrop()
+      }}
+    >
+      <div className="conv-card-head" onClick={onToggle}>
+        <span
+          className="conv-drag"
+          draggable
+          onClick={(event) => event.stopPropagation()}
+          onDragStart={onDragStart}
+          onDragEnd={onDragEnd}
+          title="Drag to reorder"
+        >
+          ⠿
+        </span>
+        <div className="conv-card-titles">
+          <span className="eyebrow">
+            {timeLabel(run.createdAt)}
+            {run.category ? ` · ${run.category}` : ''}
+            {isDraft ? ' · Draft' : ` · ${turns.length} ${turns.length === 1 ? 'turn' : 'turns'}`}
+          </span>
+          <h3>{isDraft ? 'New conversation' : run.task}</h3>
+        </div>
+        <div className="conv-card-status">
+          {!isDraft && status === 'running' ? <span className="spinner" aria-label="Running" /> : null}
+          {!isDraft && status === 'queued' ? <span className="chip">Queued</span> : null}
+          {!isDraft && status === 'error' ? <span className="pill error">Error</span> : null}
+          {isNewDone ? <span className="new-dot" title="New result" /> : null}
+        </div>
+        <span className={`conv-caret ${collapsed ? '' : 'open'}`} aria-hidden>▾</span>
       </div>
 
-      {expanded && (
-        <div className="run-extra">
-          <div>
-            <span className="micro-label">Hermes reply</span>
-            <div className="assistant-copy md-body">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{response || 'Waiting for Hermes…'}</ReactMarkdown>
+      {!collapsed ? (
+        <div className="conv-card-body">
+          <div className="conv-meta">
+            <div className="conv-meta-row">
+              <span className="tree-label">Category</span>
+              <input
+                className="conv-input"
+                list="known-categories"
+                value={run.category}
+                onChange={(event) => onCategoryChange(event.target.value)}
+                placeholder="Auto from prompt — or type / pick"
+              />
+            </div>
+            <div className="conv-meta-row">
+              <span className="tree-label">Project</span>
+              <input
+                className="conv-input"
+                list="known-projects"
+                value={run.project}
+                onChange={(event) => onProjectChange(event.target.value)}
+                placeholder="Auto from prompt — or type / pick"
+              />
+            </div>
+            <div className="conv-meta-row">
+              <span className="tree-label">Workspace</span>
+              <button type="button" className="conv-workspace-btn" onClick={onOpenPicker} title={run.workspacePath}>
+                <span className="conv-workspace-path">{run.workspacePath}</span>
+                <span className="conv-workspace-action">Change…</span>
+              </button>
             </div>
           </div>
-          <div>
-            <span className="micro-label">Assigned resources</span>
-            <div className="tag-row">
-              {run.resourceIds.length ? run.resourceIds.map((id) => <span key={id} className="tag">{id}</span>) : <span className="tag muted">None</span>}
-            </div>
-          </div>
-        </div>
-      )}
-    </article>
-  )
-}
 
-function TaskJobCard({ run }: { run: RunNode }) {
-  return (
-    <article className="taskjob-card">
-      <div className="taskjob-head">
-        <span className="eyebrow">{timeLabel(run.createdAt)} · {run.category}</span>
-        <StatusPill state={run.jobStatus} detail={run.jobStatus === 'running' ? 'Running' : run.jobStatus === 'queued' ? 'Queued' : run.jobStatus === 'done' ? 'Done' : 'Error'} />
-      </div>
-      <div className="taskjob-row">
-        <span className="tree-label">Task</span>
-        <strong className="tree-value">{run.task}</strong>
-      </div>
-      <div className="taskjob-row">
-        <span className="tree-label">Job</span>
-        <strong className="tree-value">{run.job}</strong>
-      </div>
+          {turns.length ? (
+            <div className="conversation-feed">
+              {turns.map((turn) => (
+                <article key={turn.id} className={`turn ${turn.status}`}>
+                  <div className="bubble user">
+                    <span className="role">You</span>
+                    <p>{turn.prompt}</p>
+                  </div>
+                  <div className="bubble assistant">
+                    <span className="role">Hermes · {turnRoleLabel(turn.status)}</span>
+                    <div className="md-body">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{turn.response || '…'}</ReactMarkdown>
+                    </div>
+                  </div>
+                </article>
+              ))}
+            </div>
+          ) : null}
+
+          <form className="composer conv-followup" onSubmit={submit}>
+            <textarea
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              placeholder={isDraft ? 'Describe the task to start this conversation…' : 'Reply in this conversation…'}
+              rows={2}
+            />
+            <div className="composer-meta">
+              <span>{run.workspacePath}</span>
+              <button type="submit" className="send-button">
+                Send
+              </button>
+            </div>
+          </form>
+        </div>
+      ) : null}
     </article>
   )
 }
@@ -541,9 +606,10 @@ export default function App() {
   const hydratedRef = useRef(false)
   const queuedPromptsRef = useRef<QueuedPromptEntry[]>([])
   const assistantBufferRef = useRef('')
+  // Each conversation (run) keeps its own Hermes session for multi-turn context.
+  const sessionByRunRef = useRef<Map<string, string>>(new Map())
 
   const [initialized, setInitialized] = useState(false)
-  const [input, setInput] = useState('')
   const [turns, setTurns] = useState<TurnItem[]>([])
   const [runs, setRuns] = useState<RunNode[]>([])
   const [resources, setResources] = useState<ResourceItem[]>([])
@@ -553,15 +619,77 @@ export default function App() {
   const [sessionInfoText, setSessionInfoText] = useState('No Hermes session yet')
   const [queuedCount, setQueuedCount] = useState(0)
   const [error, setError] = useState<string | null>(null)
-  const [expandedRunId, setExpandedRunId] = useState<string | null>(null)
 
-  // Editable active context applied to the next prompt's run.
-  const [activeCategory, setActiveCategory] = useState('')
-  const [activeProject, setActiveProject] = useState('')
-  const [activeWorkspace, setActiveWorkspace] = useState(DEFAULT_CWD)
-  const [pickerOpen, setPickerOpen] = useState(false)
+  // Per-conversation UI state.
+  const [collapsedIds, setCollapsedIds] = useState<Set<string>>(new Set())
+  const [newDoneIds, setNewDoneIds] = useState<Set<string>>(new Set())
+  const [dragId, setDragId] = useState<string | null>(null)
+  const [dragOverId, setDragOverId] = useState<string | null>(null)
+  // Which conversation's workspace picker is open (null = closed).
+  const [pickerRunId, setPickerRunId] = useState<string | null>(null)
 
   const hasContent = runs.length > 0
+
+  function toggleCollapse(runId: string) {
+    setCollapsedIds((current) => {
+      const next = new Set(current)
+      if (next.has(runId)) next.delete(runId)
+      else next.add(runId)
+      return next
+    })
+    // Expanding (or interacting with) a card clears its "new result" dot.
+    setNewDoneIds((current) => {
+      if (!current.has(runId)) return current
+      const next = new Set(current)
+      next.delete(runId)
+      return next
+    })
+  }
+
+  function reorderRuns(draggedId: string, targetId: string) {
+    if (draggedId === targetId) return
+    setRuns((current) => {
+      const from = current.findIndex((run) => run.id === draggedId)
+      const to = current.findIndex((run) => run.id === targetId)
+      if (from === -1 || to === -1) return current
+      const next = [...current]
+      const [moved] = next.splice(from, 1)
+      next.splice(to, 0, moved)
+      return next
+    })
+  }
+
+  // Open a new, empty (draft) Conversation Card at the top of the stack.
+  function startNewConversation() {
+    const run: RunNode = {
+      id: makeId('run'),
+      prompt: '',
+      category: '',
+      categoryTags: [],
+      project: '',
+      workspace: '',
+      workspacePath: DEFAULT_CWD,
+      task: 'New conversation',
+      job: 'Draft',
+      jobStatus: 'queued',
+      resourceIds: [],
+      sessionId: null,
+      createdAt: new Date().toISOString(),
+    }
+    setRuns((current) => [run, ...current])
+  }
+
+  // Edit a conversation's Category / Project / Workspace in place.
+  function updateRunContext(runId: string, patch: Partial<RunNode>) {
+    setRuns((current) => current.map((run) => (run.id === runId ? { ...run, ...patch } : run)))
+  }
+
+  function changeRunWorkspace(runId: string, path: string) {
+    // Hermes can't move a live session's cwd, so reset this conversation's
+    // session — the next turn runs in the newly chosen folder.
+    sessionByRunRef.current.delete(runId)
+    updateRunContext(runId, { workspacePath: path, sessionId: null })
+  }
 
   // Known values for the Category/Project comboboxes: built-ins + anything seen in history.
   const knownCategories = useMemo(() => {
@@ -569,6 +697,18 @@ export default function App() {
     for (const run of runs) if (run.category) set.add(run.category)
     return Array.from(set).sort((a, b) => a.localeCompare(b))
   }, [runs])
+
+  // Group turns by conversation, oldest first within each card.
+  const turnsByRun = useMemo(() => {
+    const map = new Map<string, TurnItem[]>()
+    for (const turn of turns) {
+      const list = map.get(turn.runId) ?? []
+      list.push(turn)
+      map.set(turn.runId, list)
+    }
+    for (const list of map.values()) list.sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+    return map
+  }, [turns])
 
   const knownProjects = useMemo(() => {
     const set = new Set<string>()
@@ -638,6 +778,12 @@ export default function App() {
         const runId = activeRunRef.current
         if (runId) {
           setRuns((current) => current.map((item) => (item.id === runId ? { ...item, jobStatus: 'done' } : item)))
+          // Flag a "new result" dot on the card (cleared when the user opens it).
+          setNewDoneIds((current) => {
+            const next = new Set(current)
+            next.add(runId)
+            return next
+          })
         }
 
         activeTurnRef.current = null
@@ -695,12 +841,9 @@ export default function App() {
         if (state.runs.length) {
           const restored = state.runs as RunNode[]
           setRuns((current) => (current.length ? current : restored))
-          // Seed the editable context from the most recent persisted run.
-          const last = restored[restored.length - 1]
-          if (last) {
-            setActiveCategory(last.category ?? '')
-            setActiveProject(last.project ?? '')
-            if (last.workspacePath) setActiveWorkspace(last.workspacePath)
+          // Restore each conversation's Hermes session so follow-ups continue the same thread.
+          for (const run of restored) {
+            if (run.sessionId) sessionByRunRef.current.set(run.id, run.sessionId)
           }
         }
         if (state.turns.length) setTurns((current) => (current.length ? current : (state.turns as TurnItem[])))
@@ -721,17 +864,6 @@ export default function App() {
     return () => clearTimeout(handle)
   }, [runs, turns, sessionId])
 
-  // Workspace drives the Hermes cwd. Changing it starts a fresh session on the next prompt.
-  useEffect(() => {
-    const bridge = bridgeRef.current
-    if (!bridge) return
-    const changed = bridge.setWorkspace(activeWorkspace)
-    if (changed) {
-      setSessionId(null)
-      setSessionInfoText(`Workspace set to ${activeWorkspace}`)
-    }
-  }, [activeWorkspace])
-
   const summaryLine = useMemo(() => {
     if (!initialized) return 'Preparing Hermes bridge…'
     if (sessionId) return `Session ${sessionId}`
@@ -750,16 +882,22 @@ export default function App() {
     const bridge = bridgeRef.current
     if (!bridge) return
 
-    const { turnId, runId, prompt } = entry
+    const { turnId, runId, prompt, workspace } = entry
 
     activeTurnRef.current = turnId
     activeRunRef.current = runId
     assistantBufferRef.current = ''
     try {
-      const session = await bridge.ensureSession()
+      // Reuse this conversation's session, or create one rooted at its workspace.
+      let session = sessionByRunRef.current.get(runId)
+      if (!session) {
+        session = await bridge.createSession(workspace)
+        sessionByRunRef.current.set(runId, session)
+        setRuns((current) => current.map((item) => (item.id === runId ? { ...item, sessionId: session ?? null } : item)))
+      }
       setSessionId(session)
       setSessionInfoText(`Hermes session ${session}`)
-      await bridge.submitPrompt(prompt)
+      await bridge.submitPrompt(session, prompt, workspace)
       setConnectionState('busy')
       setConnectionDetail('Hermes is running…')
       setTurns((current) => current.map((item) => (item.id === turnId ? { ...item, status: 'running', response: 'Thinking…' } : item)))
@@ -786,282 +924,144 @@ export default function App() {
     }
   }
 
-  async function dispatchPrompt(prompt: string, fromQueue = false) {
-    const bridge = bridgeRef.current
-    if (!bridge) return
-
-    const existingIndex = turns.length
-    const { run, resources: matchedTemplates } = buildRun(prompt, existingIndex, {
-      category: activeCategory,
-      project: activeProject,
-      workspace: activeWorkspace,
-    })
-
-    // Reflect resolved category/project back so they persist for the next prompt.
-    // Workspace is left untouched — it only changes when the user explicitly picks a folder.
-    setActiveCategory(run.category)
-    setActiveProject(run.project)
-
-    const turnId = makeId('turn')
-    const turn: TurnItem = {
-      id: turnId,
-      prompt,
-      response: fromQueue ? 'Queued…' : 'Thinking…',
-      status: fromQueue ? 'queued' : 'running',
-      runId: run.id,
-      createdAt: new Date().toISOString(),
-    }
-
-    setTurns((current) => [...current, turn])
-    setRuns((current) => [...current, run])
-    setExpandedRunId(run.id)
-    setError(null)
-
-    setResources((current) => {
-      const next = new Map(current.map((resource) => [resource.id, { ...resource }]))
-      for (const template of matchedTemplates) {
-        const existing = next.get(template.id)
-        if (existing) {
-          if (!existing.assignedRunIds.includes(run.id)) existing.assignedRunIds = [...existing.assignedRunIds, run.id]
-          if (!existing.assignedTaskIds.includes(run.id)) existing.assignedTaskIds = [...existing.assignedTaskIds, run.id]
-          continue
-        }
-
-        next.set(template.id, {
-          id: template.id,
-          kind: template.kind,
-          name: template.name,
-          detail: template.detail,
-          health: template.always ? 'Ready' : 'Draft',
-          assignedRunIds: [run.id],
-          assignedTaskIds: [run.id],
-        })
-      }
-      return Array.from(next.values())
-    })
-
-    const isCurrentlyBusy = connectionState === 'busy' || activeTurnRef.current !== null
-    if (isCurrentlyBusy && !fromQueue) {
-      queuedPromptsRef.current.push({ turnId, runId: run.id, prompt })
+  // Queue a turn if Hermes is busy, otherwise start it immediately.
+  function enqueueOrStart(entry: QueuedPromptEntry) {
+    const busy = connectionState === 'busy' || activeTurnRef.current !== null
+    if (busy) {
+      queuedPromptsRef.current.push(entry)
       setQueuedCount(queuedPromptsRef.current.length)
-      setTurns((current) => current.map((item) => (item.id === turnId ? { ...item, status: 'queued', response: 'Queued until Hermes is ready…' } : item)))
-      setRuns((current) => current.map((item) => (item.id === run.id ? { ...item, jobStatus: 'queued' } : item)))
+      setTurns((current) => current.map((item) => (item.id === entry.turnId ? { ...item, status: 'queued', response: 'Queued until Hermes is ready…' } : item)))
+      setRuns((current) => current.map((item) => (item.id === entry.runId ? { ...item, jobStatus: 'queued' } : item)))
       return
     }
-
-    await startTurn({ turnId, runId: run.id, prompt })
+    void startTurn(entry)
   }
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    const prompt = input.trim()
-    if (!prompt) return
-    setInput('')
+  function newTurn(runId: string, prompt: string): { turn: TurnItem; turnId: string } {
+    const turnId = makeId('turn')
+    return {
+      turnId,
+      turn: {
+        id: turnId,
+        prompt,
+        response: 'Thinking…',
+        status: 'running',
+        runId,
+        createdAt: new Date().toISOString(),
+      },
+    }
+  }
 
-    const bridge = bridgeRef.current
-    if (!bridge) {
+  // Send a message inside a conversation card. The first turn derives the
+  // card's metadata from the prompt (honoring any context the user set).
+  function sendInConversation(runId: string, prompt: string) {
+    if (!bridgeRef.current) {
       setError('Hermes bridge is not ready yet.')
       return
     }
+    const run = runs.find((item) => item.id === runId)
+    if (!run) return
 
-    await dispatchPrompt(prompt)
+    const hasTurns = turns.some((turn) => turn.runId === runId)
+    let workspace = run.workspacePath
+    if (!hasTurns) {
+      const fields = deriveRunFields(prompt, {
+        category: run.category,
+        project: run.project,
+        workspace: run.workspacePath,
+      })
+      workspace = fields.workspacePath
+      setRuns((current) => current.map((item) => (item.id === runId ? { ...item, ...fields, jobStatus: 'running' } : item)))
+    } else {
+      setRuns((current) => current.map((item) => (item.id === runId ? { ...item, jobStatus: 'running' } : item)))
+    }
+
+    const { turn, turnId } = newTurn(runId, prompt)
+    setTurns((current) => [turn, ...current])
+    setError(null)
+    enqueueOrStart({ turnId, runId, prompt, workspace })
   }
-
-  const conversation = turns
 
   return (
     <div className={`app-shell ${hasContent ? 'has-content' : 'blank'}`}>
-      {hasContent ? (
-        <header className="topbar card">
-          <div>
-            <div className="eyebrow">Hermes chat bridge</div>
-            <h1>Agent Workspace / Mission Control</h1>
-            <p>{summaryLine}</p>
-          </div>
-          <div className="status-stack">
-            <StatusPill state={connectionState} detail={connectionDetail} />
-            <span className="chip">{queuedCount ? `${queuedCount} queued` : 'No queue'}</span>
-            <span className="chip">Read only gateway</span>
-          </div>
-        </header>
-      ) : null}
+      <header className="topbar card">
+        <div>
+          <div className="eyebrow">Hermes chat bridge</div>
+          <h1>Agent Workspace / Mission Control</h1>
+          <p>{summaryLine}</p>
+        </div>
+        <div className="status-stack">
+          <StatusPill state={connectionState} detail={connectionDetail} />
+          <span className="chip">{queuedCount ? `${queuedCount} queued` : 'No queue'}</span>
+          <span className="chip">Read only gateway</span>
+        </div>
+      </header>
 
-      <main className={`main-stage ${hasContent ? 'expanded' : 'empty'}`}>
-        {!hasContent ? (
-          <section className="blank-canvas card">
-            <div className="blank-copy">
-              <div className="eyebrow">Blank canvas</div>
-              <h1>Start with a chat, and the workspace will grow.</h1>
-              <p>
-                The first message creates a Hermes session, forwards your prompt to the agent, and then grows the
-                Category → Project → Workspace → Task → Job tree plus the resource view.
-              </p>
-            </div>
-          </section>
+      <main className="main-stage">
+        <div className="stack-toolbar">
+          <button type="button" className="send-button new-conversation-btn" onClick={startNewConversation}>
+            + New conversation
+          </button>
+          {error ? <span className="error-text inline">{error}</span> : null}
+        </div>
+
+        {/* Datalists shared by every card's Category / Project comboboxes. */}
+        <datalist id="known-categories">
+          {knownCategories.map((name) => (
+            <option key={name} value={name} />
+          ))}
+        </datalist>
+        <datalist id="known-projects">
+          {knownProjects.map((name) => (
+            <option key={name} value={name} />
+          ))}
+        </datalist>
+
+        {hasContent ? (
+          <div className="conv-stack">
+            {runs.map((run) => (
+              <ConversationCard
+                key={run.id}
+                run={run}
+                turns={turnsByRun.get(run.id) ?? []}
+                collapsed={collapsedIds.has(run.id)}
+                isNewDone={newDoneIds.has(run.id)}
+                dragging={dragId === run.id}
+                dragOver={dragOverId === run.id && dragId !== run.id}
+                onToggle={() => toggleCollapse(run.id)}
+                onSend={(text) => sendInConversation(run.id, text)}
+                onCategoryChange={(value) =>
+                  updateRunContext(run.id, { category: value, categoryTags: tagsForCategory(value) })
+                }
+                onProjectChange={(value) => updateRunContext(run.id, { project: value })}
+                onOpenPicker={() => setPickerRunId(run.id)}
+                onDragStart={() => setDragId(run.id)}
+                onDragEnd={() => {
+                  setDragId(null)
+                  setDragOverId(null)
+                }}
+                onDragOver={() => setDragOverId(run.id)}
+                onDrop={() => {
+                  if (dragId) reorderRuns(dragId, run.id)
+                  setDragId(null)
+                  setDragOverId(null)
+                }}
+              />
+            ))}
+          </div>
         ) : (
-          <div className="workspace-grid">
-            <section className="main-column">
-              <section className="card conversation-card">
-                <div className="section-head">
-                  <div>
-                    <div className="eyebrow">Conversation</div>
-                    <h2>Live Hermes transcript</h2>
-                  </div>
-                  <StatusPill state={connectionState} detail={connectionDetail} />
-                </div>
-
-                <div className="conv-meta">
-                  <div className="conv-meta-row">
-                    <span className="tree-label">Category</span>
-                    <input
-                      className="conv-input"
-                      list="known-categories"
-                      value={activeCategory}
-                      onChange={(event) => setActiveCategory(event.target.value)}
-                      placeholder="Auto from prompt — or type / pick"
-                    />
-                  </div>
-                  <div className="conv-meta-row">
-                    <span className="tree-label">Project</span>
-                    <input
-                      className="conv-input"
-                      list="known-projects"
-                      value={activeProject}
-                      onChange={(event) => setActiveProject(event.target.value)}
-                      placeholder="Auto from prompt — or type / pick"
-                    />
-                  </div>
-                  <div className="conv-meta-row">
-                    <span className="tree-label">Workspace</span>
-                    <button type="button" className="conv-workspace-btn" onClick={() => setPickerOpen(true)} title={activeWorkspace}>
-                      <span className="conv-workspace-path">{activeWorkspace}</span>
-                      <span className="conv-workspace-action">Change…</span>
-                    </button>
-                  </div>
-                  <datalist id="known-categories">
-                    {knownCategories.map((name) => (
-                      <option key={name} value={name} />
-                    ))}
-                  </datalist>
-                  <datalist id="known-projects">
-                    {knownProjects.map((name) => (
-                      <option key={name} value={name} />
-                    ))}
-                  </datalist>
-                </div>
-
-                <div className="conversation-feed">
-                  {conversation.map((turn) => (
-                    <article key={turn.id} className={`turn ${turn.status}`}>
-                      <div className="bubble user">
-                        <span className="role">You</span>
-                        <p>{turn.prompt}</p>
-                      </div>
-                      <div className="bubble assistant">
-                        <span className="role">
-                          Hermes · {turn.status === 'queued' ? 'Queued' : turn.status === 'error' ? 'Error' : turn.status === 'done' ? 'Done' : 'Running'}
-                        </span>
-                        <div className="md-body">
-                          <ReactMarkdown remarkPlugins={[remarkGfm]}>{turn.response || '…'}</ReactMarkdown>
-                        </div>
-                      </div>
-                    </article>
-                  ))}
-                  {!conversation.length ? <div className="empty-feed">No turns yet.</div> : null}
-                </div>
-
-                <form className="composer conv-composer" onSubmit={handleSubmit}>
-                  <textarea
-                    value={input}
-                    onChange={(event) => setInput(event.target.value)}
-                    placeholder="Ask Hermes to create, analyze, or automate…"
-                    rows={2}
-                  />
-                  <div className="composer-meta">
-                    <span>{summaryLine}</span>
-                    <button type="submit" className="send-button">
-                      Send
-                    </button>
-                  </div>
-                </form>
-
-                {error ? <p className="error-text">{error}</p> : null}
-              </section>
-            </section>
-
-            <aside className="side-column">
-              <section className="card runs-panel">
-                <div className="section-head">
-                  <div>
-                    <div className="eyebrow">Board</div>
-                    <h2>Tasks &amp; Jobs</h2>
-                  </div>
-                  <span className="chip">{runs.length} runs</span>
-                </div>
-                <div className="run-list">
-                  {runs.length ? (
-                    runs.map((run) => <TaskJobCard key={run.id} run={run} />)
-                  ) : (
-                    <div className="empty-state compact">Tasks and jobs will appear after the first chat.</div>
-                  )}
-                </div>
-              </section>
-
-              <section className="card inspector-panel subtle">
-                <div className="section-head compact-head">
-                  <div>
-                    <div className="eyebrow">Session status</div>
-                    <h2>Hermes bridge</h2>
-                  </div>
-                  <StatusPill state={connectionState} detail={connectionState === 'ready' ? 'Ready' : connectionState === 'busy' ? 'Busy' : connectionState === 'connecting' ? 'Connecting' : connectionState === 'error' ? 'Error' : 'Disconnected'} />
-                </div>
-                <div className="kv-list">
-                  <div>
-                    <span>Session</span>
-                    <strong>{sessionId ?? 'Not created yet'}</strong>
-                  </div>
-                  <div>
-                    <span>Status</span>
-                    <strong>{connectionDetail}</strong>
-                  </div>
-                  <div>
-                    <span>Context</span>
-                    <strong>{sessionInfoText}</strong>
-                  </div>
-                </div>
-              </section>
-            </aside>
-          </div>
+          <div className="conv-empty">Click “New conversation” to begin.</div>
         )}
       </main>
 
-      {!hasContent ? (
-        <footer className="composer-bar card">
-          <form className="composer" onSubmit={handleSubmit}>
-            <textarea
-              value={input}
-              onChange={(event) => setInput(event.target.value)}
-              placeholder="Ask Hermes to create, analyze, or automate…"
-              rows={3}
-            />
-            <div className="composer-meta">
-              <span>{connectionDetail}</span>
-              <button type="submit" className="send-button">
-                Send
-              </button>
-            </div>
-          </form>
-        </footer>
-      ) : null}
-
-      {pickerOpen ? (
+      {pickerRunId ? (
         <WorkspacePicker
-          initialPath={activeWorkspace}
+          initialPath={runs.find((run) => run.id === pickerRunId)?.workspacePath ?? DEFAULT_CWD}
           onSelect={(path) => {
-            setActiveWorkspace(path)
-            setPickerOpen(false)
+            changeRunWorkspace(pickerRunId, path)
+            setPickerRunId(null)
           }}
-          onClose={() => setPickerOpen(false)}
+          onClose={() => setPickerRunId(null)}
         />
       ) : null}
     </div>
