@@ -112,7 +112,7 @@ export const artifacts: ArtifactItem[] = [
 
 export const policyRows = [
   ['Actor', 'Master / pavi.sa_01'],
-  ['Workspace', 'Agent Rider / Mission Control'],
+  ['Workspace', 'Agent Rider'],
   ['Permission level', 'Standard'],
   ['Sensitive actions', 'Require confirm'],
   ['Tool scope', 'Read · Write · Notify'],

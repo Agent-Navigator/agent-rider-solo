@@ -66,8 +66,18 @@ interface ResourceTemplate {
   always?: boolean
 }
 
+interface ConversationTreeProject {
+  project: string
+  runs: RunNode[]
+}
+
+interface ConversationTreeCategory {
+  category: string
+  projects: ConversationTreeProject[]
+}
+
 const DEFAULT_CWD = '/root/agent-work/DEV/agent-rider'
-const DEFAULT_TITLE = 'Agent Workspace'
+const DEFAULT_TITLE = 'Agent Rider'
 
 const categoryRules: CategoryRule[] = [
   {
@@ -272,7 +282,6 @@ function deriveRunFields(prompt: string, overrides: RunOverrides = {}) {
   const project = (overrides.project ?? '').trim() || `${label} Project`
   const workspacePath = (overrides.workspace ?? '').trim() || DEFAULT_CWD
 
-  // Note: `task` (the title) is NOT derived here — it's user-editable on the card.
   return {
     prompt,
     category: categoryName,
@@ -282,6 +291,10 @@ function deriveRunFields(prompt: string, overrides: RunOverrides = {}) {
     workspacePath,
     job: 'Hermes run',
   }
+}
+
+function conversationTitle(run: RunNode) {
+  return run.task.trim() || run.project.trim() || compactText(run.prompt, 48) || 'Untitled conversation'
 }
 
 function timeLabel(iso: string) {
@@ -320,6 +333,7 @@ function ConversationCard({
   run,
   turns,
   collapsed,
+  active,
   isNewDone,
   dragging,
   dragOver,
@@ -337,6 +351,7 @@ function ConversationCard({
   run: RunNode
   turns: TurnItem[]
   collapsed: boolean
+  active: boolean
   isNewDone: boolean
   dragging: boolean
   dragOver: boolean
@@ -383,7 +398,8 @@ function ConversationCard({
 
   return (
     <article
-      className={`conv-card ${dragging ? 'dragging' : ''} ${dragOver ? 'drag-over' : ''} ${collapsed ? 'collapsed' : ''}`}
+      id={`conversation-${run.id}`}
+      className={`conv-card ${dragging ? 'dragging' : ''} ${dragOver ? 'drag-over' : ''} ${collapsed ? 'collapsed' : ''} ${active ? 'active' : ''}`}
       onDragOver={(event) => {
         event.preventDefault()
         onDragOver()
@@ -513,6 +529,61 @@ function ConversationCard({
         </div>
       ) : null}
     </article>
+  )
+}
+
+function ConversationTreeSidebar({
+  tree,
+  activeRunId,
+  onSelect,
+}: {
+  tree: ConversationTreeCategory[]
+  activeRunId: string | null
+  onSelect: (runId: string) => void
+}) {
+  const total = tree.reduce((sum, category) => sum + category.projects.reduce((projectSum, project) => projectSum + project.runs.length, 0), 0)
+
+  return (
+    <nav className="conversation-sidebar card" aria-label="Conversation tree">
+      <div className="sidebar-head">
+        <div>
+          <div className="eyebrow">Navigator</div>
+          <h2>Conversation Tree</h2>
+        </div>
+        <span className="sidebar-count">{total}</span>
+      </div>
+
+      {tree.length ? (
+        <div className="tree-nav">
+          {tree.map((category) => (
+            <section key={category.category} className="tree-nav-category">
+              <h3>{category.category}</h3>
+              {category.projects.map((project) => (
+                <div key={`${category.category}-${project.project}`} className="tree-nav-project">
+                  <div className="tree-nav-label">{project.project}</div>
+                  <div className="tree-nav-runs">
+                    {project.runs.map((run) => (
+                      <button
+                        key={run.id}
+                        type="button"
+                        className={`tree-nav-run ${activeRunId === run.id ? 'active' : ''}`}
+                        onClick={() => onSelect(run.id)}
+                        aria-current={activeRunId === run.id ? 'true' : undefined}
+                      >
+                        <span className="tree-run-title">{conversationTitle(run)}</span>
+                        <span className={`tree-run-status ${run.jobStatus}`} aria-label={run.jobStatus} title={run.jobStatus} />
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </section>
+          ))}
+        </div>
+      ) : (
+        <div className="tree-empty">No conversations</div>
+      )}
+    </nav>
   )
 }
 
@@ -667,6 +738,7 @@ export default function App() {
   // Per-conversation UI state.
   const [collapsedIds, setCollapsedIds] = useState<Set<string>>(new Set())
   const [newDoneIds, setNewDoneIds] = useState<Set<string>>(new Set())
+  const [activeRunId, setActiveRunId] = useState<string | null>(null)
   const [dragId, setDragId] = useState<string | null>(null)
   const [dragOverId, setDragOverId] = useState<string | null>(null)
   // Which conversation's workspace picker is open (null = closed).
@@ -675,6 +747,7 @@ export default function App() {
   const hasContent = runs.length > 0
 
   function toggleCollapse(runId: string) {
+    setActiveRunId(runId)
     setCollapsedIds((current) => {
       const next = new Set(current)
       if (next.has(runId)) next.delete(runId)
@@ -721,11 +794,22 @@ export default function App() {
       createdAt: new Date().toISOString(),
     }
     setRuns((current) => [run, ...current])
+    setActiveRunId(run.id)
   }
 
   // Edit a conversation's Category / Project / Workspace in place.
   function updateRunContext(runId: string, patch: Partial<RunNode>) {
     setRuns((current) => current.map((run) => (run.id === runId ? { ...run, ...patch } : run)))
+  }
+
+  function updateRunProject(runId: string, project: string) {
+    setRuns((current) =>
+      current.map((run) => {
+        if (run.id !== runId) return run
+        const titleFollowsProject = !run.task.trim() || run.task.trim() === run.project.trim()
+        return { ...run, project, task: titleFollowsProject ? project : run.task }
+      }),
+    )
   }
 
   function changeRunWorkspace(runId: string, path: string) {
@@ -759,6 +843,47 @@ export default function App() {
     for (const run of runs) if (run.project) set.add(run.project)
     return Array.from(set).sort((a, b) => a.localeCompare(b))
   }, [runs])
+
+  const conversationTree = useMemo<ConversationTreeCategory[]>(() => {
+    const categoryMap = new Map<string, Map<string, RunNode[]>>()
+
+    for (const run of runs) {
+      const category = run.category.trim() || 'Uncategorized'
+      const project = run.project.trim() || 'No project'
+      let projectMap = categoryMap.get(category)
+      if (!projectMap) {
+        projectMap = new Map()
+        categoryMap.set(category, projectMap)
+      }
+      const projectRuns = projectMap.get(project) ?? []
+      projectRuns.push(run)
+      projectMap.set(project, projectRuns)
+    }
+
+    return Array.from(categoryMap, ([category, projectMap]) => ({
+      category,
+      projects: Array.from(projectMap, ([project, projectRuns]) => ({ project, runs: projectRuns })),
+    }))
+  }, [runs])
+
+  function selectConversation(runId: string) {
+    setActiveRunId(runId)
+    setCollapsedIds((current) => {
+      if (!current.has(runId)) return current
+      const next = new Set(current)
+      next.delete(runId)
+      return next
+    })
+    setNewDoneIds((current) => {
+      if (!current.has(runId)) return current
+      const next = new Set(current)
+      next.delete(runId)
+      return next
+    })
+    window.requestAnimationFrame(() => {
+      document.getElementById(`conversation-${runId}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    })
+  }
 
   useEffect(() => {
     const bridge = new HermesBridge({ title: DEFAULT_TITLE, cwd: DEFAULT_CWD, source: 'web' })
@@ -1006,6 +1131,7 @@ export default function App() {
     const run = runs.find((item) => item.id === runId)
     if (!run) return
 
+    setActiveRunId(runId)
     const hasTurns = turns.some((turn) => turn.runId === runId)
     let workspace = run.workspacePath
     if (!hasTurns) {
@@ -1015,7 +1141,11 @@ export default function App() {
         workspace: run.workspacePath,
       })
       workspace = fields.workspacePath
-      setRuns((current) => current.map((item) => (item.id === runId ? { ...item, ...fields, jobStatus: 'running' } : item)))
+      setRuns((current) =>
+        current.map((item) =>
+          item.id === runId ? { ...item, ...fields, task: item.task.trim() || fields.project, jobStatus: 'running' } : item,
+        ),
+      )
     } else {
       setRuns((current) => current.map((item) => (item.id === runId ? { ...item, jobStatus: 'running' } : item)))
     }
@@ -1031,7 +1161,7 @@ export default function App() {
       <header className="topbar card">
         <div>
           <div className="eyebrow">Hermes chat bridge</div>
-          <h1>Agent Workspace / Mission Control</h1>
+          <h1>Agent Rider</h1>
           <p>{summaryLine}</p>
         </div>
         <div className="status-stack">
@@ -1042,61 +1172,68 @@ export default function App() {
       </header>
 
       <main className="main-stage">
-        <div className="stack-toolbar">
-          <button type="button" className="send-button new-conversation-btn" onClick={startNewConversation}>
-            + New conversation
-          </button>
-          {error ? <span className="error-text inline">{error}</span> : null}
+        <div className="main-layout">
+          <ConversationTreeSidebar tree={conversationTree} activeRunId={activeRunId} onSelect={selectConversation} />
+
+          <section className="conversation-workspace" aria-label="Conversation cards">
+            <div className="stack-toolbar">
+              <button type="button" className="send-button new-conversation-btn" onClick={startNewConversation}>
+                + New conversation
+              </button>
+              {error ? <span className="error-text inline">{error}</span> : null}
+            </div>
+
+            {/* Datalists shared by every card's Category / Project comboboxes. */}
+            <datalist id="known-categories">
+              {knownCategories.map((name) => (
+                <option key={name} value={name} />
+              ))}
+            </datalist>
+            <datalist id="known-projects">
+              {knownProjects.map((name) => (
+                <option key={name} value={name} />
+              ))}
+            </datalist>
+
+            {hasContent ? (
+              <div className="conv-stack">
+                {runs.map((run) => (
+                  <ConversationCard
+                    key={run.id}
+                    run={run}
+                    turns={turnsByRun.get(run.id) ?? []}
+                    collapsed={collapsedIds.has(run.id)}
+                    active={activeRunId === run.id}
+                    isNewDone={newDoneIds.has(run.id)}
+                    dragging={dragId === run.id}
+                    dragOver={dragOverId === run.id && dragId !== run.id}
+                    onToggle={() => toggleCollapse(run.id)}
+                    onSend={(text) => sendInConversation(run.id, text)}
+                    onTitleChange={(value) => updateRunContext(run.id, { task: value })}
+                    onCategoryChange={(value) =>
+                      updateRunContext(run.id, { category: value, categoryTags: tagsForCategory(value) })
+                    }
+                    onProjectChange={(value) => updateRunProject(run.id, value)}
+                    onOpenPicker={() => setPickerRunId(run.id)}
+                    onDragStart={() => setDragId(run.id)}
+                    onDragEnd={() => {
+                      setDragId(null)
+                      setDragOverId(null)
+                    }}
+                    onDragOver={() => setDragOverId(run.id)}
+                    onDrop={() => {
+                      if (dragId) reorderRuns(dragId, run.id)
+                      setDragId(null)
+                      setDragOverId(null)
+                    }}
+                  />
+                ))}
+              </div>
+            ) : (
+              <div className="conv-empty">Click “New conversation” to begin.</div>
+            )}
+          </section>
         </div>
-
-        {/* Datalists shared by every card's Category / Project comboboxes. */}
-        <datalist id="known-categories">
-          {knownCategories.map((name) => (
-            <option key={name} value={name} />
-          ))}
-        </datalist>
-        <datalist id="known-projects">
-          {knownProjects.map((name) => (
-            <option key={name} value={name} />
-          ))}
-        </datalist>
-
-        {hasContent ? (
-          <div className="conv-stack">
-            {runs.map((run) => (
-              <ConversationCard
-                key={run.id}
-                run={run}
-                turns={turnsByRun.get(run.id) ?? []}
-                collapsed={collapsedIds.has(run.id)}
-                isNewDone={newDoneIds.has(run.id)}
-                dragging={dragId === run.id}
-                dragOver={dragOverId === run.id && dragId !== run.id}
-                onToggle={() => toggleCollapse(run.id)}
-                onSend={(text) => sendInConversation(run.id, text)}
-                onTitleChange={(value) => updateRunContext(run.id, { task: value })}
-                onCategoryChange={(value) =>
-                  updateRunContext(run.id, { category: value, categoryTags: tagsForCategory(value) })
-                }
-                onProjectChange={(value) => updateRunContext(run.id, { project: value })}
-                onOpenPicker={() => setPickerRunId(run.id)}
-                onDragStart={() => setDragId(run.id)}
-                onDragEnd={() => {
-                  setDragId(null)
-                  setDragOverId(null)
-                }}
-                onDragOver={() => setDragOverId(run.id)}
-                onDrop={() => {
-                  if (dragId) reorderRuns(dragId, run.id)
-                  setDragId(null)
-                  setDragOverId(null)
-                }}
-              />
-            ))}
-          </div>
-        ) : (
-          <div className="conv-empty">Click “New conversation” to begin.</div>
-        )}
       </main>
 
       {pickerRunId ? (
