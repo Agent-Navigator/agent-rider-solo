@@ -272,6 +272,7 @@ function deriveRunFields(prompt: string, overrides: RunOverrides = {}) {
   const project = (overrides.project ?? '').trim() || `${label} Project`
   const workspacePath = (overrides.workspace ?? '').trim() || DEFAULT_CWD
 
+  // Note: `task` (the title) is NOT derived here — it's user-editable on the card.
   return {
     prompt,
     category: categoryName,
@@ -279,7 +280,6 @@ function deriveRunFields(prompt: string, overrides: RunOverrides = {}) {
     project,
     workspace: `${project} workspace`,
     workspacePath,
-    task: compactText(prompt, 72),
     job: 'Hermes run',
   }
 }
@@ -325,6 +325,7 @@ function ConversationCard({
   dragOver,
   onToggle,
   onSend,
+  onTitleChange,
   onCategoryChange,
   onProjectChange,
   onOpenPicker,
@@ -341,6 +342,7 @@ function ConversationCard({
   dragOver: boolean
   onToggle: () => void
   onSend: (text: string) => void
+  onTitleChange: (value: string) => void
   onCategoryChange: (value: string) => void
   onProjectChange: (value: string) => void
   onOpenPicker: () => void
@@ -350,8 +352,26 @@ function ConversationCard({
   onDrop: () => void
 }) {
   const [draft, setDraft] = useState('')
+  // Past turns auto-collapse to keep the card short; only the latest stays open
+  // unless the user manually expands an earlier one.
+  const [expandedTurns, setExpandedTurns] = useState<Set<string>>(new Set())
   const status = run.jobStatus
   const isDraft = turns.length === 0
+  const lastTurnId = turns.length ? turns[turns.length - 1].id : null
+
+  // When a new turn arrives, re-collapse everything except the new latest turn.
+  useEffect(() => {
+    setExpandedTurns(new Set())
+  }, [lastTurnId])
+
+  function toggleTurn(id: string) {
+    setExpandedTurns((current) => {
+      const next = new Set(current)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -390,7 +410,14 @@ function ConversationCard({
             {run.category ? ` · ${run.category}` : ''}
             {isDraft ? ' · Draft' : ` · ${turns.length} ${turns.length === 1 ? 'turn' : 'turns'}`}
           </span>
-          <h3>{isDraft ? 'New conversation' : run.task}</h3>
+          <input
+            className="conv-title-input"
+            value={run.task}
+            onChange={(event) => onTitleChange(event.target.value)}
+            onClick={(event) => event.stopPropagation()}
+            placeholder="Untitled conversation"
+            aria-label="Conversation title"
+          />
         </div>
         <div className="conv-card-status">
           {!isDraft && status === 'running' ? <span className="spinner" aria-label="Running" /> : null}
@@ -435,20 +462,37 @@ function ConversationCard({
 
           {turns.length ? (
             <div className="conversation-feed">
-              {turns.map((turn) => (
-                <article key={turn.id} className={`turn ${turn.status}`}>
-                  <div className="bubble user">
-                    <span className="role">You</span>
-                    <p>{turn.prompt}</p>
-                  </div>
-                  <div className="bubble assistant">
-                    <span className="role">Hermes · {turnRoleLabel(turn.status)}</span>
-                    <div className="md-body">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{turn.response || '…'}</ReactMarkdown>
+              {turns.map((turn) => {
+                const open = turn.id === lastTurnId || expandedTurns.has(turn.id)
+                if (!open) {
+                  return (
+                    <button key={turn.id} type="button" className="turn-collapsed" onClick={() => toggleTurn(turn.id)}>
+                      <span className="turn-collapsed-role">You</span>
+                      <span className="turn-collapsed-text">{turn.prompt}</span>
+                      <span className="turn-collapsed-caret">▾</span>
+                    </button>
+                  )
+                }
+                return (
+                  <article key={turn.id} className={`turn ${turn.status}`}>
+                    <div className="bubble user">
+                      <span className="role">You</span>
+                      <p>{turn.prompt}</p>
                     </div>
-                  </div>
-                </article>
-              ))}
+                    <div className="bubble assistant">
+                      <span className="role">Hermes · {turnRoleLabel(turn.status)}</span>
+                      <div className="md-body">
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{turn.response || '…'}</ReactMarkdown>
+                      </div>
+                    </div>
+                    {turn.id !== lastTurnId ? (
+                      <button type="button" className="turn-collapse-link" onClick={() => toggleTurn(turn.id)}>
+                        Collapse turn
+                      </button>
+                    ) : null}
+                  </article>
+                )
+              })}
             </div>
           ) : null}
 
@@ -669,7 +713,7 @@ export default function App() {
       project: '',
       workspace: '',
       workspacePath: DEFAULT_CWD,
-      task: 'New conversation',
+      task: '',
       job: 'Draft',
       jobStatus: 'queued',
       resourceIds: [],
@@ -1030,6 +1074,7 @@ export default function App() {
                 dragOver={dragOverId === run.id && dragId !== run.id}
                 onToggle={() => toggleCollapse(run.id)}
                 onSend={(text) => sendInConversation(run.id, text)}
+                onTitleChange={(value) => updateRunContext(run.id, { task: value })}
                 onCategoryChange={(value) =>
                   updateRunContext(run.id, { category: value, categoryTags: tagsForCategory(value) })
                 }
