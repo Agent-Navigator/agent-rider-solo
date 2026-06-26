@@ -455,6 +455,26 @@ function formatBytes(size: number | null): string {
   return `${value < 10 ? value.toFixed(1) : Math.round(value)} ${units[unit]}`
 }
 
+function filePathFromDrag(event: DragEvent<HTMLElement>) {
+  return event.dataTransfer.getData('application/x-agent-rider-file-path') || event.dataTransfer.getData('text/plain')
+}
+
+function insertIntoTextarea(textarea: HTMLTextAreaElement, value: string) {
+  const start = textarea.selectionStart ?? textarea.value.length
+  const end = textarea.selectionEnd ?? textarea.value.length
+  const prefix = textarea.value.slice(0, start)
+  const suffix = textarea.value.slice(end)
+  const needsLeadingSpace = Boolean(prefix && !/\s$/.test(prefix))
+  const needsTrailingSpace = Boolean(suffix && !/^\s/.test(suffix))
+  const inserted = `${needsLeadingSpace ? ' ' : ''}${value}${needsTrailingSpace ? ' ' : ''}`
+  const nextValue = `${prefix}${inserted}${suffix}`
+  const nextCursor = start + inserted.length
+  textarea.focus()
+  textarea.setRangeText(inserted, start, end, 'end')
+  textarea.setSelectionRange(nextCursor, nextCursor)
+  return nextValue
+}
+
 /**
  * Read-only file browser scoped to a conversation's workspace. Collapsed by default
  * and lazy-loaded on first expand. Navigation is bounded to the workspace subtree
@@ -581,6 +601,12 @@ function FileBrowser({ rootPath }: { rootPath: string }) {
                     key={file.path}
                     className={`file-row file ${preview?.path === file.path ? 'active' : ''}`}
                     title={file.path}
+                    draggable
+                    onDragStart={(event) => {
+                      event.dataTransfer.effectAllowed = 'copy'
+                      event.dataTransfer.setData('application/x-agent-rider-file-path', file.path)
+                      event.dataTransfer.setData('text/plain', file.path)
+                    }}
                     onClick={() => void openFile(file.path)}
                   >
                     <span className="file-row-name">📄 {file.name}</span>
@@ -653,7 +679,7 @@ function FileBrowser({ rootPath }: { rootPath: string }) {
 
 // Interactive areas that should keep their own mouse behaviour rather than
 // starting a drag (shared by cards and workspace panels).
-const DRAG_EXCLUDE = 'input, textarea, select, button, a, iframe, [contenteditable="true"], .conv-agent-terminal, .terminal-screen'
+const DRAG_EXCLUDE = 'input, textarea, select, button, a, iframe, [contenteditable="true"], .conv-agent-terminal, .terminal-screen, .file-preview'
 
 // Start an HTML5 drag using an off-screen clone of `element` as the ghost, so
 // the ghost tracks the exact grab point (passing the live element is
