@@ -5,6 +5,7 @@
 // column count. Kept intentionally loose so new layout bits can be added.
 export interface WorkspaceLayout {
   panelOrder?: string[]
+  panelColumns?: Record<string, number>
   workspaceColumns?: 1 | 2
 }
 

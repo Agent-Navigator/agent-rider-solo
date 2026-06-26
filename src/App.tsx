@@ -1785,6 +1785,9 @@ export default function App() {
   // column renders after these. Persisted as layout.panelOrder so the whole
   // arrangement survives a reload.
   const [panelOrder, setPanelOrder] = useState<string[]>([])
+  // Which column (0 = left, 1 = right) each panel sits in, so panels can be
+  // dragged to sit side-by-side with conversation cards in two-column mode.
+  const [panelColumns, setPanelColumns] = useState<Record<string, number>>({})
   // Id of the panel currently being dragged (separate from card dragging).
   const [draggingPanelId, setDraggingPanelId] = useState<string | null>(null)
   // Runtime Agent Apps (auto-discovered from the store backend).
@@ -1822,12 +1825,23 @@ export default function App() {
       return [...without.slice(0, idx), draggedId, ...without.slice(idx)]
     })
   }
+  function setPanelColumn(panelId: string, column: number) {
+    setPanelColumns((current) => ({ ...current, [panelId]: column }))
+  }
+  // Drop a panel before another panel — inherit the target's column.
   function handleDropBeforePanel(targetId: string) {
-    if (draggingPanelId && draggingPanelId !== targetId) movePanel(draggingPanelId, targetId)
+    if (draggingPanelId && draggingPanelId !== targetId) {
+      movePanel(draggingPanelId, targetId)
+      if (workspaceColumns === 2) setPanelColumn(draggingPanelId, panelColumns[targetId] ?? 0)
+    }
     setDraggingPanelId(null)
   }
-  function handleDropPanelToEnd() {
-    if (draggingPanelId) movePanel(draggingPanelId, null)
+  // Drop a panel onto a column's free space — move it to that column's end.
+  function handleDropPanelToColumn(column: number) {
+    if (draggingPanelId) {
+      movePanel(draggingPanelId, null)
+      if (workspaceColumns === 2) setPanelColumn(draggingPanelId, column)
+    }
     setDraggingPanelId(null)
   }
 
@@ -2207,6 +2221,9 @@ export default function App() {
           if (Array.isArray(state.layout.panelOrder)) {
             setPanelOrder((current) => (current.length ? current : (state.layout!.panelOrder as string[])))
           }
+          if (state.layout.panelColumns && typeof state.layout.panelColumns === 'object') {
+            setPanelColumns((current) => (Object.keys(current).length ? current : (state.layout!.panelColumns as Record<string, number>)))
+          }
           if (state.layout.workspaceColumns === 1 || state.layout.workspaceColumns === 2) {
             setWorkspaceColumns(state.layout.workspaceColumns)
           }
@@ -2223,10 +2240,10 @@ export default function App() {
   useEffect(() => {
     if (!hydratedRef.current) return
     const handle = setTimeout(() => {
-      void persistState(runs, turns, sessionId, { panelOrder, workspaceColumns })
+      void persistState(runs, turns, sessionId, { panelOrder, panelColumns, workspaceColumns })
     }, 700)
     return () => clearTimeout(handle)
-  }, [runs, turns, sessionId, panelOrder, workspaceColumns])
+  }, [runs, turns, sessionId, panelOrder, panelColumns, workspaceColumns])
 
   const summaryLine = useMemo(() => {
     if (!initialized) return 'Preparing Hermes bridge…'
@@ -2376,6 +2393,63 @@ export default function App() {
     />
   )
 
+  // Resolve a panel id to its content + draggable wrapper (null if the
+  // referenced plugin/app no longer exists).
+  const renderPanelBlock = (panelId: string) => {
+    let content: ReactNode = null
+    if (panelId === 'terminal') {
+      content = <WebTerminal initialCwd={DEFAULT_TERMINAL_CWD} onClose={() => closePanel('terminal')} />
+    } else if (panelId.startsWith('plugin:')) {
+      const plugin = plugins.find((p) => p.id === panelId.slice('plugin:'.length))
+      if (plugin) content = plugin.renderPanel({ onClose: () => closePanel(panelId) })
+    } else if (panelId.startsWith('app:')) {
+      const app = appListing.apps.find((a) => a.id === panelId.slice('app:'.length))
+      if (app) content = <WebView title={app.label} src={app.entry} onClose={() => closePanel(panelId)} />
+    }
+    if (!content) return null
+    return (
+      <DraggablePanel
+        key={panelId}
+        panelId={panelId}
+        dragging={draggingPanelId === panelId}
+        dragActive={draggingPanelId !== null && draggingPanelId !== panelId}
+        onDragStartPanel={() => setDraggingPanelId(panelId)}
+        onDragEndPanel={() => setDraggingPanelId(null)}
+        onDropOnPanel={() => handleDropBeforePanel(panelId)}
+      >
+        {content}
+      </DraggablePanel>
+    )
+  }
+
+  // One workspace column: its panels (in panelOrder) then its cards (in runs
+  // order). `col` filters by column in two-column mode; pass null for the
+  // single-column layout (everything, columns ignored). The column is a drop
+  // zone that reassigns a dropped panel/card to this column.
+  const renderWorkspaceColumn = (col: number | null) => {
+    const panels = col === null ? panelOrder : panelOrder.filter((id) => (panelColumns[id] ?? 0) === col)
+    const cards = col === null ? visibleRuns : visibleRuns.filter((run) => (run.column ?? 0) === col)
+    const dragActive = draggingId !== null || draggingPanelId !== null
+    return (
+      <div
+        key={col ?? 'single'}
+        className={`ws-column ${dragActive ? 'drag-active' : ''}`}
+        onDragOver={(event) => {
+          if (dragActive) event.preventDefault()
+        }}
+        onDrop={(event) => {
+          if (!dragActive) return
+          event.preventDefault()
+          if (draggingPanelId) handleDropPanelToColumn(col ?? 0)
+          else if (draggingId) handleDropToColumn(col ?? 0)
+        }}
+      >
+        {panels.map(renderPanelBlock)}
+        {cards.map(renderRunCard)}
+      </div>
+    )
+  }
+
   return (
     <div className={`app-shell ${hasContent ? 'has-content' : 'blank'} ${workspaceColumns === 2 ? 'full-width' : ''}`}>
       <header className="topbar card">
@@ -2444,84 +2518,17 @@ export default function App() {
             </datalist>
 
             <div className={`workspace-panels columns-${workspaceColumns}`}>
-              {/* Tool / App panels, rendered in (and reorderable via) panelOrder. */}
-              {panelOrder.map((panelId) => {
-                let content: ReactNode = null
-                if (panelId === 'terminal') {
-                  content = <WebTerminal initialCwd={DEFAULT_TERMINAL_CWD} onClose={() => closePanel('terminal')} />
-                } else if (panelId.startsWith('plugin:')) {
-                  const plugin = plugins.find((p) => p.id === panelId.slice('plugin:'.length))
-                  if (plugin) content = plugin.renderPanel({ onClose: () => closePanel(panelId) })
-                } else if (panelId.startsWith('app:')) {
-                  const app = appListing.apps.find((a) => a.id === panelId.slice('app:'.length))
-                  if (app) content = <WebView title={app.label} src={app.entry} onClose={() => closePanel(panelId)} />
-                }
-                if (!content) return null
-                return (
-                  <DraggablePanel
-                    key={panelId}
-                    panelId={panelId}
-                    dragging={draggingPanelId === panelId}
-                    dragActive={draggingPanelId !== null && draggingPanelId !== panelId}
-                    onDragStartPanel={() => setDraggingPanelId(panelId)}
-                    onDragEndPanel={() => setDraggingPanelId(null)}
-                    onDropOnPanel={() => handleDropBeforePanel(panelId)}
-                  >
-                    {content}
-                  </DraggablePanel>
-                )
-              })}
-
-              <div
-                className={`conversation-card-column ${workspaceColumns === 2 ? 'two-col' : ''}`}
-                onDragOver={(event) => {
-                  if (draggingPanelId) event.preventDefault()
-                }}
-                onDrop={(event) => {
-                  if (!draggingPanelId) return
-                  event.preventDefault()
-                  handleDropPanelToEnd()
-                }}
-              >
-                {!hasContent ? (
-                  <div className="conv-empty">Click “New conversation” to begin.</div>
-                ) : visibleRuns.length ? (
-                  workspaceColumns === 2 ? (
-                    <div className="conv-columns">
-                      {[0, 1].map((col) => (
-                        <div
-                          key={col}
-                          className={`conv-stack conv-column ${draggingId ? 'drag-active' : ''}`}
-                          onDragOver={(event) => {
-                            if (draggingId) event.preventDefault()
-                          }}
-                          onDrop={(event) => {
-                            event.preventDefault()
-                            handleDropToColumn(col)
-                          }}
-                        >
-                          {visibleRuns.filter((run) => (run.column ?? 0) === col).map(renderRunCard)}
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div
-                      className={`conv-stack ${draggingId ? 'drag-active' : ''}`}
-                      onDragOver={(event) => {
-                        if (draggingId) event.preventDefault()
-                      }}
-                      onDrop={(event) => {
-                        event.preventDefault()
-                        handleDropToColumn(0)
-                      }}
-                    >
-                      {visibleRuns.map(renderRunCard)}
-                    </div>
-                  )
-                ) : (
-                  <div className="conv-empty">All cards closed — reopen one from the Navigator.</div>
-                )}
-              </div>
+              {panelOrder.length === 0 && visibleRuns.length === 0 ? (
+                <div className="conv-empty">
+                  {hasContent ? 'All cards closed — reopen one from the Navigator.' : 'Click “New conversation” to begin.'}
+                </div>
+              ) : workspaceColumns === 2 ? (
+                // Unified two-column canvas: panels and cards each carry a
+                // column, so a tool/app can sit left-right beside a card.
+                <div className="ws-columns">{[0, 1].map((col) => renderWorkspaceColumn(col))}</div>
+              ) : (
+                renderWorkspaceColumn(null)
+              )}
             </div>
           </section>
         </div>
