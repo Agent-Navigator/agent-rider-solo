@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- Relative base so this works when served under /apps/<slug>/ -->
+    <base href="./" />
+    <title>Template App</title>
+    <style>
+      :root { color-scheme: dark; }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+        background: #0b0f17;
+        color: #e6edf3;
+        padding: 24px;
+      }
+      h1 { font-size: 18px; margin: 0 0 4px; }
+      p.sub { margin: 0 0 20px; color: #8b97a7; }
+      .card {
+        border: 1px solid rgba(148, 163, 184, 0.2);
+        border-radius: 12px;
+        padding: 16px;
+        background: rgba(255, 255, 255, 0.03);
+        max-width: 480px;
+      }
+      .stat { font-size: 32px; font-weight: 700; }
+      .label { color: #8b97a7; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+      code { background: rgba(255,255,255,0.06); padding: 1px 5px; border-radius: 5px; }
+    </style>
+  </head>
+  <body>
+    <h1>Template App</h1>
+    <p class="sub">
+      A starting point for an Agent Rider App. Copy <code>plugins/_template</code>,
+      rename the folder + <code>manifest.json</code> id, and build your UI here.
+    </p>
+    <div class="card">
+      <div class="label">Conversations in store</div>
+      <div class="stat" id="count">…</div>
+    </div>
+
+    <script type="module">
+      // Apps may only call same-origin /store and /api (see plugins/AGENTS.md).
+      async function load() {
+        const el = document.getElementById('count')
+        try {
+          const res = await fetch('/store/state')
+          const data = await res.json()
+          el.textContent = String((data.runs || []).length)
+        } catch {
+          el.textContent = '—'
+        }
+      }
+      load()
+    </script>
+  </body>
+</html>
