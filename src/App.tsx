@@ -596,22 +596,29 @@ function FileBrowser({ rootPath }: { rootPath: string }) {
                   </button>
                 ))}
                 {(listing.files ?? []).map((file) => (
-                  <button
-                    type="button"
+                  <div
+                    role="button"
+                    tabIndex={0}
                     key={file.path}
                     className={`file-row file ${preview?.path === file.path ? 'active' : ''}`}
                     title={file.path}
                     draggable
                     onDragStart={(event) => {
+                      event.stopPropagation()
                       event.dataTransfer.effectAllowed = 'copy'
                       event.dataTransfer.setData('application/x-agent-rider-file-path', file.path)
                       event.dataTransfer.setData('text/plain', file.path)
                     }}
                     onClick={() => void openFile(file.path)}
+                    onKeyDown={(event) => {
+                      if (event.key !== 'Enter' && event.key !== ' ') return
+                      event.preventDefault()
+                      void openFile(file.path)
+                    }}
                   >
                     <span className="file-row-name">📄 {file.name}</span>
                     <span className="file-row-size">{formatBytes(file.size)}</span>
-                  </button>
+                  </div>
                 ))}
               </>
             ) : (
@@ -679,7 +686,7 @@ function FileBrowser({ rootPath }: { rootPath: string }) {
 
 // Interactive areas that should keep their own mouse behaviour rather than
 // starting a drag (shared by cards and workspace panels).
-const DRAG_EXCLUDE = 'input, textarea, select, button, a, iframe, [contenteditable="true"], .conv-agent-terminal, .terminal-screen, .file-preview'
+const DRAG_EXCLUDE = 'input, textarea, select, button, a, iframe, [contenteditable="true"], .conv-agent-terminal, .terminal-screen, .file-browser, .file-preview'
 
 // Start an HTML5 drag using an off-screen clone of `element` as the ghost, so
 // the ghost tracks the exact grab point (passing the live element is
