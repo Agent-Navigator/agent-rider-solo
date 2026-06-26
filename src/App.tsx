@@ -582,15 +582,16 @@ function DraggablePanel({
   dragActive: boolean
   onDragStartPanel: () => void
   onDragEndPanel: () => void
-  onDropOnPanel: () => void
+  onDropOnPanel: (after: boolean) => void
   children: ReactNode
 }) {
   const ref = useRef<HTMLDivElement | null>(null)
   const [dragOver, setDragOver] = useState(false)
+  const [dragOverAfter, setDragOverAfter] = useState(false)
   return (
     <div
       ref={ref}
-      className={`plugin-panel workspace-panel ${dragging ? 'dragging' : ''} ${dragOver ? 'drag-over' : ''}`}
+      className={`plugin-panel workspace-panel ${dragging ? 'dragging' : ''} ${dragOver ? (dragOverAfter ? 'drag-over after' : 'drag-over') : ''}`}
       onMouseDown={(event) => {
         const target = event.target as HTMLElement
         if (ref.current) ref.current.draggable = !target.closest(DRAG_EXCLUDE)
@@ -611,7 +612,10 @@ function DraggablePanel({
       onDragOver={(event) => {
         if (!dragActive) return
         event.preventDefault()
+        const rect = event.currentTarget.getBoundingClientRect()
+        const after = event.clientY > rect.top + rect.height / 2
         if (!dragOver) setDragOver(true)
+        if (after !== dragOverAfter) setDragOverAfter(after)
       }}
       onDragLeave={(event) => {
         if (event.currentTarget.contains(event.relatedTarget as Node)) return
@@ -621,8 +625,10 @@ function DraggablePanel({
         if (!dragActive) return
         event.preventDefault()
         event.stopPropagation()
+        const rect = event.currentTarget.getBoundingClientRect()
+        const after = event.clientY > rect.top + rect.height / 2
         setDragOver(false)
-        onDropOnPanel()
+        onDropOnPanel(after)
       }}
     >
       {children}
@@ -669,14 +675,16 @@ function ConversationCard({
   dragActive: boolean
   onDragStartCard: () => void
   onDragEndCard: () => void
-  /** Drop the dragged card immediately before this one. */
-  onDropOnCard: () => void
+  /** Drop the dragged card before (after=false) or after (after=true) this one. */
+  onDropOnCard: (after: boolean) => void
 }) {
   const agentType: AgentType = run.agentType ?? 'hermes'
   const tui = isTuiAgent(agentType)
   const cardRef = useRef<HTMLElement | null>(null)
   const [metaCollapsed, setMetaCollapsed] = useState(false)
   const [dragOver, setDragOver] = useState(false)
+  // Whether the hovering drop would land after (below) this card vs before.
+  const [dragOverAfter, setDragOverAfter] = useState(false)
   const [draft, setDraft] = useState('')
   const [askParentId, setAskParentId] = useState<string | null>(null)
   const [askDraft, setAskDraft] = useState('')
@@ -855,7 +863,7 @@ function ConversationCard({
     <article
       id={`conversation-${run.id}`}
       ref={cardRef}
-      className={`conv-card ${collapsed ? 'collapsed' : ''} ${active ? 'active' : ''} ${dragging ? 'dragging' : ''} ${dragOver ? 'drag-over' : ''}`}
+      className={`conv-card ${collapsed ? 'collapsed' : ''} ${active ? 'active' : ''} ${dragging ? 'dragging' : ''} ${dragOver ? (dragOverAfter ? 'drag-over after' : 'drag-over') : ''}`}
       onMouseDown={(event) => {
         // Toggle draggable synchronously on the element so the browser's
         // drag-vs-select decision for THIS press is correct: off over inputs
@@ -879,7 +887,10 @@ function ConversationCard({
       onDragOver={(event) => {
         if (!dragActive) return
         event.preventDefault()
+        const rect = event.currentTarget.getBoundingClientRect()
+        const after = event.clientY > rect.top + rect.height / 2
         if (!dragOver) setDragOver(true)
+        if (after !== dragOverAfter) setDragOverAfter(after)
       }}
       onDragLeave={(event) => {
         // Ignore leaves into child elements.
@@ -890,8 +901,10 @@ function ConversationCard({
         if (!dragActive) return
         event.preventDefault()
         event.stopPropagation()
+        const rect = event.currentTarget.getBoundingClientRect()
+        const after = event.clientY > rect.top + rect.height / 2
         setDragOver(false)
-        onDropOnCard()
+        onDropOnCard(after)
       }}
     >
       <div className="conv-card-head" onClick={onToggle}>
@@ -1814,24 +1827,26 @@ export default function App() {
   const launchApp = (slug: string) => openPanel(`app:${slug}`)
   const closeApp = (slug: string) => closePanel(`app:${slug}`)
 
-  // Reorder a panel: pull it out and reinsert before `beforeId` (or at the end).
-  function movePanel(draggedId: string, beforeId: string | null) {
+  // Reorder a panel: pull it out and reinsert relative to `targetId` (before, or
+  // after when `after` is true; at the end when targetId is null).
+  function movePanel(draggedId: string, targetId: string | null, after = false) {
     setPanelOrder((current) => {
       if (!current.includes(draggedId)) return current
       const without = current.filter((p) => p !== draggedId)
-      if (!beforeId) return [...without, draggedId]
-      const idx = without.indexOf(beforeId)
+      if (!targetId) return [...without, draggedId]
+      let idx = without.indexOf(targetId)
       if (idx < 0) return [...without, draggedId]
+      if (after) idx += 1
       return [...without.slice(0, idx), draggedId, ...without.slice(idx)]
     })
   }
   function setPanelColumn(panelId: string, column: number) {
     setPanelColumns((current) => ({ ...current, [panelId]: column }))
   }
-  // Drop a panel before another panel — inherit the target's column.
-  function handleDropBeforePanel(targetId: string) {
+  // Drop a panel before/after another panel — inherit the target's column.
+  function handleDropOnPanel(targetId: string, after: boolean) {
     if (draggingPanelId && draggingPanelId !== targetId) {
-      movePanel(draggingPanelId, targetId)
+      movePanel(draggingPanelId, targetId, after)
       if (workspaceColumns === 2) setPanelColumn(draggingPanelId, panelColumns[targetId] ?? 0)
     }
     setDraggingPanelId(null)
@@ -1911,35 +1926,36 @@ export default function App() {
     updateRunContext(runId, { workspacePath: path, sessionId: null })
   }
 
-  // Reorder a card: pull `draggedId` out and reinsert it before `beforeId`
-  // (or at the end when beforeId is null). `column` reassigns its column when
-  // defined; left undefined the card keeps its current column.
-  function moveRun(draggedId: string, beforeId: string | null, column?: number) {
+  // Reorder a card: pull `draggedId` out and reinsert it relative to `targetId`
+  // (before it, or after it when `after` is true; at the end when targetId is
+  // null). `column` reassigns its column when defined.
+  function moveRun(draggedId: string, targetId: string | null, after = false, column?: number) {
     setRuns((current) => {
       const dragged = current.find((run) => run.id === draggedId)
       if (!dragged) return current
       const next = { ...dragged, column: column ?? dragged.column }
       const without = current.filter((run) => run.id !== draggedId)
-      if (!beforeId) return [...without, next]
-      const targetIdx = without.findIndex((run) => run.id === beforeId)
-      if (targetIdx < 0) return [...without, next]
-      return [...without.slice(0, targetIdx), next, ...without.slice(targetIdx)]
+      if (!targetId) return [...without, next]
+      let idx = without.findIndex((run) => run.id === targetId)
+      if (idx < 0) return [...without, next]
+      if (after) idx += 1
+      return [...without.slice(0, idx), next, ...without.slice(idx)]
     })
   }
 
-  // Drop the dragged card immediately before `targetId` (same column as target
-  // when in two-column mode).
-  function handleDropBeforeCard(targetId: string) {
+  // Drop the dragged card before/after `targetId` (same column as target in
+  // two-column mode).
+  function handleDropOnCard(targetId: string, after: boolean) {
     if (!draggingId || draggingId === targetId) return
     const targetColumn = workspaceColumns === 2 ? runs.find((run) => run.id === targetId)?.column ?? 0 : undefined
-    moveRun(draggingId, targetId, targetColumn)
+    moveRun(draggingId, targetId, after, targetColumn)
     setDraggingId(null)
   }
 
   // Drop onto a column's empty space → append to the end of that column.
   function handleDropToColumn(column: number) {
     if (!draggingId) return
-    moveRun(draggingId, null, workspaceColumns === 2 ? column : undefined)
+    moveRun(draggingId, null, false, workspaceColumns === 2 ? column : undefined)
     setDraggingId(null)
   }
 
@@ -2381,7 +2397,7 @@ export default function App() {
       dragActive={draggingId !== null && draggingId !== run.id}
       onDragStartCard={() => setDraggingId(run.id)}
       onDragEndCard={() => setDraggingId(null)}
-      onDropOnCard={() => handleDropBeforeCard(run.id)}
+      onDropOnCard={(after) => handleDropOnCard(run.id, after)}
       onToggle={() => toggleCollapse(run.id)}
       onSend={(text, parentTurnId) => sendInConversation(run.id, text, parentTurnId ?? null)}
       onTitleChange={(value) => updateRunContext(run.id, { task: value })}
@@ -2415,7 +2431,7 @@ export default function App() {
         dragActive={draggingPanelId !== null && draggingPanelId !== panelId}
         onDragStartPanel={() => setDraggingPanelId(panelId)}
         onDragEndPanel={() => setDraggingPanelId(null)}
-        onDropOnPanel={() => handleDropBeforePanel(panelId)}
+        onDropOnPanel={(after) => handleDropOnPanel(panelId, after)}
       >
         {content}
       </DraggablePanel>

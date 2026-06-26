@@ -1659,9 +1659,15 @@ button { cursor: pointer; }
 /* Off-screen clone used as the drag ghost. No box-shadow: the drag-image
    snapshot includes the shadow, which would extend the image above the card
    and offset the ghost ~1cm from the cursor. */
+/* Strip shadows on the ghost AND its descendants (e.g. an inner .web-terminal /
+   .web-view shadow) — included in the drag-image snapshot, they would extend
+   the image above the element and offset the ghost ~1cm from the cursor. */
+.drag-ghost,
+.drag-ghost * {
+  box-shadow: none !important;
+}
 .drag-ghost {
   opacity: 0.95;
-  box-shadow: none !important;
   pointer-events: none;
 }
 
@@ -1673,10 +1679,16 @@ button { cursor: pointer; }
   border-radius: 18px;
   box-shadow: 0 -3px 0 -1px var(--accent), var(--shadow);
 }
+.workspace-panel.drag-over.after {
+  box-shadow: 0 3px 0 -1px var(--accent), var(--shadow);
+}
 
 .conv-card.drag-over {
   border-color: rgba(121, 185, 255, 0.65);
   box-shadow: 0 -3px 0 -1px var(--accent), var(--shadow);
+}
+.conv-card.drag-over.after {
+  box-shadow: 0 3px 0 -1px var(--accent), var(--shadow);
 }
 
 .web-terminal {
