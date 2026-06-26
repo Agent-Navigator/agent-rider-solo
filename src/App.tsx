@@ -88,6 +88,8 @@ interface ConversationTreeCategory {
 const DEFAULT_CWD = '/root/agent-work/DEV/agent-rider'
 const DEFAULT_TERMINAL_CWD = '/root'
 const DEFAULT_TITLE = 'Agent Rider'
+// Same-origin mount of the Hermes WebUI (see the /hermes-ui proxy in vite.config.ts).
+const HERMES_WEBUI_SRC = '/hermes-ui/'
 
 const categoryRules: CategoryRule[] = [
   {
@@ -377,6 +379,132 @@ function turnRoleLabel(status: JobStatus) {
   return status === 'queued' ? 'Queued' : status === 'error' ? 'Error' : status === 'done' ? 'Done' : 'Running'
 }
 
+function formatBytes(size: number | null): string {
+  if (size == null) return ''
+  if (size < 1024) return `${size} B`
+  const units = ['KB', 'MB', 'GB', 'TB']
+  let value = size / 1024
+  let unit = 0
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024
+    unit += 1
+  }
+  return `${value < 10 ? value.toFixed(1) : Math.round(value)} ${units[unit]}`
+}
+
+/**
+ * Read-only file browser scoped to a conversation's workspace. Collapsed by default
+ * and lazy-loaded on first expand. Navigation is bounded to the workspace subtree
+ * (you can't browse above `rootPath`), and the backend further sandboxes to BROWSE_ROOT.
+ */
+function FileBrowser({ rootPath }: { rootPath: string }) {
+  const [open, setOpen] = useState(false)
+  const [path, setPath] = useState(rootPath)
+  const [listing, setListing] = useState<FsListing | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function load(target: string) {
+    setLoading(true)
+    setError(null)
+    // Fall back to the workspace root if the target can't be read.
+    const result = (await listDir(target)) ?? (await listDir(rootPath))
+    if (!result) {
+      setError('Unable to read this folder.')
+      setListing(null)
+      setLoading(false)
+      return
+    }
+    setListing(result)
+    setPath(result.path)
+    setLoading(false)
+  }
+
+  // When the conversation's workspace changes, reset to its root (reload if open).
+  useEffect(() => {
+    setPath(rootPath)
+    setListing(null)
+    if (open) void load(rootPath)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rootPath])
+
+  function toggleOpen() {
+    const next = !open
+    setOpen(next)
+    if (next && !listing) void load(path)
+  }
+
+  // Only allow walking up while staying within the workspace subtree.
+  const canGoUp = path !== rootPath && (path.startsWith(rootPath + '/') || rootPath === '/')
+  const relLabel = path === rootPath ? '.' : path.startsWith(rootPath + '/') ? path.slice(rootPath.length + 1) : path
+
+  return (
+    <div className={`file-browser ${open ? 'open' : ''}`}>
+      <button type="button" className="file-browser-toggle" onClick={toggleOpen} aria-expanded={open}>
+        <span className={`file-browser-caret ${open ? 'open' : ''}`} aria-hidden>▾</span>
+        <span className="tree-label">Files</span>
+        {open ? <span className="file-browser-cwd" title={path}>{relLabel}</span> : null}
+        <span className="file-browser-action">{open ? 'Hide' : 'Browse'}</span>
+      </button>
+
+      {open ? (
+        <div className="file-browser-body">
+          <div className="file-browser-bar">
+            <button
+              type="button"
+              className="file-browser-up"
+              disabled={!canGoUp || loading}
+              onClick={() => listing?.parent && void load(listing.parent)}
+              title={canGoUp ? 'Up one folder' : 'At workspace root'}
+            >
+              ↑ ..
+            </button>
+            <button
+              type="button"
+              className="file-browser-refresh"
+              disabled={loading}
+              onClick={() => void load(path)}
+              title="Refresh"
+            >
+              ⟳
+            </button>
+          </div>
+
+          {error ? <p className="error-text">{error}</p> : null}
+
+          <div className="file-browser-list">
+            {loading ? (
+              <div className="file-browser-empty">Loading…</div>
+            ) : listing && (listing.dirs.length || listing.files?.length) ? (
+              <>
+                {listing.dirs.map((dir) => (
+                  <button
+                    type="button"
+                    key={dir.path}
+                    className="file-row dir"
+                    onClick={() => void load(dir.path)}
+                    title={dir.name}
+                  >
+                    <span className="file-row-name">📁 {dir.name}</span>
+                  </button>
+                ))}
+                {(listing.files ?? []).map((file) => (
+                  <div key={file.path} className="file-row file" title={file.path}>
+                    <span className="file-row-name">📄 {file.name}</span>
+                    <span className="file-row-size">{formatBytes(file.size)}</span>
+                  </div>
+                ))}
+              </>
+            ) : (
+              <div className="file-browser-empty">Empty folder.</div>
+            )}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
 function ConversationCard({
   run,
   turns,
@@ -412,6 +540,26 @@ function ConversationCard({
   const turnTree = useMemo(() => buildTurnTree(turns), [turns])
   const status = run.jobStatus
   const isDraft = turns.length === 0
+  const lastTurnId = turns.length ? turns[turns.length - 1].id : null
+  const lastTurnRef = useRef<HTMLDivElement | null>(null)
+
+  // Auto-hide past turns (keeping only the latest expanded) and scroll to it
+  // whenever a new turn arrives.
+  useEffect(() => {
+    if (!lastTurnId) return
+    setCollapsedTurnIds(new Set(turns.filter((turn) => turn.id !== lastTurnId).map((turn) => turn.id)))
+    const frame = requestAnimationFrame(() => {
+      lastTurnRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+    })
+    return () => cancelAnimationFrame(frame)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastTurnId])
+
+  function hideAllTurns() {
+    setCollapsedTurnIds(new Set(turns.map((turn) => turn.id)))
+    setAskParentId(null)
+    setAskDraft('')
+  }
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -467,7 +615,11 @@ function ConversationCard({
     const isTurnCollapsed = collapsedTurnIds.has(turn.id)
 
     return (
-      <div key={turn.id} className={`turn-node depth-${Math.min(depth, 4)}`}>
+      <div
+        key={turn.id}
+        ref={turn.id === lastTurnId ? lastTurnRef : undefined}
+        className={`turn-node depth-${Math.min(depth, 4)}`}
+      >
         <article className={`turn ${turn.status} ${isTurnCollapsed ? 'collapsed' : ''}`}>
           <div
             className={`bubble user turn-toggle ${isTurnCollapsed ? 'collapsed' : ''}`}
@@ -625,10 +777,24 @@ function ConversationCard({
                 <span className="conv-workspace-action">Change…</span>
               </button>
             </div>
+            <FileBrowser rootPath={run.workspacePath} />
           </div>
 
           {turns.length ? (
             <div className="conversation-feed">
+              <div className="feed-toolbar">
+                <span className="feed-toolbar-label">
+                  {turns.length} {turns.length === 1 ? 'turn' : 'turns'}
+                </span>
+                <button
+                  type="button"
+                  className="hide-all-button"
+                  onClick={hideAllTurns}
+                  title="Collapse every turn in this conversation"
+                >
+                  Hide All
+                </button>
+              </div>
               {turnTree.map((node) => renderTurnNode(node))}
             </div>
           ) : null}
@@ -723,9 +889,13 @@ function ConversationTreeSidebar({
 function ResourceSidebar({
   terminalOpen,
   onLaunchTerminal,
+  hermesUiOpen,
+  onLaunchHermesUi,
 }: {
   terminalOpen: boolean
   onLaunchTerminal: () => void
+  hermesUiOpen: boolean
+  onLaunchHermesUi: () => void
 }) {
   return (
     <nav className="resource-sidebar card" aria-label="Resource view">
@@ -748,6 +918,15 @@ function ResourceSidebar({
             >
               <span className="tree-run-title">Local Terminal</span>
               <span className="resource-tool-action">{terminalOpen ? 'Open' : 'Launch'}</span>
+            </button>
+            <button
+              type="button"
+              className={`tree-nav-run resource-tool ${hermesUiOpen ? 'active' : ''}`}
+              onClick={onLaunchHermesUi}
+              title={hermesUiOpen ? 'Hermes WebUI is open' : 'Launch Hermes WebUI'}
+            >
+              <span className="tree-run-title">Hermes WebUI</span>
+              <span className="resource-tool-action">{hermesUiOpen ? 'Open' : 'Launch'}</span>
             </button>
           </div>
         </section>
@@ -937,6 +1116,94 @@ function WebTerminal({ initialCwd, onClose }: { initialCwd: string; onClose: () 
   )
 }
 
+/**
+ * Embeds an external web service in an iframe, framed with the same window chrome
+ * (collapse / full-window / reload / close) as the Local Terminal. Used for the
+ * "Hermes WebUI" tool, but generic enough for any same-origin web view.
+ */
+function WebView({ title, src, onClose }: { title: string; src: string; onClose: () => void }) {
+  const [collapsed, setCollapsed] = useState(false)
+  const [fullWindow, setFullWindow] = useState(false)
+  // Bumping the key remounts the iframe — a clean reload of the embedded service.
+  const [frameKey, setFrameKey] = useState(0)
+
+  function toggleFromKey(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.key !== 'Enter' && event.key !== ' ') return
+    event.preventDefault()
+    setCollapsed((current) => !current)
+  }
+
+  return (
+    <section
+      className={`web-terminal web-view ${collapsed ? 'collapsed' : ''} ${fullWindow ? 'full-window' : ''}`}
+      aria-label={title}
+    >
+      <div
+        className="terminal-head"
+        role="button"
+        tabIndex={0}
+        aria-expanded={!collapsed}
+        onClick={() => setCollapsed((current) => !current)}
+        onKeyDown={toggleFromKey}
+      >
+        <span className={`terminal-caret ${collapsed ? '' : 'open'}`} aria-hidden>
+          ▾
+        </span>
+        <div>
+          <div className="eyebrow">Resource · Tools</div>
+          <h2>{title}</h2>
+        </div>
+        <div className="terminal-actions">
+          <button
+            type="button"
+            className="terminal-icon-button"
+            title={fullWindow ? 'Exit full window' : 'Expand to full window'}
+            aria-label={fullWindow ? 'Exit full window' : 'Expand to full window'}
+            onClick={(event) => {
+              event.stopPropagation()
+              setFullWindow((current) => !current)
+            }}
+          >
+            {fullWindow ? '↙' : '⛶'}
+          </button>
+          <button
+            type="button"
+            className="terminal-clear"
+            onClick={(event) => {
+              event.stopPropagation()
+              setFrameKey((current) => current + 1)
+            }}
+          >
+            Reload
+          </button>
+          <button
+            type="button"
+            className="card-close"
+            title={`Close ${title}`}
+            aria-label={`Close ${title}`}
+            onClick={(event) => {
+              event.stopPropagation()
+              onClose()
+            }}
+          >
+            ×
+          </button>
+        </div>
+      </div>
+
+      <div className="terminal-body" aria-hidden={collapsed}>
+        <iframe
+          key={frameKey}
+          className="web-view-frame"
+          src={src}
+          title={title}
+          allow="clipboard-write; microphone"
+        />
+      </div>
+    </section>
+  )
+}
+
 function isBusyError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error)
   return /session busy|subagent still running|busy/i.test(message)
@@ -1097,6 +1364,8 @@ export default function App() {
   const [closedRunIds, setClosedRunIds] = useState<Set<string>>(new Set())
   // Whether the Local Terminal window is open — re-launchable from Resources.
   const [terminalOpen, setTerminalOpen] = useState(true)
+  // Whether the Hermes WebUI panel is open — launchable from Resources.
+  const [hermesUiOpen, setHermesUiOpen] = useState(false)
 
   const hasContent = runs.length > 0
   // Cards hidden via their close button drop out of the stack but stay in the tree.
@@ -1418,6 +1687,11 @@ export default function App() {
         if (state.runs.length) {
           const restored = state.runs as RunNode[]
           setRuns((current) => (current.length ? current : restored))
+          // Only launch the most recent conversation card (restored[0]); keep the rest
+          // hidden in the Navigator so they can be re-launched on demand.
+          setClosedRunIds((current) =>
+            current.size ? current : new Set(restored.slice(1).map((run) => run.id)),
+          )
           // Restore each conversation's Hermes session so follow-ups continue the same thread.
           for (const run of restored) {
             if (run.sessionId) sessionByRunRef.current.set(run.id, run.sessionId)
@@ -1589,7 +1863,12 @@ export default function App() {
               onSelect={selectConversation}
               onDeleteRequest={requestDeleteConversation}
             />
-            <ResourceSidebar terminalOpen={terminalOpen} onLaunchTerminal={() => setTerminalOpen(true)} />
+            <ResourceSidebar
+              terminalOpen={terminalOpen}
+              onLaunchTerminal={() => setTerminalOpen(true)}
+              hermesUiOpen={hermesUiOpen}
+              onLaunchHermesUi={() => setHermesUiOpen(true)}
+            />
           </div>
 
           <section className="conversation-workspace" aria-label="Conversation cards">
@@ -1624,6 +1903,10 @@ export default function App() {
             <div className={`workspace-panels columns-${workspaceColumns}`}>
               {terminalOpen ? (
                 <WebTerminal initialCwd={DEFAULT_TERMINAL_CWD} onClose={() => setTerminalOpen(false)} />
+              ) : null}
+
+              {hermesUiOpen ? (
+                <WebView title="Hermes WebUI" src={HERMES_WEBUI_SRC} onClose={() => setHermesUiOpen(false)} />
               ) : null}
 
               <div className="conversation-card-column">
