@@ -19,11 +19,15 @@ const PORT = Number(process.env.STORE_PORT || 5174)
 const DEFAULT_CWD = resolve(process.env.HOME || '/root')
 
 // ── Persistent TUI agent sessions (tmux) ─────────────────────────────────────
-// TUI agents (claude/codex) run inside a tmux session on a private tmux server
-// so they keep running in the background after the websocket disconnects (card
-// closed, page reloaded, even this store process restarted). Reconnecting just
-// re-attaches the same session and tmux redraws the current screen.
-const TUI_AGENTS = { claude: 'claude', codex: 'codex' }
+// TUI agents run inside a tmux session on a private tmux server so they keep
+// running in the background after the websocket disconnects (card closed, page
+// reloaded, even this store process restarted). Reconnecting just re-attaches
+// the same session and tmux redraws the current screen.
+const TUI_AGENTS = {
+  claude: { file: 'claude', argv: ['--permission-mode', 'auto'] },
+  codex: { file: 'codex', argv: ['--yolo'] },
+  agy: { file: 'agy', argv: ['--dangerously-skip-permissions'] },
+}
 const TMUX_SOCKET = 'agent-rider' // private server (`tmux -L agent-rider`)
 const TMUX_CONF = join(tmpdir(), 'agent-rider-tmux.conf')
 try {
@@ -95,7 +99,7 @@ try {
 } catch {
   // column already present
 }
-// Migration: which agent backend drives each conversation (hermes | claude | codex).
+// Migration: which agent backend drives each conversation (hermes | claude | codex | agy).
 try {
   db.exec('ALTER TABLE runs ADD COLUMN agent_type TEXT')
 } catch {
@@ -633,6 +637,7 @@ function attachTerminalSocket(server) {
     // re-attaches it. Without a key it runs directly and dies on disconnect.
     const agentParam = requestUrl.searchParams.get('agent') || ''
     const agentCmd = Object.prototype.hasOwnProperty.call(TUI_AGENTS, agentParam) ? TUI_AGENTS[agentParam] : null
+    const agentLabel = agentCmd ? [agentCmd.file, ...agentCmd.argv].join(' ') : ''
     const sessionKey = (requestUrl.searchParams.get('session') || '').trim()
     const persistent = Boolean(agentCmd && sessionKey)
 
@@ -644,10 +649,10 @@ function attachTerminalSocket(server) {
       const name = tmuxSessionName(`${sessionKey}|${cwd}`, agentParam)
       file = 'tmux'
       argv = ['-L', TMUX_SOCKET, '-f', TMUX_CONF, 'new-session', '-A', '-s', name,
-        '-x', String(cols), '-y', String(rows), '-c', cwd, '--', agentCmd]
+        '-x', String(cols), '-y', String(rows), '-c', cwd, '--', agentCmd.file, ...agentCmd.argv]
     } else if (agentCmd) {
-      file = agentCmd
-      argv = []
+      file = agentCmd.file
+      argv = agentCmd.argv
     } else {
       file = shell
       argv = ['-l']
@@ -671,7 +676,7 @@ function attachTerminalSocket(server) {
 
     writeSocket(
       agentCmd
-        ? `\r\n\x1b[32m${persistent ? 'Attaching' : 'Starting'} ${agentCmd} in ${cwd}…\x1b[0m\r\n`
+        ? `\r\n\x1b[32m${persistent ? 'Attaching' : 'Starting'} ${agentLabel} in ${cwd}…\x1b[0m\r\n`
         : `\r\n\x1b[32mConnected to Agent Rider terminal\x1b[0m\r\n`,
     )
 
