@@ -797,12 +797,14 @@ function ConversationCard({
           clone.classList.add('drag-ghost')
           clone.style.position = 'fixed'
           clone.style.top = '0'
-          clone.style.left = '0'
+          clone.style.left = '-100000px' // off-screen without a transform
           clone.style.width = `${rect.width}px`
           clone.style.height = `${rect.height}px`
           clone.style.margin = '0'
-          clone.style.transform = 'translate(-100000px, -100000px)'
           clone.style.pointerEvents = 'none'
+          // No box-shadow: the snapshot includes the shadow, which would extend
+          // the image above the card's top and push the ghost ~1cm off-cursor.
+          clone.style.boxShadow = 'none'
           document.body.appendChild(clone)
           event.dataTransfer.setDragImage(clone, event.clientX - rect.left, event.clientY - rect.top)
           // Remove once the browser has taken its snapshot.

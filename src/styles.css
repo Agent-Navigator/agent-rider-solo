@@ -1673,10 +1673,12 @@ button { cursor: pointer; }
   opacity: 0.4;
 }
 
-/* Off-screen clone used as the drag ghost — render it fully opaque. */
+/* Off-screen clone used as the drag ghost. No box-shadow: the drag-image
+   snapshot includes the shadow, which would extend the image above the card
+   and offset the ghost ~1cm from the cursor. */
 .conv-card.drag-ghost {
   opacity: 0.95;
-  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+  box-shadow: none;
   pointer-events: none;
 }
 
