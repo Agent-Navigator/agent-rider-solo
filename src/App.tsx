@@ -1,4 +1,4 @@
-import { type FormEvent, type KeyboardEvent, type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
+import { type DragEvent, type FormEvent, type KeyboardEvent, type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { FitAddon } from '@xterm/addon-fit'
@@ -539,6 +539,97 @@ function FileBrowser({ rootPath }: { rootPath: string }) {
   )
 }
 
+// Interactive areas that should keep their own mouse behaviour rather than
+// starting a drag (shared by cards and workspace panels).
+const DRAG_EXCLUDE = 'input, textarea, select, button, a, iframe, [contenteditable="true"], .conv-agent-terminal, .terminal-screen'
+
+// Start an HTML5 drag using an off-screen clone of `element` as the ghost, so
+// the ghost tracks the exact grab point (passing the live element is
+// unreliable) and carries no box-shadow (which would offset it).
+function beginElementDrag(event: DragEvent, element: HTMLElement | null, id: string) {
+  event.dataTransfer.effectAllowed = 'move'
+  event.dataTransfer.setData('text/plain', id)
+  if (!element) return
+  const rect = element.getBoundingClientRect()
+  const clone = element.cloneNode(true) as HTMLElement
+  clone.classList.add('drag-ghost')
+  clone.style.position = 'fixed'
+  clone.style.top = '0'
+  clone.style.left = '-100000px'
+  clone.style.width = `${rect.width}px`
+  clone.style.height = `${rect.height}px`
+  clone.style.margin = '0'
+  clone.style.pointerEvents = 'none'
+  clone.style.boxShadow = 'none'
+  document.body.appendChild(clone)
+  event.dataTransfer.setDragImage(clone, event.clientX - rect.left, event.clientY - rect.top)
+  window.setTimeout(() => clone.remove(), 0)
+}
+
+// Wraps a workspace tool/app panel so it can be dragged to reorder among the
+// other panels (same drag affordance as conversation cards).
+function DraggablePanel({
+  panelId,
+  dragging,
+  dragActive,
+  onDragStartPanel,
+  onDragEndPanel,
+  onDropOnPanel,
+  children,
+}: {
+  panelId: string
+  dragging: boolean
+  dragActive: boolean
+  onDragStartPanel: () => void
+  onDragEndPanel: () => void
+  onDropOnPanel: () => void
+  children: ReactNode
+}) {
+  const ref = useRef<HTMLDivElement | null>(null)
+  const [dragOver, setDragOver] = useState(false)
+  return (
+    <div
+      ref={ref}
+      className={`plugin-panel workspace-panel ${dragging ? 'dragging' : ''} ${dragOver ? 'drag-over' : ''}`}
+      onMouseDown={(event) => {
+        const target = event.target as HTMLElement
+        if (ref.current) ref.current.draggable = !target.closest(DRAG_EXCLUDE)
+      }}
+      onDragStart={(event) => {
+        const target = event.target as HTMLElement
+        if (target.closest(DRAG_EXCLUDE)) {
+          event.preventDefault()
+          return
+        }
+        beginElementDrag(event, ref.current, panelId)
+        onDragStartPanel()
+      }}
+      onDragEnd={() => {
+        setDragOver(false)
+        onDragEndPanel()
+      }}
+      onDragOver={(event) => {
+        if (!dragActive) return
+        event.preventDefault()
+        if (!dragOver) setDragOver(true)
+      }}
+      onDragLeave={(event) => {
+        if (event.currentTarget.contains(event.relatedTarget as Node)) return
+        setDragOver(false)
+      }}
+      onDrop={(event) => {
+        if (!dragActive) return
+        event.preventDefault()
+        event.stopPropagation()
+        setDragOver(false)
+        onDropOnPanel()
+      }}
+    >
+      {children}
+    </div>
+  )
+}
+
 function ConversationCard({
   run,
   turns,
@@ -586,9 +677,6 @@ function ConversationCard({
   const cardRef = useRef<HTMLElement | null>(null)
   const [metaCollapsed, setMetaCollapsed] = useState(false)
   const [dragOver, setDragOver] = useState(false)
-  // Interactive areas that should keep their own mouse behaviour (focus, text
-  // selection, the embedded terminal) rather than starting a card drag.
-  const INTERACTIVE = 'input, textarea, select, button, a, [contenteditable="true"], .conv-agent-terminal'
   const [draft, setDraft] = useState('')
   const [askParentId, setAskParentId] = useState<string | null>(null)
   const [askDraft, setAskDraft] = useState('')
@@ -773,43 +861,15 @@ function ConversationCard({
         // drag-vs-select decision for THIS press is correct: off over inputs
         // (so they stay selectable), on everywhere else.
         const target = event.target as HTMLElement
-        if (cardRef.current) cardRef.current.draggable = !target.closest(INTERACTIVE)
+        if (cardRef.current) cardRef.current.draggable = !target.closest(DRAG_EXCLUDE)
       }}
       onDragStart={(event) => {
-        // Drag from any non-interactive area of the card. Let form controls,
-        // links, and the embedded terminal keep their own mouse behaviour.
         const target = event.target as HTMLElement
-        if (target.closest(INTERACTIVE)) {
+        if (target.closest(DRAG_EXCLUDE)) {
           event.preventDefault()
           return
         }
-        event.dataTransfer.effectAllowed = 'move'
-        event.dataTransfer.setData('text/plain', run.id)
-        // Use an off-screen clone as the drag ghost. Passing the live source
-        // element to setDragImage is unreliable (browsers often fall back to a
-        // default snapshot pinned to the top-left). The clone is sized to the
-        // card and offset by the cursor's position within it, so the ghost
-        // stays under the exact point that was grabbed.
-        const card = cardRef.current
-        if (card) {
-          const rect = card.getBoundingClientRect()
-          const clone = card.cloneNode(true) as HTMLElement
-          clone.classList.add('drag-ghost')
-          clone.style.position = 'fixed'
-          clone.style.top = '0'
-          clone.style.left = '-100000px' // off-screen without a transform
-          clone.style.width = `${rect.width}px`
-          clone.style.height = `${rect.height}px`
-          clone.style.margin = '0'
-          clone.style.pointerEvents = 'none'
-          // No box-shadow: the snapshot includes the shadow, which would extend
-          // the image above the card's top and push the ghost ~1cm off-cursor.
-          clone.style.boxShadow = 'none'
-          document.body.appendChild(clone)
-          event.dataTransfer.setDragImage(clone, event.clientX - rect.left, event.clientY - rect.top)
-          // Remove once the browser has taken its snapshot.
-          window.setTimeout(() => clone.remove(), 0)
-        }
+        beginElementDrag(event, cardRef.current, run.id)
         onDragStartCard()
       }}
       onDragEnd={() => {
@@ -1720,43 +1780,55 @@ export default function App() {
   // Closed (hidden) conversation cards — re-launchable from the Navigator.
   const [closedRunIds, setClosedRunIds] = useState<Set<string>>(new Set())
   // Whether the Local Terminal window is open — re-launchable from Resources.
-  const [terminalOpen, setTerminalOpen] = useState(false)
-  // Ids of plugin panels currently open — each launchable from Resources.
-  const [openPluginIds, setOpenPluginIds] = useState<Set<string>>(new Set())
-  // Runtime Agent Apps (auto-discovered from the store backend) and which are open.
+  // Single source of truth for which workspace panels are open AND their order.
+  // Panel ids: 'terminal', `plugin:<id>`, `app:<slug>`. The conversation cards
+  // column renders after these. Persisted as layout.panelOrder so the whole
+  // arrangement survives a reload.
+  const [panelOrder, setPanelOrder] = useState<string[]>([])
+  // Id of the panel currently being dragged (separate from card dragging).
+  const [draggingPanelId, setDraggingPanelId] = useState<string | null>(null)
+  // Runtime Agent Apps (auto-discovered from the store backend).
   const { listing: appListing, reorder: reorderApps, rename: renameAppLabel } = useAgentApps()
-  const [openAppSlugs, setOpenAppSlugs] = useState<Set<string>>(new Set())
 
-  function launchPlugin(pluginId: string) {
-    setOpenPluginIds((current) => {
-      const next = new Set(current)
-      next.add(pluginId)
-      return next
+  const terminalOpen = panelOrder.includes('terminal')
+  const openPluginIds = useMemo(
+    () => new Set(panelOrder.filter((p) => p.startsWith('plugin:')).map((p) => p.slice('plugin:'.length))),
+    [panelOrder],
+  )
+  const openAppSlugs = useMemo(
+    () => new Set(panelOrder.filter((p) => p.startsWith('app:')).map((p) => p.slice('app:'.length))),
+    [panelOrder],
+  )
+
+  function openPanel(panelId: string) {
+    setPanelOrder((current) => (current.includes(panelId) ? current : [...current, panelId]))
+  }
+  function closePanel(panelId: string) {
+    setPanelOrder((current) => current.filter((p) => p !== panelId))
+  }
+  const launchPlugin = (pluginId: string) => openPanel(`plugin:${pluginId}`)
+  const closePlugin = (pluginId: string) => closePanel(`plugin:${pluginId}`)
+  const launchApp = (slug: string) => openPanel(`app:${slug}`)
+  const closeApp = (slug: string) => closePanel(`app:${slug}`)
+
+  // Reorder a panel: pull it out and reinsert before `beforeId` (or at the end).
+  function movePanel(draggedId: string, beforeId: string | null) {
+    setPanelOrder((current) => {
+      if (!current.includes(draggedId)) return current
+      const without = current.filter((p) => p !== draggedId)
+      if (!beforeId) return [...without, draggedId]
+      const idx = without.indexOf(beforeId)
+      if (idx < 0) return [...without, draggedId]
+      return [...without.slice(0, idx), draggedId, ...without.slice(idx)]
     })
   }
-
-  function closePlugin(pluginId: string) {
-    setOpenPluginIds((current) => {
-      const next = new Set(current)
-      next.delete(pluginId)
-      return next
-    })
+  function handleDropBeforePanel(targetId: string) {
+    if (draggingPanelId && draggingPanelId !== targetId) movePanel(draggingPanelId, targetId)
+    setDraggingPanelId(null)
   }
-
-  function launchApp(slug: string) {
-    setOpenAppSlugs((current) => {
-      const next = new Set(current)
-      next.add(slug)
-      return next
-    })
-  }
-
-  function closeApp(slug: string) {
-    setOpenAppSlugs((current) => {
-      const next = new Set(current)
-      next.delete(slug)
-      return next
-    })
+  function handleDropPanelToEnd() {
+    if (draggingPanelId) movePanel(draggingPanelId, null)
+    setDraggingPanelId(null)
   }
 
   const hasContent = runs.length > 0
@@ -2129,6 +2201,16 @@ export default function App() {
           }
         }
         if (state.turns.length) setTurns((current) => (current.length ? current : (state.turns as TurnItem[])))
+        // Restore the workspace layout: which tool/app panels were open, their
+        // order, and the column count.
+        if (state.layout) {
+          if (Array.isArray(state.layout.panelOrder)) {
+            setPanelOrder((current) => (current.length ? current : (state.layout!.panelOrder as string[])))
+          }
+          if (state.layout.workspaceColumns === 1 || state.layout.workspaceColumns === 2) {
+            setWorkspaceColumns(state.layout.workspaceColumns)
+          }
+        }
       }
       hydratedRef.current = true
     })
@@ -2137,14 +2219,14 @@ export default function App() {
     }
   }, [])
 
-  // Debounced auto-save of runs/turns to the local SQLite backend.
+  // Debounced auto-save of runs/turns + layout to the local SQLite backend.
   useEffect(() => {
     if (!hydratedRef.current) return
     const handle = setTimeout(() => {
-      void persistState(runs, turns, sessionId)
+      void persistState(runs, turns, sessionId, { panelOrder, workspaceColumns })
     }, 700)
     return () => clearTimeout(handle)
-  }, [runs, turns, sessionId])
+  }, [runs, turns, sessionId, panelOrder, workspaceColumns])
 
   const summaryLine = useMemo(() => {
     if (!initialized) return 'Preparing Hermes bridge…'
@@ -2320,7 +2402,7 @@ export default function App() {
             />
             <ResourceSidebar
               terminalOpen={terminalOpen}
-              onLaunchTerminal={() => setTerminalOpen(true)}
+              onLaunchTerminal={() => openPanel('terminal')}
               openPluginIds={openPluginIds}
               onLaunchPlugin={launchPlugin}
               apps={appListing.apps}
@@ -2362,27 +2444,45 @@ export default function App() {
             </datalist>
 
             <div className={`workspace-panels columns-${workspaceColumns}`}>
-              {terminalOpen ? (
-                <WebTerminal initialCwd={DEFAULT_TERMINAL_CWD} onClose={() => setTerminalOpen(false)} />
-              ) : null}
+              {/* Tool / App panels, rendered in (and reorderable via) panelOrder. */}
+              {panelOrder.map((panelId) => {
+                let content: ReactNode = null
+                if (panelId === 'terminal') {
+                  content = <WebTerminal initialCwd={DEFAULT_TERMINAL_CWD} onClose={() => closePanel('terminal')} />
+                } else if (panelId.startsWith('plugin:')) {
+                  const plugin = plugins.find((p) => p.id === panelId.slice('plugin:'.length))
+                  if (plugin) content = plugin.renderPanel({ onClose: () => closePanel(panelId) })
+                } else if (panelId.startsWith('app:')) {
+                  const app = appListing.apps.find((a) => a.id === panelId.slice('app:'.length))
+                  if (app) content = <WebView title={app.label} src={app.entry} onClose={() => closePanel(panelId)} />
+                }
+                if (!content) return null
+                return (
+                  <DraggablePanel
+                    key={panelId}
+                    panelId={panelId}
+                    dragging={draggingPanelId === panelId}
+                    dragActive={draggingPanelId !== null && draggingPanelId !== panelId}
+                    onDragStartPanel={() => setDraggingPanelId(panelId)}
+                    onDragEndPanel={() => setDraggingPanelId(null)}
+                    onDropOnPanel={() => handleDropBeforePanel(panelId)}
+                  >
+                    {content}
+                  </DraggablePanel>
+                )
+              })}
 
-              {plugins
-                .filter((plugin) => openPluginIds.has(plugin.id))
-                .map((plugin) => (
-                  <div key={plugin.id} className="plugin-panel">
-                    {plugin.renderPanel({ onClose: () => closePlugin(plugin.id) })}
-                  </div>
-                ))}
-
-              {appListing.apps
-                .filter((app) => openAppSlugs.has(app.id))
-                .map((app) => (
-                  <div key={app.id} className="plugin-panel">
-                    <WebView title={app.label} src={app.entry} onClose={() => closeApp(app.id)} />
-                  </div>
-                ))}
-
-              <div className={`conversation-card-column ${workspaceColumns === 2 ? 'two-col' : ''}`}>
+              <div
+                className={`conversation-card-column ${workspaceColumns === 2 ? 'two-col' : ''}`}
+                onDragOver={(event) => {
+                  if (draggingPanelId) event.preventDefault()
+                }}
+                onDrop={(event) => {
+                  if (!draggingPanelId) return
+                  event.preventDefault()
+                  handleDropPanelToEnd()
+                }}
+              >
                 {!hasContent ? (
                   <div className="conv-empty">Click “New conversation” to begin.</div>
                 ) : visibleRuns.length ? (

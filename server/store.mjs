@@ -139,6 +139,25 @@ const upsertAppLabel = db.prepare(`
 `)
 const deleteAppLabel = db.prepare('DELETE FROM app_label WHERE slug = ?')
 
+// Generic key/value store for UI layout state (e.g. workspace panel order +
+// column count) so the arrangement of every component survives a reload.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS app_kv (
+    key TEXT PRIMARY KEY,
+    value TEXT,
+    updated_at TEXT
+  );
+`)
+const selectKv = db.prepare('SELECT value FROM app_kv WHERE key = ?')
+const upsertKv = db.prepare(`
+  INSERT INTO app_kv (key, value, updated_at) VALUES (?, ?, ?)
+  ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+`)
+function getKv(key) {
+  const row = selectKv.get(key)
+  return row ? row.value : null
+}
+
 const upsertRun = db.prepare(`
   INSERT INTO runs (id, session_id, prompt, category, category_tags, project, workspace, workspace_path, task, job, job_status, resource_ids, agent_type, col_index, sort_index, created_at, updated_at)
   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -202,7 +221,7 @@ function turnRowToApi(t) {
   }
 }
 
-function saveState({ runs = [], turns = [], sessionId = null }) {
+function saveState({ runs = [], turns = [], sessionId = null, layout = undefined }) {
   db.exec('BEGIN')
   try {
     runs.forEach((r, index) => {
@@ -255,6 +274,11 @@ function saveState({ runs = [], turns = [], sessionId = null }) {
       db.prepare(`DELETE FROM turns WHERE id NOT IN (${turnIds.map(() => '?').join(',')})`).run(...turnIds)
     } else {
       db.exec('DELETE FROM turns')
+    }
+    // Persist UI layout (workspace panel order + columns) when provided. Left
+    // undefined the existing layout is kept untouched.
+    if (layout !== undefined) {
+      upsertKv.run('layout', JSON.stringify(layout ?? null), nowIso())
     }
     db.exec('COMMIT')
   } catch (error) {
@@ -743,7 +767,8 @@ const server = createServer((req, res) => {
   if (req.method === 'GET' && url === '/store/state') {
     const runs = selectRuns.all().map(runRowToApi)
     const turns = selectTurns.all().map(turnRowToApi)
-    sendJson(res, 200, { runs, turns })
+    const layout = parseJson(getKv('layout'), null)
+    sendJson(res, 200, { runs, turns, layout })
     return
   }
 

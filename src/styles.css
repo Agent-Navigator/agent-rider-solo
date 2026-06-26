@@ -1676,10 +1676,19 @@ button { cursor: pointer; }
 /* Off-screen clone used as the drag ghost. No box-shadow: the drag-image
    snapshot includes the shadow, which would extend the image above the card
    and offset the ghost ~1cm from the cursor. */
-.conv-card.drag-ghost {
+.drag-ghost {
   opacity: 0.95;
-  box-shadow: none;
+  box-shadow: none !important;
   pointer-events: none;
+}
+
+/* Workspace tool/app panels are draggable to reorder, like cards. */
+.workspace-panel.dragging {
+  opacity: 0.4;
+}
+.workspace-panel.drag-over {
+  border-radius: 18px;
+  box-shadow: 0 -3px 0 -1px var(--accent), var(--shadow);
 }
 
 .conv-card.drag-over {

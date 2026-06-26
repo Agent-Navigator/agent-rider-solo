@@ -1,9 +1,17 @@
 // Client for the local SQLite persistence backend (server/store.mjs), proxied at /store.
 // All calls fail soft: if the backend is unavailable the app still works in-memory.
 
+// UI layout that should survive reloads: the workspace panel order and the
+// column count. Kept intentionally loose so new layout bits can be added.
+export interface WorkspaceLayout {
+  panelOrder?: string[]
+  workspaceColumns?: 1 | 2
+}
+
 export interface PersistedState {
   runs: unknown[]
   turns: unknown[]
+  layout: WorkspaceLayout | null
 }
 
 export async function loadPersistedState(): Promise<PersistedState | null> {
@@ -14,18 +22,24 @@ export async function loadPersistedState(): Promise<PersistedState | null> {
     return {
       runs: Array.isArray(data.runs) ? data.runs : [],
       turns: Array.isArray(data.turns) ? data.turns : [],
+      layout: data.layout && typeof data.layout === 'object' ? (data.layout as WorkspaceLayout) : null,
     }
   } catch {
     return null
   }
 }
 
-export async function persistState(runs: unknown[], turns: unknown[], sessionId: string | null): Promise<void> {
+export async function persistState(
+  runs: unknown[],
+  turns: unknown[],
+  sessionId: string | null,
+  layout?: WorkspaceLayout,
+): Promise<void> {
   try {
     await fetch('/store/save', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ runs, turns, sessionId }),
+      body: JSON.stringify({ runs, turns, sessionId, layout }),
     })
   } catch {
     // ignore — persistence is best-effort
