@@ -1673,6 +1673,13 @@ button { cursor: pointer; }
   opacity: 0.4;
 }
 
+/* Off-screen clone used as the drag ghost — render it fully opaque. */
+.conv-card.drag-ghost {
+  opacity: 0.95;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+  pointer-events: none;
+}
+
 .conv-card.drag-over {
   border-color: rgba(121, 185, 255, 0.65);
   box-shadow: 0 -3px 0 -1px var(--accent), var(--shadow);

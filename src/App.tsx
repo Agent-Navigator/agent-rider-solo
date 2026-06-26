@@ -785,10 +785,28 @@ function ConversationCard({
         }
         event.dataTransfer.effectAllowed = 'move'
         event.dataTransfer.setData('text/plain', run.id)
-        // Offset the drag ghost so it sits exactly under the grab point.
-        if (cardRef.current) {
-          const rect = cardRef.current.getBoundingClientRect()
-          event.dataTransfer.setDragImage(cardRef.current, event.clientX - rect.left, event.clientY - rect.top)
+        // Use an off-screen clone as the drag ghost. Passing the live source
+        // element to setDragImage is unreliable (browsers often fall back to a
+        // default snapshot pinned to the top-left). The clone is sized to the
+        // card and offset by the cursor's position within it, so the ghost
+        // stays under the exact point that was grabbed.
+        const card = cardRef.current
+        if (card) {
+          const rect = card.getBoundingClientRect()
+          const clone = card.cloneNode(true) as HTMLElement
+          clone.classList.add('drag-ghost')
+          clone.style.position = 'fixed'
+          clone.style.top = '0'
+          clone.style.left = '0'
+          clone.style.width = `${rect.width}px`
+          clone.style.height = `${rect.height}px`
+          clone.style.margin = '0'
+          clone.style.transform = 'translate(-100000px, -100000px)'
+          clone.style.pointerEvents = 'none'
+          document.body.appendChild(clone)
+          event.dataTransfer.setDragImage(clone, event.clientX - rect.left, event.clientY - rect.top)
+          // Remove once the browser has taken its snapshot.
+          window.setTimeout(() => clone.remove(), 0)
         }
         onDragStartCard()
       }}
