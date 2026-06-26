@@ -6,6 +6,7 @@ import { Terminal as XTermTerminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 import { HermesBridge, type HermesConnectionState } from './hermesBridge'
 import { loadPersistedState, persistState, listDir, makeDir, type FsListing } from './store'
+import { plugins, type AgentRiderPlugin } from '../plugins'
 
 type JobStatus = 'queued' | 'running' | 'done' | 'error'
 type ResourceHealth = 'Ready' | 'Needs setup' | 'Draft'
@@ -88,8 +89,6 @@ interface ConversationTreeCategory {
 const DEFAULT_CWD = '/root/agent-work/DEV/agent-rider'
 const DEFAULT_TERMINAL_CWD = '/root'
 const DEFAULT_TITLE = 'Agent Rider'
-// Same-origin mount of the Hermes WebUI (see the /hermes-ui proxy in vite.config.ts).
-const HERMES_WEBUI_SRC = '/hermes-ui/'
 
 const categoryRules: CategoryRule[] = [
   {
@@ -890,14 +889,29 @@ function ConversationTreeSidebar({
 function ResourceSidebar({
   terminalOpen,
   onLaunchTerminal,
-  hermesUiOpen,
-  onLaunchHermesUi,
+  openPluginIds,
+  onLaunchPlugin,
 }: {
   terminalOpen: boolean
   onLaunchTerminal: () => void
-  hermesUiOpen: boolean
-  onLaunchHermesUi: () => void
+  openPluginIds: Set<string>
+  onLaunchPlugin: (pluginId: string) => void
 }) {
+  // Built-in tools plus every registered plugin, grouped by their sidebar heading.
+  const groups = useMemo(() => {
+    const byGroup = new Map<string, AgentRiderPlugin[]>()
+    for (const plugin of plugins) {
+      const group = plugin.group ?? 'Tools'
+      const list = byGroup.get(group) ?? []
+      list.push(plugin)
+      byGroup.set(group, list)
+    }
+    return byGroup
+  }, [])
+
+  const pluginTools = groups.get('Tools') ?? []
+  const extraGroups = [...groups.entries()].filter(([group]) => group !== 'Tools')
+
   return (
     <nav className="resource-sidebar card" aria-label="Resource view">
       <div className="sidebar-head">
@@ -920,19 +934,48 @@ function ResourceSidebar({
               <span className="tree-run-title">Local Terminal</span>
               <span className="resource-tool-action">{terminalOpen ? 'Open' : 'Launch'}</span>
             </button>
-            <button
-              type="button"
-              className={`tree-nav-run resource-tool ${hermesUiOpen ? 'active' : ''}`}
-              onClick={onLaunchHermesUi}
-              title={hermesUiOpen ? 'Hermes WebUI is open' : 'Launch Hermes WebUI'}
-            >
-              <span className="tree-run-title">Hermes WebUI</span>
-              <span className="resource-tool-action">{hermesUiOpen ? 'Open' : 'Launch'}</span>
-            </button>
+            {pluginTools.map((plugin) => (
+              <PluginTool
+                key={plugin.id}
+                plugin={plugin}
+                open={openPluginIds.has(plugin.id)}
+                onLaunch={() => onLaunchPlugin(plugin.id)}
+              />
+            ))}
           </div>
         </section>
+
+        {extraGroups.map(([group, groupPlugins]) => (
+          <section key={group} className="tree-nav-category">
+            <h3>{group}</h3>
+            <div className="tree-nav-runs">
+              {groupPlugins.map((plugin) => (
+                <PluginTool
+                  key={plugin.id}
+                  plugin={plugin}
+                  open={openPluginIds.has(plugin.id)}
+                  onLaunch={() => onLaunchPlugin(plugin.id)}
+                />
+              ))}
+            </div>
+          </section>
+        ))}
       </div>
     </nav>
+  )
+}
+
+function PluginTool({ plugin, open, onLaunch }: { plugin: AgentRiderPlugin; open: boolean; onLaunch: () => void }) {
+  return (
+    <button
+      type="button"
+      className={`tree-nav-run resource-tool ${open ? 'active' : ''}`}
+      onClick={onLaunch}
+      title={open ? `${plugin.label} is open` : `Launch ${plugin.label}`}
+    >
+      <span className="tree-run-title">{plugin.label}</span>
+      <span className="resource-tool-action">{open ? 'Open' : 'Launch'}</span>
+    </button>
   )
 }
 
@@ -1117,94 +1160,6 @@ function WebTerminal({ initialCwd, onClose }: { initialCwd: string; onClose: () 
   )
 }
 
-/**
- * Embeds an external web service in an iframe, framed with the same window chrome
- * (collapse / full-window / reload / close) as the Local Terminal. Used for the
- * "Hermes WebUI" tool, but generic enough for any same-origin web view.
- */
-function WebView({ title, src, onClose }: { title: string; src: string; onClose: () => void }) {
-  const [collapsed, setCollapsed] = useState(false)
-  const [fullWindow, setFullWindow] = useState(false)
-  // Bumping the key remounts the iframe — a clean reload of the embedded service.
-  const [frameKey, setFrameKey] = useState(0)
-
-  function toggleFromKey(event: KeyboardEvent<HTMLDivElement>) {
-    if (event.key !== 'Enter' && event.key !== ' ') return
-    event.preventDefault()
-    setCollapsed((current) => !current)
-  }
-
-  return (
-    <section
-      className={`web-terminal web-view ${collapsed ? 'collapsed' : ''} ${fullWindow ? 'full-window' : ''}`}
-      aria-label={title}
-    >
-      <div
-        className="terminal-head"
-        role="button"
-        tabIndex={0}
-        aria-expanded={!collapsed}
-        onClick={() => setCollapsed((current) => !current)}
-        onKeyDown={toggleFromKey}
-      >
-        <span className={`terminal-caret ${collapsed ? '' : 'open'}`} aria-hidden>
-          ▾
-        </span>
-        <div>
-          <div className="eyebrow">Resource · Tools</div>
-          <h2>{title}</h2>
-        </div>
-        <div className="terminal-actions">
-          <button
-            type="button"
-            className="terminal-icon-button"
-            title={fullWindow ? 'Exit full window' : 'Expand to full window'}
-            aria-label={fullWindow ? 'Exit full window' : 'Expand to full window'}
-            onClick={(event) => {
-              event.stopPropagation()
-              setFullWindow((current) => !current)
-            }}
-          >
-            {fullWindow ? '↙' : '⛶'}
-          </button>
-          <button
-            type="button"
-            className="terminal-clear"
-            onClick={(event) => {
-              event.stopPropagation()
-              setFrameKey((current) => current + 1)
-            }}
-          >
-            Reload
-          </button>
-          <button
-            type="button"
-            className="card-close"
-            title={`Close ${title}`}
-            aria-label={`Close ${title}`}
-            onClick={(event) => {
-              event.stopPropagation()
-              onClose()
-            }}
-          >
-            ×
-          </button>
-        </div>
-      </div>
-
-      <div className="terminal-body" aria-hidden={collapsed}>
-        <iframe
-          key={frameKey}
-          className="web-view-frame"
-          src={src}
-          title={title}
-          allow="clipboard-write; microphone"
-        />
-      </div>
-    </section>
-  )
-}
-
 function isBusyError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error)
   return /session busy|subagent still running|busy/i.test(message)
@@ -1364,9 +1319,25 @@ export default function App() {
   // Closed (hidden) conversation cards — re-launchable from the Navigator.
   const [closedRunIds, setClosedRunIds] = useState<Set<string>>(new Set())
   // Whether the Local Terminal window is open — re-launchable from Resources.
-  const [terminalOpen, setTerminalOpen] = useState(true)
-  // Whether the Hermes WebUI panel is open — launchable from Resources.
-  const [hermesUiOpen, setHermesUiOpen] = useState(false)
+  const [terminalOpen, setTerminalOpen] = useState(false)
+  // Ids of plugin panels currently open — each launchable from Resources.
+  const [openPluginIds, setOpenPluginIds] = useState<Set<string>>(new Set())
+
+  function launchPlugin(pluginId: string) {
+    setOpenPluginIds((current) => {
+      const next = new Set(current)
+      next.add(pluginId)
+      return next
+    })
+  }
+
+  function closePlugin(pluginId: string) {
+    setOpenPluginIds((current) => {
+      const next = new Set(current)
+      next.delete(pluginId)
+      return next
+    })
+  }
 
   const hasContent = runs.length > 0
   // Cards hidden via their close button drop out of the stack but stay in the tree.
@@ -1867,8 +1838,8 @@ export default function App() {
             <ResourceSidebar
               terminalOpen={terminalOpen}
               onLaunchTerminal={() => setTerminalOpen(true)}
-              hermesUiOpen={hermesUiOpen}
-              onLaunchHermesUi={() => setHermesUiOpen(true)}
+              openPluginIds={openPluginIds}
+              onLaunchPlugin={launchPlugin}
             />
           </div>
 
@@ -1906,9 +1877,13 @@ export default function App() {
                 <WebTerminal initialCwd={DEFAULT_TERMINAL_CWD} onClose={() => setTerminalOpen(false)} />
               ) : null}
 
-              {hermesUiOpen ? (
-                <WebView title="Hermes WebUI" src={HERMES_WEBUI_SRC} onClose={() => setHermesUiOpen(false)} />
-              ) : null}
+              {plugins
+                .filter((plugin) => openPluginIds.has(plugin.id))
+                .map((plugin) => (
+                  <div key={plugin.id} className="plugin-panel">
+                    {plugin.renderPanel({ onClose: () => closePlugin(plugin.id) })}
+                  </div>
+                ))}
 
               <div className="conversation-card-column">
                 {!hasContent ? (
