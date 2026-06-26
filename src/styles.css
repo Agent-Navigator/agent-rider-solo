@@ -309,14 +309,31 @@ button { cursor: pointer; }
 }
 
 .role-group {
-  display: inline-flex;
+  display: flex;
+  flex: 1;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   min-width: 0;
+}
+
+.turn-prompt-sep {
+  color: var(--muted);
+  opacity: 0.5;
+  flex-shrink: 0;
+}
+
+.turn-prompt-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.5;
 }
 
 .turn-toggle-caret {
   display: inline-flex;
+  flex-shrink: 0;
   color: var(--muted);
   font-size: 11px;
   transition: transform 150ms ease;
@@ -334,6 +351,7 @@ button { cursor: pointer; }
 
 .role {
   display: inline-flex;
+  flex-shrink: 0;
   font-size: 11px;
   text-transform: uppercase;
   color: var(--muted);

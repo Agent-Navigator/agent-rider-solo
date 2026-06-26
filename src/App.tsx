@@ -635,6 +635,8 @@ function ConversationCard({
                   ▾
                 </span>
                 <span className="role">You</span>
+                <span className="turn-prompt-sep" aria-hidden>|</span>
+                <span className="turn-prompt-text">{turn.prompt}</span>
               </span>
               <button
                 type="button"
@@ -648,7 +650,6 @@ function ConversationCard({
                 {copiedTurnId === turn.id ? 'Copied' : 'Copy'}
               </button>
             </div>
-            <p>{turn.prompt}</p>
           </div>
           {!isTurnCollapsed ? (
             <div className="bubble assistant">
