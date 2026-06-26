@@ -1789,9 +1789,14 @@ export default function App() {
   const [newDoneIds, setNewDoneIds] = useState<Set<string>>(new Set())
   const [activeRunId, setActiveRunId] = useState<string | null>(null)
   const [workspaceColumns, setWorkspaceColumns] = useState<1 | 2>(1)
-  // Drag-and-drop reordering of conversation cards (and moving them across
-  // columns in two-column mode). Holds the id of the card being dragged.
-  const [draggingId, setDraggingId] = useState<string | null>(null)
+  // Key of the block (card or panel) currently being dragged. Block keys: a
+  // run id (`run-…`) for a card, or a panel id ('terminal' | 'plugin:…' |
+  // 'app:…'). One drag system so cards and panels can be freely interleaved.
+  const [draggingKey, setDraggingKey] = useState<string | null>(null)
+  // Unified display order of all blocks (cards + panels) across both columns.
+  // Persisted in layout.layoutOrder; column membership is per-block (run.column
+  // for cards, panelColumns for panels). New blocks append at the end.
+  const [layoutOrder, setLayoutOrder] = useState<string[]>([])
   // Which conversation's workspace picker is open (null = closed).
   const [pickerRunId, setPickerRunId] = useState<string | null>(null)
   const [deletePromptRunId, setDeletePromptRunId] = useState<string | null>(null)
@@ -1806,8 +1811,6 @@ export default function App() {
   // Which column (0 = left, 1 = right) each panel sits in, so panels can be
   // dragged to sit side-by-side with conversation cards in two-column mode.
   const [panelColumns, setPanelColumns] = useState<Record<string, number>>({})
-  // Id of the panel currently being dragged (separate from card dragging).
-  const [draggingPanelId, setDraggingPanelId] = useState<string | null>(null)
   // Runtime Agent Apps (auto-discovered from the store backend).
   const { listing: appListing, reorder: reorderApps, rename: renameAppLabel } = useAgentApps()
 
@@ -1832,37 +1835,8 @@ export default function App() {
   const launchApp = (slug: string) => openPanel(`app:${slug}`)
   const closeApp = (slug: string) => closePanel(`app:${slug}`)
 
-  // Reorder a panel: pull it out and reinsert relative to `targetId` (before, or
-  // after when `after` is true; at the end when targetId is null).
-  function movePanel(draggedId: string, targetId: string | null, after = false) {
-    setPanelOrder((current) => {
-      if (!current.includes(draggedId)) return current
-      const without = current.filter((p) => p !== draggedId)
-      if (!targetId) return [...without, draggedId]
-      let idx = without.indexOf(targetId)
-      if (idx < 0) return [...without, draggedId]
-      if (after) idx += 1
-      return [...without.slice(0, idx), draggedId, ...without.slice(idx)]
-    })
-  }
   function setPanelColumn(panelId: string, column: number) {
     setPanelColumns((current) => ({ ...current, [panelId]: column }))
-  }
-  // Drop a panel before/after another panel — inherit the target's column.
-  function handleDropOnPanel(targetId: string, after: boolean) {
-    if (draggingPanelId && draggingPanelId !== targetId) {
-      movePanel(draggingPanelId, targetId, after)
-      if (workspaceColumns === 2) setPanelColumn(draggingPanelId, panelColumns[targetId] ?? 0)
-    }
-    setDraggingPanelId(null)
-  }
-  // Drop a panel onto a column's free space — move it to that column's end.
-  function handleDropPanelToColumn(column: number) {
-    if (draggingPanelId) {
-      movePanel(draggingPanelId, null)
-      if (workspaceColumns === 2) setPanelColumn(draggingPanelId, column)
-    }
-    setDraggingPanelId(null)
   }
 
   const hasContent = runs.length > 0
@@ -1931,37 +1905,50 @@ export default function App() {
     updateRunContext(runId, { workspacePath: path, sessionId: null })
   }
 
-  // Reorder a card: pull `draggedId` out and reinsert it relative to `targetId`
-  // (before it, or after it when `after` is true; at the end when targetId is
-  // null). `column` reassigns its column when defined.
-  function moveRun(draggedId: string, targetId: string | null, after = false, column?: number) {
-    setRuns((current) => {
-      const dragged = current.find((run) => run.id === draggedId)
-      if (!dragged) return current
-      const next = { ...dragged, column: column ?? dragged.column }
-      const without = current.filter((run) => run.id !== draggedId)
-      if (!targetId) return [...without, next]
-      let idx = without.findIndex((run) => run.id === targetId)
-      if (idx < 0) return [...without, next]
-      if (after) idx += 1
-      return [...without.slice(0, idx), next, ...without.slice(idx)]
-    })
+  // ── Unified block ordering (cards + panels) ────────────────────────────────
+  const isCardKey = (key: string) => key.startsWith('run-')
+  const columnOf = (key: string) =>
+    isCardKey(key) ? runs.find((run) => run.id === key)?.column ?? 0 : panelColumns[key] ?? 0
+  const setColumnOf = (key: string, column: number) => {
+    if (isCardKey(key)) updateRunContext(key, { column })
+    else setPanelColumn(key, column)
   }
 
-  // Drop the dragged card before/after `targetId` (same column as target in
-  // two-column mode).
-  function handleDropOnCard(targetId: string, after: boolean) {
-    if (!draggingId || draggingId === targetId) return
-    const targetColumn = workspaceColumns === 2 ? runs.find((run) => run.id === targetId)?.column ?? 0 : undefined
-    moveRun(draggingId, targetId, after, targetColumn)
-    setDraggingId(null)
+  // The display order of every visible block. Honors layoutOrder, then appends
+  // any newly-added block (card/panel) not yet placed.
+  const orderedKeys = useMemo(() => {
+    const live = [...panelOrder, ...visibleRuns.map((run) => run.id)]
+    const liveSet = new Set(live)
+    const placed = layoutOrder.filter((key) => liveSet.has(key))
+    const placedSet = new Set(placed)
+    const missing = live.filter((key) => !placedSet.has(key))
+    return [...placed, ...missing]
+  }, [panelOrder, visibleRuns, layoutOrder])
+
+  function reorderKeys(keys: string[], draggedKey: string, targetKey: string | null, after: boolean) {
+    const without = keys.filter((k) => k !== draggedKey)
+    if (!targetKey) return [...without, draggedKey]
+    let idx = without.indexOf(targetKey)
+    if (idx < 0) return [...without, draggedKey]
+    if (after) idx += 1
+    return [...without.slice(0, idx), draggedKey, ...without.slice(idx)]
+  }
+
+  // Drop the dragged block before/after a target block (any mix of card/panel),
+  // inheriting the target's column in two-column mode.
+  function handleDropOnBlock(targetKey: string, after: boolean) {
+    if (!draggingKey || draggingKey === targetKey) return
+    if (workspaceColumns === 2) setColumnOf(draggingKey, columnOf(targetKey))
+    setLayoutOrder(reorderKeys(orderedKeys, draggingKey, targetKey, after))
+    setDraggingKey(null)
   }
 
   // Drop onto a column's empty space → append to the end of that column.
   function handleDropToColumn(column: number) {
-    if (!draggingId) return
-    moveRun(draggingId, null, false, workspaceColumns === 2 ? column : undefined)
-    setDraggingId(null)
+    if (!draggingKey) return
+    if (workspaceColumns === 2) setColumnOf(draggingKey, column)
+    setLayoutOrder(reorderKeys(orderedKeys, draggingKey, null, false))
+    setDraggingKey(null)
   }
 
   // Known values for the Category/Project comboboxes: built-ins + anything seen in history.
@@ -2245,6 +2232,9 @@ export default function App() {
           if (state.layout.panelColumns && typeof state.layout.panelColumns === 'object') {
             setPanelColumns((current) => (Object.keys(current).length ? current : (state.layout!.panelColumns as Record<string, number>)))
           }
+          if (Array.isArray(state.layout.layoutOrder)) {
+            setLayoutOrder((current) => (current.length ? current : (state.layout!.layoutOrder as string[])))
+          }
           if (state.layout.workspaceColumns === 1 || state.layout.workspaceColumns === 2) {
             setWorkspaceColumns(state.layout.workspaceColumns)
           }
@@ -2261,10 +2251,10 @@ export default function App() {
   useEffect(() => {
     if (!hydratedRef.current) return
     const handle = setTimeout(() => {
-      void persistState(runs, turns, sessionId, { panelOrder, panelColumns, workspaceColumns })
+      void persistState(runs, turns, sessionId, { panelOrder, panelColumns, layoutOrder, workspaceColumns })
     }, 700)
     return () => clearTimeout(handle)
-  }, [runs, turns, sessionId, panelOrder, panelColumns, workspaceColumns])
+  }, [runs, turns, sessionId, panelOrder, panelColumns, layoutOrder, workspaceColumns])
 
   const summaryLine = useMemo(() => {
     if (!initialized) return 'Preparing Hermes bridge…'
@@ -2398,11 +2388,11 @@ export default function App() {
       collapsed={collapsedIds.has(run.id)}
       active={activeRunId === run.id}
       isNewDone={newDoneIds.has(run.id)}
-      dragging={draggingId === run.id}
-      dragActive={draggingId !== null && draggingId !== run.id}
-      onDragStartCard={() => setDraggingId(run.id)}
-      onDragEndCard={() => setDraggingId(null)}
-      onDropOnCard={(after) => handleDropOnCard(run.id, after)}
+      dragging={draggingKey === run.id}
+      dragActive={draggingKey !== null && draggingKey !== run.id}
+      onDragStartCard={() => setDraggingKey(run.id)}
+      onDragEndCard={() => setDraggingKey(null)}
+      onDropOnCard={(after) => handleDropOnBlock(run.id, after)}
       onToggle={() => toggleCollapse(run.id)}
       onSend={(text, parentTurnId) => sendInConversation(run.id, text, parentTurnId ?? null)}
       onTitleChange={(value) => updateRunContext(run.id, { task: value })}
@@ -2432,25 +2422,33 @@ export default function App() {
       <DraggablePanel
         key={panelId}
         panelId={panelId}
-        dragging={draggingPanelId === panelId}
-        dragActive={draggingPanelId !== null && draggingPanelId !== panelId}
-        onDragStartPanel={() => setDraggingPanelId(panelId)}
-        onDragEndPanel={() => setDraggingPanelId(null)}
-        onDropOnPanel={(after) => handleDropOnPanel(panelId, after)}
+        dragging={draggingKey === panelId}
+        dragActive={draggingKey !== null && draggingKey !== panelId}
+        onDragStartPanel={() => setDraggingKey(panelId)}
+        onDragEndPanel={() => setDraggingKey(null)}
+        onDropOnPanel={(after) => handleDropOnBlock(panelId, after)}
       >
         {content}
       </DraggablePanel>
     )
   }
 
-  // One workspace column: its panels (in panelOrder) then its cards (in runs
-  // order). `col` filters by column in two-column mode; pass null for the
-  // single-column layout (everything, columns ignored). The column is a drop
-  // zone that reassigns a dropped panel/card to this column.
+  // Render one block (card or panel) by key.
+  const renderBlock = (key: string) => {
+    if (isCardKey(key)) {
+      const run = visibleRuns.find((r) => r.id === key)
+      return run ? renderRunCard(run) : null
+    }
+    return renderPanelBlock(key)
+  }
+
+  // One workspace column: its blocks (cards + panels interleaved) in display
+  // order. `col` filters by column in two-column mode; pass null for the
+  // single-column layout. The column is a drop zone that reassigns a dropped
+  // block to this column and moves it to the end.
   const renderWorkspaceColumn = (col: number | null) => {
-    const panels = col === null ? panelOrder : panelOrder.filter((id) => (panelColumns[id] ?? 0) === col)
-    const cards = col === null ? visibleRuns : visibleRuns.filter((run) => (run.column ?? 0) === col)
-    const dragActive = draggingId !== null || draggingPanelId !== null
+    const keys = col === null ? orderedKeys : orderedKeys.filter((key) => columnOf(key) === col)
+    const dragActive = draggingKey !== null
     return (
       <div
         key={col ?? 'single'}
@@ -2461,12 +2459,10 @@ export default function App() {
         onDrop={(event) => {
           if (!dragActive) return
           event.preventDefault()
-          if (draggingPanelId) handleDropPanelToColumn(col ?? 0)
-          else if (draggingId) handleDropToColumn(col ?? 0)
+          handleDropToColumn(col ?? 0)
         }}
       >
-        {panels.map(renderPanelBlock)}
-        {cards.map(renderRunCard)}
+        {keys.map(renderBlock)}
       </div>
     )
   }

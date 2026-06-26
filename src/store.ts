@@ -6,6 +6,8 @@
 export interface WorkspaceLayout {
   panelOrder?: string[]
   panelColumns?: Record<string, number>
+  /** Unified display order of all blocks (card ids + panel ids). */
+  layoutOrder?: string[]
   workspaceColumns?: 1 | 2
 }
 
