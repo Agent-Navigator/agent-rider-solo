@@ -9,11 +9,13 @@ import {
   loadPersistedState,
   persistState,
   listDir,
+  readFilePreview,
   makeDir,
   listApps,
   setAppOrder,
   renameApp,
   type FsListing,
+  type FsFilePreview,
   type AgentApp,
   type AppListing,
   type AppWarning,
@@ -462,12 +464,17 @@ function FileBrowser({ rootPath }: { rootPath: string }) {
   const [open, setOpen] = useState(false)
   const [path, setPath] = useState(rootPath)
   const [listing, setListing] = useState<FsListing | null>(null)
+  const [preview, setPreview] = useState<FsFilePreview | null>(null)
   const [loading, setLoading] = useState(false)
+  const [previewLoading, setPreviewLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [previewError, setPreviewError] = useState<string | null>(null)
 
   async function load(target: string) {
     setLoading(true)
     setError(null)
+    setPreview(null)
+    setPreviewError(null)
     // Fall back to the workspace root if the target can't be read.
     const result = (await listDir(target)) ?? (await listDir(rootPath))
     if (!result) {
@@ -481,10 +488,25 @@ function FileBrowser({ rootPath }: { rootPath: string }) {
     setLoading(false)
   }
 
+  async function openFile(filePath: string) {
+    setPreviewLoading(true)
+    setPreviewError(null)
+    const result = await readFilePreview(filePath)
+    if ('error' in result) {
+      setPreview(null)
+      setPreviewError(result.error)
+    } else {
+      setPreview(result)
+    }
+    setPreviewLoading(false)
+  }
+
   // When the conversation's workspace changes, reset to its root (reload if open).
   useEffect(() => {
     setPath(rootPath)
     setListing(null)
+    setPreview(null)
+    setPreviewError(null)
     if (open) void load(rootPath)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rootPath])
@@ -550,16 +572,56 @@ function FileBrowser({ rootPath }: { rootPath: string }) {
                   </button>
                 ))}
                 {(listing.files ?? []).map((file) => (
-                  <div key={file.path} className="file-row file" title={file.path}>
+                  <button
+                    type="button"
+                    key={file.path}
+                    className={`file-row file ${preview?.path === file.path ? 'active' : ''}`}
+                    title={file.path}
+                    onClick={() => void openFile(file.path)}
+                  >
                     <span className="file-row-name">📄 {file.name}</span>
                     <span className="file-row-size">{formatBytes(file.size)}</span>
-                  </div>
+                  </button>
                 ))}
               </>
             ) : (
               <div className="file-browser-empty">Empty folder.</div>
             )}
           </div>
+
+          {previewLoading ? <div className="file-browser-empty">Opening file…</div> : null}
+          {previewError ? <p className="error-text">{previewError}</p> : null}
+          {preview ? (
+            <div className="file-preview">
+              <div className="file-preview-head">
+                <div>
+                  <strong>{preview.name}</strong>
+                  <span>{preview.kind} · {formatBytes(preview.size)}</span>
+                </div>
+                <button type="button" className="file-preview-close" onClick={() => setPreview(null)} aria-label="Close file preview">
+                  ×
+                </button>
+              </div>
+              {preview.kind === 'image' ? (
+                <div className="file-preview-media">
+                  <img src={preview.dataUrl} alt={preview.name} />
+                </div>
+              ) : preview.kind === 'html' ? (
+                <iframe
+                  className="file-preview-html"
+                  title={preview.name}
+                  sandbox=""
+                  srcDoc={preview.content ?? ''}
+                />
+              ) : preview.kind === 'markdown' ? (
+                <div className="file-preview-markdown md-body">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{preview.content ?? ''}</ReactMarkdown>
+                </div>
+              ) : (
+                <pre className={`file-preview-code ${preview.kind}`}><code>{preview.content ?? ''}</code></pre>
+              )}
+            </div>
+          ) : null}
         </div>
       ) : null}
     </div>

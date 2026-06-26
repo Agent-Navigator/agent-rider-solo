@@ -81,6 +81,18 @@ export interface FsListing {
   files?: FsFileEntry[]
 }
 
+export type FsFilePreviewKind = 'text' | 'markdown' | 'code' | 'image' | 'html'
+
+export interface FsFilePreview {
+  name: string
+  path: string
+  size: number
+  kind: FsFilePreviewKind
+  mime: string
+  content?: string
+  dataUrl?: string
+}
+
 export async function listDir(path?: string): Promise<FsListing | null> {
   try {
     const res = await fetch(`/store/fs/list?path=${encodeURIComponent(path ?? '')}`)
@@ -88,6 +100,20 @@ export async function listDir(path?: string): Promise<FsListing | null> {
     return (await res.json()) as FsListing
   } catch {
     return null
+  }
+}
+
+export async function readFilePreview(path: string): Promise<FsFilePreview | { error: string }> {
+  try {
+    const res = await fetch(`/store/fs/read?path=${encodeURIComponent(path)}`)
+    const data = (await res.json()) as Partial<FsFilePreview> & { error?: string }
+    if (!res.ok || data.error) return { error: data.error || 'Unable to open this file' }
+    if (!data.name || !data.path || !data.kind || !data.mime || typeof data.size !== 'number') {
+      return { error: 'Invalid file preview response' }
+    }
+    return data as FsFilePreview
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : String(error) }
   }
 }
 

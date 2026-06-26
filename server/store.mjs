@@ -389,6 +389,61 @@ function makeDirectory(parent, name) {
   return { path: target, name: basename(target) }
 }
 
+const FILE_PREVIEW_MAX_BYTES = 8 * 1024 * 1024
+const MARKDOWN_EXTS = new Set(['.md', '.mdx', '.markdown'])
+const HTML_EXTS = new Set(['.html', '.htm'])
+const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg'])
+const TEXT_EXTS = new Set(['.txt', '.text', '.log', '.csv', '.tsv', '.ini', '.conf', '.config', '.env', '.example'])
+const CODE_EXTS = new Set([
+  '.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs',
+  '.css', '.scss', '.sass', '.less',
+  '.json', '.jsonc', '.yaml', '.yml', '.toml', '.xml',
+  '.py', '.rb', '.go', '.rs', '.java', '.kt', '.swift',
+  '.c', '.h', '.cpp', '.cc', '.cxx', '.hpp', '.cs',
+  '.php', '.sh', '.bash', '.zsh', '.fish', '.sql',
+  '.vue', '.svelte', '.astro',
+])
+const CODE_FILENAMES = new Set([
+  'Dockerfile', 'Containerfile', 'Makefile', 'Rakefile', 'Gemfile',
+  'package.json', 'tsconfig.json', 'vite.config.ts', 'vite.config.js',
+])
+
+function previewKind(filePath) {
+  const ext = extname(filePath).toLowerCase()
+  const name = basename(filePath)
+  if (IMAGE_EXTS.has(ext)) return 'image'
+  if (HTML_EXTS.has(ext)) return 'html'
+  if (MARKDOWN_EXTS.has(ext)) return 'markdown'
+  if (CODE_EXTS.has(ext) || CODE_FILENAMES.has(name)) return 'code'
+  if (TEXT_EXTS.has(ext) || ext === '') return 'text'
+  return null
+}
+
+function readFilePreview(input) {
+  const path = safeResolve(input)
+  if (!path) return { error: 'path outside allowed root', status: 403 }
+  let stat
+  try {
+    stat = statSync(path)
+  } catch {
+    return { error: 'file not found', status: 404 }
+  }
+  if (!stat.isFile()) return { error: 'not a file', status: 400 }
+  if (stat.size > FILE_PREVIEW_MAX_BYTES) return { error: 'file too large to preview', status: 413 }
+
+  const kind = previewKind(path)
+  if (!kind) return { error: 'unsupported file type', status: 415 }
+
+  const ext = extname(path).toLowerCase()
+  const mime = MIME_TYPES[ext] || (kind === 'image' ? 'application/octet-stream' : 'text/plain; charset=utf-8')
+  const buffer = readFileSync(path)
+  const base = { name: basename(path), path, size: stat.size, kind, mime }
+  if (kind === 'image') {
+    return { ...base, dataUrl: `data:${mime};base64,${buffer.toString('base64')}` }
+  }
+  return { ...base, content: buffer.toString('utf8') }
+}
+
 // ── Agent App plugins ───────────────────────────────────────────────────────
 // Apps are self-contained static web apps living under plugins/<slug>/, built to
 // plugins/<slug>/dist/ and served same-origin at /apps/<slug>/. They are
@@ -819,6 +874,13 @@ const server = createServer((req, res) => {
   if (req.method === 'GET' && url === '/store/fs/list') {
     const query = new URL(req.url, 'http://localhost').searchParams
     const result = listDirectory(query.get('path') || '')
+    sendJson(res, result.error ? result.status : 200, result)
+    return
+  }
+
+  if (req.method === 'GET' && url === '/store/fs/read') {
+    const query = new URL(req.url, 'http://localhost').searchParams
+    const result = readFilePreview(query.get('path') || '')
     sendJson(res, result.error ? result.status : 200, result)
     return
   }
