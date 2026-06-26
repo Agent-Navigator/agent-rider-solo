@@ -6,6 +6,15 @@ import type { ReactNode } from 'react'
 export interface PluginPanelContext {
   /** Closes this plugin's panel (and deactivates its sidebar tool). */
   onClose: () => void
+  /** Persisted panel chrome state owned by Agent Rider. */
+  panelState?: PluginPanelState
+  /** Persists chrome state changes such as collapse / full-window. */
+  onPanelStateChange?: (patch: PluginPanelState) => void
+}
+
+export interface PluginPanelState {
+  collapsed?: boolean
+  fullWindow?: boolean
 }
 
 /**

@@ -1,14 +1,29 @@
 // Client for the local SQLite persistence backend (server/store.mjs), proxied at /store.
 // All calls fail soft: if the backend is unavailable the app still works in-memory.
 
-// UI layout that should survive reloads: the workspace panel order and the
-// column count. Kept intentionally loose so new layout bits can be added.
+// UI layout that should survive reloads: block positions plus visible/collapsed
+// state for cards, tools, and apps. Kept intentionally loose so new layout bits
+// can be added.
+export interface WorkspacePanelState {
+  collapsed?: boolean
+  fullWindow?: boolean
+}
+
 export interface WorkspaceLayout {
+  /** Open tool/app panels, in launch order. */
   panelOrder?: string[]
   panelColumns?: Record<string, number>
   /** Unified display order of all blocks (card ids + panel ids). */
   layoutOrder?: string[]
   workspaceColumns?: 1 | 2
+  /** Conversation cards hidden via close, but still present in the Navigator. */
+  closedRunIds?: string[]
+  /** Conversation cards collapsed in the workspace. */
+  collapsedRunIds?: string[]
+  /** Per-card context section collapsed state. */
+  cardMetaCollapsedIds?: string[]
+  /** Per-panel chrome state keyed by panel id: terminal, plugin:<id>, app:<slug>. */
+  panelStates?: Record<string, WorkspacePanelState>
 }
 
 export interface PersistedState {

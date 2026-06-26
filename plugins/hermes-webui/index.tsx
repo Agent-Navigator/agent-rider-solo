@@ -10,7 +10,16 @@ const hermesWebUiPlugin: AgentRiderPlugin = {
   id: 'hermes-webui',
   label: 'Hermes WebUI',
   group: 'Tools',
-  renderPanel: ({ onClose }) => <WebView title="Hermes WebUI" src={HERMES_WEBUI_SRC} onClose={onClose} />,
+  renderPanel: ({ onClose, panelState, onPanelStateChange }) => (
+    <WebView
+      title="Hermes WebUI"
+      src={HERMES_WEBUI_SRC}
+      onClose={onClose}
+      collapsed={panelState?.collapsed}
+      fullWindow={panelState?.fullWindow}
+      onStateChange={onPanelStateChange}
+    />
+  ),
 }
 
 export default hermesWebUiPlugin

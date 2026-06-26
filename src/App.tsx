@@ -17,6 +17,7 @@ import {
   type AgentApp,
   type AppListing,
   type AppWarning,
+  type WorkspacePanelState,
 } from './store'
 import { plugins, type AgentRiderPlugin } from '../plugins'
 import { WebView } from '../plugins/WebView'
@@ -124,6 +125,7 @@ interface ConversationTreeCategory {
 const DEFAULT_CWD = '/root/agent-work/DEV/agent-rider'
 const DEFAULT_TERMINAL_CWD = '/root'
 const DEFAULT_TITLE = 'Agent Rider'
+const AGENT_TERMINAL_STATE_PREFIX = 'agent-terminal:'
 
 const categoryRules: CategoryRule[] = [
   {
@@ -219,6 +221,29 @@ const resourceTemplates: ResourceTemplate[] = [
 function makeId(prefix: string) {
   const suffix = typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID().slice(0, 8) : Math.random().toString(16).slice(2, 10)
   return `${prefix}-${suffix}`
+}
+
+function agentTerminalStateKey(runId: string) {
+  return `${AGENT_TERMINAL_STATE_PREFIX}${runId}`
+}
+
+function normalizePanelStates(value: unknown): Record<string, WorkspacePanelState> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+  const states: Record<string, WorkspacePanelState> = {}
+  for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue
+    const source = raw as Record<string, unknown>
+    const state: WorkspacePanelState = {}
+    if (typeof source.collapsed === 'boolean') state.collapsed = source.collapsed
+    if (typeof source.fullWindow === 'boolean') state.fullWindow = source.fullWindow
+    if (Object.keys(state).length) states[key] = state
+  }
+  return states
+}
+
+function layoutRunIdSet(value: unknown, validRunIds: Set<string>) {
+  if (!Array.isArray(value)) return null
+  return new Set(value.filter((id): id is string => typeof id === 'string' && validRunIds.has(id)))
 }
 
 function slugify(value: string) {
@@ -642,9 +667,11 @@ function ConversationCard({
   run,
   turns,
   collapsed,
+  metaCollapsed,
   active,
   isNewDone,
   onToggle,
+  onMetaCollapsedChange,
   onSend,
   onTitleChange,
   onCategoryChange,
@@ -657,13 +684,17 @@ function ConversationCard({
   onDragStartCard,
   onDragEndCard,
   onDropOnCard,
+  agentTerminalState,
+  onAgentTerminalStateChange,
 }: {
   run: RunNode
   turns: TurnItem[]
   collapsed: boolean
+  metaCollapsed: boolean
   active: boolean
   isNewDone: boolean
   onToggle: () => void
+  onMetaCollapsedChange: (collapsed: boolean) => void
   onSend: (text: string, parentTurnId?: string | null) => void
   onTitleChange: (value: string) => void
   onCategoryChange: (value: string) => void
@@ -679,11 +710,12 @@ function ConversationCard({
   onDragEndCard: () => void
   /** Drop the dragged card before (after=false) or after (after=true) this one. */
   onDropOnCard: (after: boolean) => void
+  agentTerminalState?: WorkspacePanelState
+  onAgentTerminalStateChange: (patch: WorkspacePanelState) => void
 }) {
   const agentType: AgentType = run.agentType ?? 'hermes'
   const tui = isTuiAgent(agentType)
   const cardRef = useRef<HTMLElement | null>(null)
-  const [metaCollapsed, setMetaCollapsed] = useState(false)
   const [dragOver, setDragOver] = useState(false)
   // Whether the hovering drop would land after (below) this card vs before.
   // Ref mirrors it for a staleness-free read in the drop handler.
@@ -965,7 +997,7 @@ function ConversationCard({
               type="button"
               className="conv-meta-toggle"
               aria-expanded={!metaCollapsed}
-              onClick={() => setMetaCollapsed((value) => !value)}
+              onClick={() => onMetaCollapsedChange(!metaCollapsed)}
             >
               <span className={`conv-meta-caret ${metaCollapsed ? '' : 'open'}`} aria-hidden>▾</span>
               <span className="conv-meta-toggle-label">Context</span>
@@ -1037,6 +1069,9 @@ function ConversationCard({
                 title={`${agentType} — interactive`}
                 showClose={false}
                 onClose={() => {}}
+                collapsed={agentTerminalState?.collapsed}
+                fullWindow={agentTerminalState?.fullWindow}
+                onStateChange={onAgentTerminalStateChange}
               />
             </div>
           ) : (
@@ -1440,6 +1475,9 @@ function WebTerminal({
   eyebrow = 'Resource · Tools',
   title = 'Local Terminal',
   showClose = true,
+  collapsed,
+  fullWindow,
+  onStateChange,
 }: {
   initialCwd: string
   onClose: () => void
@@ -1451,6 +1489,9 @@ function WebTerminal({
   eyebrow?: string
   title?: string
   showClose?: boolean
+  collapsed?: boolean
+  fullWindow?: boolean
+  onStateChange?: (patch: WorkspacePanelState) => void
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const terminalRef = useRef<XTermTerminal | null>(null)
@@ -1458,8 +1499,10 @@ function WebTerminal({
   const fitRef = useRef<() => void>(() => {})
   const [connectionState, setConnectionState] = useState<'connecting' | 'connected' | 'closed' | 'error'>('connecting')
   const [terminalKey, setTerminalKey] = useState(0)
-  const [terminalCollapsed, setTerminalCollapsed] = useState(false)
-  const [fullWindow, setFullWindow] = useState(false)
+  const [internalCollapsed, setInternalCollapsed] = useState(false)
+  const [internalFullWindow, setInternalFullWindow] = useState(false)
+  const terminalCollapsed = collapsed ?? internalCollapsed
+  const terminalFullWindow = fullWindow ?? internalFullWindow
 
   useEffect(() => {
     const container = containerRef.current
@@ -1550,22 +1593,34 @@ function WebTerminal({
 
   useEffect(() => {
     if (!terminalCollapsed) window.requestAnimationFrame(() => fitRef.current())
-  }, [terminalCollapsed, fullWindow, terminalKey])
+  }, [terminalCollapsed, terminalFullWindow, terminalKey])
+
+  function setTerminalCollapsedState(updater: boolean | ((current: boolean) => boolean)) {
+    const next = typeof updater === 'function' ? updater(terminalCollapsed) : updater
+    if (collapsed === undefined) setInternalCollapsed(next)
+    onStateChange?.({ collapsed: next })
+  }
+
+  function setTerminalFullWindowState(updater: boolean | ((current: boolean) => boolean)) {
+    const next = typeof updater === 'function' ? updater(terminalFullWindow) : updater
+    if (fullWindow === undefined) setInternalFullWindow(next)
+    onStateChange?.({ fullWindow: next })
+  }
 
   function toggleTerminalFromKey(event: KeyboardEvent<HTMLDivElement>) {
     if (event.key !== 'Enter' && event.key !== ' ') return
     event.preventDefault()
-    setTerminalCollapsed((current) => !current)
+    setTerminalCollapsedState((current) => !current)
   }
 
   return (
-    <section className={`web-terminal ${terminalCollapsed ? 'collapsed' : ''} ${fullWindow ? 'full-window' : ''}`} aria-label="Local Terminal">
+    <section className={`web-terminal ${terminalCollapsed ? 'collapsed' : ''} ${terminalFullWindow ? 'full-window' : ''}`} aria-label="Local Terminal">
       <div
         className="terminal-head"
         role="button"
         tabIndex={0}
         aria-expanded={!terminalCollapsed}
-        onClick={() => setTerminalCollapsed((current) => !current)}
+        onClick={() => setTerminalCollapsedState((current) => !current)}
         onKeyDown={toggleTerminalFromKey}
       >
         <span className={`terminal-caret ${terminalCollapsed ? '' : 'open'}`} aria-hidden>
@@ -1580,14 +1635,14 @@ function WebTerminal({
           <button
             type="button"
             className="terminal-icon-button"
-            title={fullWindow ? 'Exit full window' : 'Expand to full window'}
-            aria-label={fullWindow ? 'Exit full window' : 'Expand to full window'}
+            title={terminalFullWindow ? 'Exit full window' : 'Expand to full window'}
+            aria-label={terminalFullWindow ? 'Exit full window' : 'Expand to full window'}
             onClick={(event) => {
               event.stopPropagation()
-              setFullWindow((current) => !current)
+              setTerminalFullWindowState((current) => !current)
             }}
           >
-            {fullWindow ? '↙' : '⛶'}
+            {terminalFullWindow ? '↙' : '⛶'}
           </button>
           <button
             type="button"
@@ -1786,6 +1841,7 @@ export default function App() {
 
   // Per-conversation UI state.
   const [collapsedIds, setCollapsedIds] = useState<Set<string>>(new Set())
+  const [metaCollapsedIds, setMetaCollapsedIds] = useState<Set<string>>(new Set())
   const [newDoneIds, setNewDoneIds] = useState<Set<string>>(new Set())
   const [activeRunId, setActiveRunId] = useState<string | null>(null)
   const [workspaceColumns, setWorkspaceColumns] = useState<1 | 2>(1)
@@ -1811,6 +1867,8 @@ export default function App() {
   // Which column (0 = left, 1 = right) each panel sits in, so panels can be
   // dragged to sit side-by-side with conversation cards in two-column mode.
   const [panelColumns, setPanelColumns] = useState<Record<string, number>>({})
+  // Collapsed/full-window chrome state for Tools and Apps, keyed by panel id.
+  const [panelStates, setPanelStates] = useState<Record<string, WorkspacePanelState>>({})
   // Runtime Agent Apps (auto-discovered from the store backend).
   const { listing: appListing, reorder: reorderApps, rename: renameAppLabel } = useAgentApps()
 
@@ -1826,6 +1884,11 @@ export default function App() {
 
   function openPanel(panelId: string) {
     setPanelOrder((current) => (current.includes(panelId) ? current : [...current, panelId]))
+    setPanelStates((current) => {
+      const state = current[panelId]
+      if (!state || (!state.collapsed && !state.fullWindow)) return current
+      return { ...current, [panelId]: { ...state, collapsed: false, fullWindow: false } }
+    })
   }
   function closePanel(panelId: string) {
     setPanelOrder((current) => current.filter((p) => p !== panelId))
@@ -1837,6 +1900,25 @@ export default function App() {
 
   function setPanelColumn(panelId: string, column: number) {
     setPanelColumns((current) => ({ ...current, [panelId]: column }))
+  }
+
+  function updatePanelState(panelId: string, patch: WorkspacePanelState) {
+    setPanelStates((current) => {
+      const nextState = { ...(current[panelId] ?? {}), ...patch }
+      const normalized: WorkspacePanelState = {}
+      if (typeof nextState.collapsed === 'boolean') normalized.collapsed = nextState.collapsed
+      if (typeof nextState.fullWindow === 'boolean') normalized.fullWindow = nextState.fullWindow
+      return { ...current, [panelId]: normalized }
+    })
+  }
+
+  function setMetaCollapsed(runId: string, collapsed: boolean) {
+    setMetaCollapsedIds((current) => {
+      const next = new Set(current)
+      if (collapsed) next.add(runId)
+      else next.delete(runId)
+      return next
+    })
   }
 
   const hasContent = runs.length > 0
@@ -2048,10 +2130,24 @@ export default function App() {
       next.delete(runId)
       return next
     })
+    setMetaCollapsedIds((current) => {
+      if (!current.has(runId)) return current
+      const next = new Set(current)
+      next.delete(runId)
+      return next
+    })
     setNewDoneIds((current) => {
       if (!current.has(runId)) return current
       const next = new Set(current)
       next.delete(runId)
+      return next
+    })
+    setLayoutOrder((current) => current.filter((key) => key !== runId))
+    setPanelStates((current) => {
+      const key = agentTerminalStateKey(runId)
+      if (!(key in current)) return current
+      const next = { ...current }
+      delete next[key]
       return next
     })
   }
@@ -2203,6 +2299,7 @@ export default function App() {
     void loadPersistedState().then((state) => {
       if (cancelled) return
       if (state) {
+        const layout = state.layout
         // Merge defensively: never clobber content the user already created this session.
         if (state.runs.length) {
           // Default agentType for runs persisted before the field existed.
@@ -2211,12 +2308,25 @@ export default function App() {
             agentType: run.agentType ?? 'hermes',
             column: Number.isFinite(run.column) ? run.column : 0,
           }))
+          const restoredRunIds = new Set(restored.map((run) => run.id))
           setRuns((current) => (current.length ? current : restored))
-          // Only launch the most recent conversation card (restored[0]); keep the rest
-          // hidden in the Navigator so they can be re-launched on demand.
-          setClosedRunIds((current) =>
-            current.size ? current : new Set(restored.slice(1).map((run) => run.id)),
-          )
+          const restoredClosedRunIds = layoutRunIdSet(layout?.closedRunIds, restoredRunIds)
+          if (restoredClosedRunIds) {
+            setClosedRunIds((current) => (current.size ? current : restoredClosedRunIds))
+          } else {
+            // Legacy default for saves made before card visibility was persisted.
+            setClosedRunIds((current) =>
+              current.size ? current : new Set(restored.slice(1).map((run) => run.id)),
+            )
+          }
+          const restoredCollapsedRunIds = layoutRunIdSet(layout?.collapsedRunIds, restoredRunIds)
+          if (restoredCollapsedRunIds) {
+            setCollapsedIds((current) => (current.size ? current : restoredCollapsedRunIds))
+          }
+          const restoredMetaCollapsedRunIds = layoutRunIdSet(layout?.cardMetaCollapsedIds, restoredRunIds)
+          if (restoredMetaCollapsedRunIds) {
+            setMetaCollapsedIds((current) => (current.size ? current : restoredMetaCollapsedRunIds))
+          }
           // Restore each conversation's Hermes session so follow-ups continue the same thread.
           for (const run of restored) {
             if (run.sessionId) sessionByRunRef.current.set(run.id, run.sessionId)
@@ -2225,18 +2335,21 @@ export default function App() {
         if (state.turns.length) setTurns((current) => (current.length ? current : (state.turns as TurnItem[])))
         // Restore the workspace layout: which tool/app panels were open, their
         // order, and the column count.
-        if (state.layout) {
-          if (Array.isArray(state.layout.panelOrder)) {
-            setPanelOrder((current) => (current.length ? current : (state.layout!.panelOrder as string[])))
+        if (layout) {
+          if (Array.isArray(layout.panelOrder)) {
+            setPanelOrder((current) => (current.length ? current : (layout.panelOrder as string[])))
           }
-          if (state.layout.panelColumns && typeof state.layout.panelColumns === 'object') {
-            setPanelColumns((current) => (Object.keys(current).length ? current : (state.layout!.panelColumns as Record<string, number>)))
+          if (layout.panelColumns && typeof layout.panelColumns === 'object') {
+            setPanelColumns((current) => (Object.keys(current).length ? current : (layout.panelColumns as Record<string, number>)))
           }
-          if (Array.isArray(state.layout.layoutOrder)) {
-            setLayoutOrder((current) => (current.length ? current : (state.layout!.layoutOrder as string[])))
+          if (Array.isArray(layout.layoutOrder)) {
+            setLayoutOrder((current) => (current.length ? current : (layout.layoutOrder as string[])))
           }
-          if (state.layout.workspaceColumns === 1 || state.layout.workspaceColumns === 2) {
-            setWorkspaceColumns(state.layout.workspaceColumns)
+          if (layout.workspaceColumns === 1 || layout.workspaceColumns === 2) {
+            setWorkspaceColumns(layout.workspaceColumns)
+          }
+          if (layout.panelStates && typeof layout.panelStates === 'object') {
+            setPanelStates((current) => (Object.keys(current).length ? current : normalizePanelStates(layout.panelStates)))
           }
         }
       }
@@ -2251,10 +2364,19 @@ export default function App() {
   useEffect(() => {
     if (!hydratedRef.current) return
     const handle = setTimeout(() => {
-      void persistState(runs, turns, sessionId, { panelOrder, panelColumns, layoutOrder, workspaceColumns })
+      void persistState(runs, turns, sessionId, {
+        panelOrder,
+        panelColumns,
+        layoutOrder,
+        workspaceColumns,
+        closedRunIds: [...closedRunIds],
+        collapsedRunIds: [...collapsedIds],
+        cardMetaCollapsedIds: [...metaCollapsedIds],
+        panelStates,
+      })
     }, 700)
     return () => clearTimeout(handle)
-  }, [runs, turns, sessionId, panelOrder, panelColumns, layoutOrder, workspaceColumns])
+  }, [runs, turns, sessionId, panelOrder, panelColumns, layoutOrder, workspaceColumns, closedRunIds, collapsedIds, metaCollapsedIds, panelStates])
 
   const summaryLine = useMemo(() => {
     if (!initialized) return 'Preparing Hermes bridge…'
@@ -2386,6 +2508,7 @@ export default function App() {
       run={run}
       turns={turnsByRun.get(run.id) ?? []}
       collapsed={collapsedIds.has(run.id)}
+      metaCollapsed={metaCollapsedIds.has(run.id)}
       active={activeRunId === run.id}
       isNewDone={newDoneIds.has(run.id)}
       dragging={draggingKey === run.id}
@@ -2394,6 +2517,7 @@ export default function App() {
       onDragEndCard={() => setDraggingKey(null)}
       onDropOnCard={(after) => handleDropOnBlock(run.id, after)}
       onToggle={() => toggleCollapse(run.id)}
+      onMetaCollapsedChange={(collapsed) => setMetaCollapsed(run.id, collapsed)}
       onSend={(text, parentTurnId) => sendInConversation(run.id, text, parentTurnId ?? null)}
       onTitleChange={(value) => updateRunContext(run.id, { task: value })}
       onCategoryChange={(value) => updateRunContext(run.id, { category: value, categoryTags: tagsForCategory(value) })}
@@ -2401,6 +2525,8 @@ export default function App() {
       onAgentChange={(value) => updateRunContext(run.id, { agentType: value })}
       onOpenPicker={() => setPickerRunId(run.id)}
       onClose={() => closeConversation(run.id)}
+      agentTerminalState={panelStates[agentTerminalStateKey(run.id)]}
+      onAgentTerminalStateChange={(patch) => updatePanelState(agentTerminalStateKey(run.id), patch)}
     />
   )
 
@@ -2409,13 +2535,38 @@ export default function App() {
   const renderPanelBlock = (panelId: string) => {
     let content: ReactNode = null
     if (panelId === 'terminal') {
-      content = <WebTerminal initialCwd={DEFAULT_TERMINAL_CWD} onClose={() => closePanel('terminal')} />
+      content = (
+        <WebTerminal
+          initialCwd={DEFAULT_TERMINAL_CWD}
+          onClose={() => closePanel('terminal')}
+          collapsed={panelStates[panelId]?.collapsed}
+          fullWindow={panelStates[panelId]?.fullWindow}
+          onStateChange={(patch) => updatePanelState(panelId, patch)}
+        />
+      )
     } else if (panelId.startsWith('plugin:')) {
       const plugin = plugins.find((p) => p.id === panelId.slice('plugin:'.length))
-      if (plugin) content = plugin.renderPanel({ onClose: () => closePanel(panelId) })
+      if (plugin) {
+        content = plugin.renderPanel({
+          onClose: () => closePanel(panelId),
+          panelState: panelStates[panelId],
+          onPanelStateChange: (patch) => updatePanelState(panelId, patch),
+        })
+      }
     } else if (panelId.startsWith('app:')) {
       const app = appListing.apps.find((a) => a.id === panelId.slice('app:'.length))
-      if (app) content = <WebView title={app.label} src={app.entry} onClose={() => closePanel(panelId)} />
+      if (app) {
+        content = (
+          <WebView
+            title={app.label}
+            src={app.entry}
+            onClose={() => closePanel(panelId)}
+            collapsed={panelStates[panelId]?.collapsed}
+            fullWindow={panelStates[panelId]?.fullWindow}
+            onStateChange={(patch) => updatePanelState(panelId, patch)}
+          />
+        )
+      }
     }
     if (!content) return null
     return (
