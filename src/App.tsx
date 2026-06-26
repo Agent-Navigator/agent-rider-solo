@@ -836,11 +836,13 @@ function ConversationCard({
           {tui ? (
             <div className="conv-agent-terminal">
               <WebTerminal
-                // Reconnect a fresh agent when the workspace changes.
+                // Re-attach (not restart) on agent/workspace change — the tmux
+                // session persists in the background, keyed by run + agent + cwd.
                 key={`${agentType}:${run.workspacePath}`}
                 agent={agentType}
+                sessionKey={run.id}
                 initialCwd={run.workspacePath}
-                eyebrow={`Agent · ${agentLabel(agentType)}`}
+                eyebrow={`Agent · ${agentLabel(agentType)} · persistent`}
                 title={`${agentType} — interactive`}
                 showClose={false}
                 onClose={() => {}}
@@ -1243,6 +1245,7 @@ function WebTerminal({
   initialCwd,
   onClose,
   agent,
+  sessionKey,
   eyebrow = 'Resource · Tools',
   title = 'Local Terminal',
   showClose = true,
@@ -1251,6 +1254,9 @@ function WebTerminal({
   onClose: () => void
   /** When set, the PTY launches this TUI agent CLI instead of a login shell. */
   agent?: 'claude' | 'codex'
+  /** Stable key for a persistent (tmux-backed) agent session that survives
+   *  disconnects. Only meaningful together with `agent`. */
+  sessionKey?: string
   eyebrow?: string
   title?: string
   showClose?: boolean
@@ -1304,8 +1310,9 @@ function WebTerminal({
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
     const agentParam = agent ? `&agent=${encodeURIComponent(agent)}` : ''
+    const sessionParam = agent && sessionKey ? `&session=${encodeURIComponent(sessionKey)}` : ''
     const socket = new WebSocket(
-      `${protocol}//${window.location.host}/store/terminal/ws?cwd=${encodeURIComponent(initialCwd)}&cols=${terminal.cols}&rows=${terminal.rows}${agentParam}`,
+      `${protocol}//${window.location.host}/store/terminal/ws?cwd=${encodeURIComponent(initialCwd)}&cols=${terminal.cols}&rows=${terminal.rows}${agentParam}${sessionParam}`,
     )
     socketRef.current = socket
     setConnectionState('connecting')
@@ -1348,7 +1355,7 @@ function WebTerminal({
       if (socketRef.current === socket) socketRef.current = null
       if (terminalRef.current === terminal) terminalRef.current = null
     }
-  }, [initialCwd, terminalKey, agent])
+  }, [initialCwd, terminalKey, agent, sessionKey])
 
   useEffect(() => {
     if (!terminalCollapsed) window.requestAnimationFrame(() => fitRef.current())

@@ -4,8 +4,9 @@
 import { createServer } from 'node:http'
 import { spawn } from 'node:child_process'
 import { DatabaseSync } from 'node:sqlite'
-import { mkdirSync, readdirSync, statSync, readFileSync, existsSync, createReadStream } from 'node:fs'
+import { mkdirSync, readdirSync, statSync, readFileSync, writeFileSync, existsSync, createReadStream } from 'node:fs'
 import { dirname, join, resolve, basename, extname, normalize } from 'node:path'
+import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import * as pty from 'node-pty'
 import { WebSocket, WebSocketServer } from 'ws'
@@ -16,6 +17,37 @@ mkdirSync(DB_DIR, { recursive: true })
 const DB_PATH = join(DB_DIR, 'agent-rider.db')
 const PORT = Number(process.env.STORE_PORT || 5174)
 const DEFAULT_CWD = resolve(process.env.HOME || '/root')
+
+// ── Persistent TUI agent sessions (tmux) ─────────────────────────────────────
+// TUI agents (claude/codex) run inside a tmux session on a private tmux server
+// so they keep running in the background after the websocket disconnects (card
+// closed, page reloaded, even this store process restarted). Reconnecting just
+// re-attaches the same session and tmux redraws the current screen.
+const TUI_AGENTS = { claude: 'claude', codex: 'codex' }
+const TMUX_SOCKET = 'agent-rider' // private server (`tmux -L agent-rider`)
+const TMUX_CONF = join(tmpdir(), 'agent-rider-tmux.conf')
+try {
+  writeFileSync(
+    TMUX_CONF,
+    [
+      'set -g status off', // no status bar — embed cleanly in the card
+      'set -g window-size latest', // follow the most recently attached client
+      'set -g mouse on',
+      'set -g history-limit 10000',
+      'set -g destroy-unattached off', // keep sessions alive while detached
+      'setw -g aggressive-resize on',
+    ].join('\n') + '\n',
+  )
+} catch {
+  // best-effort; tmux falls back to its defaults if the conf can't be written
+}
+
+// Build a tmux session name that is stable per (run, agent, cwd) and safe for
+// tmux (no '.' or ':'). A cwd change yields a new session so it starts there.
+function tmuxSessionName(sessionKey, agent) {
+  const safe = String(sessionKey).replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 80)
+  return `ar_${agent}_${safe}`
+}
 
 const db = new DatabaseSync(DB_PATH)
 db.exec(`
@@ -33,6 +65,7 @@ db.exec(`
     job TEXT,
     job_status TEXT,
     resource_ids TEXT,
+    agent_type TEXT,
     sort_index INTEGER,
     created_at TEXT,
     updated_at TEXT
@@ -58,6 +91,12 @@ try {
 }
 try {
   db.exec('ALTER TABLE turns ADD COLUMN parent_turn_id TEXT')
+} catch {
+  // column already present
+}
+// Migration: which agent backend drives each conversation (hermes | claude | codex).
+try {
+  db.exec('ALTER TABLE runs ADD COLUMN agent_type TEXT')
 } catch {
   // column already present
 }
@@ -94,14 +133,14 @@ const upsertAppLabel = db.prepare(`
 const deleteAppLabel = db.prepare('DELETE FROM app_label WHERE slug = ?')
 
 const upsertRun = db.prepare(`
-  INSERT INTO runs (id, session_id, prompt, category, category_tags, project, workspace, workspace_path, task, job, job_status, resource_ids, sort_index, created_at, updated_at)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  INSERT INTO runs (id, session_id, prompt, category, category_tags, project, workspace, workspace_path, task, job, job_status, resource_ids, agent_type, sort_index, created_at, updated_at)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   ON CONFLICT(id) DO UPDATE SET
     session_id = excluded.session_id, prompt = excluded.prompt, category = excluded.category,
     category_tags = excluded.category_tags, project = excluded.project, workspace = excluded.workspace,
     workspace_path = excluded.workspace_path, task = excluded.task, job = excluded.job,
     job_status = excluded.job_status, resource_ids = excluded.resource_ids,
-    sort_index = excluded.sort_index,
+    agent_type = excluded.agent_type, sort_index = excluded.sort_index,
     created_at = excluded.created_at, updated_at = excluded.updated_at
 `)
 const upsertTurn = db.prepare(`
@@ -139,6 +178,7 @@ function runRowToApi(r) {
     jobStatus: r.job_status,
     resourceIds: parseJson(r.resource_ids, []),
     sessionId: r.session_id || null,
+    agentType: r.agent_type || 'hermes',
     createdAt: r.created_at,
   }
 }
@@ -172,6 +212,7 @@ function saveState({ runs = [], turns = [], sessionId = null }) {
         r.job ?? '',
         r.jobStatus ?? 'queued',
         JSON.stringify(r.resourceIds ?? []),
+        r.agentType ?? 'hermes',
         index,
         r.createdAt ?? nowIso(),
         nowIso(),
@@ -553,14 +594,32 @@ function attachTerminalSocket(server) {
     const { cols, rows } = parseTerminalSize(requestUrl.searchParams)
     const shell = process.env.SHELL || '/bin/bash'
 
-    // Optional `agent` param launches a TUI coding agent directly as the PTY's
-    // process instead of an interactive shell. Allowlisted so the param can't
-    // be used to spawn an arbitrary command. When the agent exits, the PTY ends.
-    const TUI_AGENTS = { claude: 'claude', codex: 'codex' }
+    // Optional `agent` param runs a TUI coding agent (allowlisted, so the param
+    // can't spawn an arbitrary command). With a `session` key the agent runs in
+    // a detached-survivable tmux session (persistent background); reconnecting
+    // re-attaches it. Without a key it runs directly and dies on disconnect.
     const agentParam = requestUrl.searchParams.get('agent') || ''
     const agentCmd = Object.prototype.hasOwnProperty.call(TUI_AGENTS, agentParam) ? TUI_AGENTS[agentParam] : null
-    const file = agentCmd || shell
-    const argv = agentCmd ? [] : ['-l']
+    const sessionKey = (requestUrl.searchParams.get('session') || '').trim()
+    const persistent = Boolean(agentCmd && sessionKey)
+
+    let file
+    let argv
+    if (persistent) {
+      // `new-session -A` attaches if the session exists, else creates it running
+      // the agent. -x/-y/-c apply only on create; on re-attach tmux redraws.
+      const name = tmuxSessionName(`${sessionKey}|${cwd}`, agentParam)
+      file = 'tmux'
+      argv = ['-L', TMUX_SOCKET, '-f', TMUX_CONF, 'new-session', '-A', '-s', name,
+        '-x', String(cols), '-y', String(rows), '-c', cwd, '--', agentCmd]
+    } else if (agentCmd) {
+      file = agentCmd
+      argv = []
+    } else {
+      file = shell
+      argv = ['-l']
+    }
+
     const terminal = pty.spawn(file, argv, {
       name: 'xterm-256color',
       cols,
@@ -579,13 +638,16 @@ function attachTerminalSocket(server) {
 
     writeSocket(
       agentCmd
-        ? `\r\n\x1b[32mStarting ${agentCmd} in ${cwd}…\x1b[0m\r\n`
+        ? `\r\n\x1b[32m${persistent ? 'Attaching' : 'Starting'} ${agentCmd} in ${cwd}…\x1b[0m\r\n`
         : `\r\n\x1b[32mConnected to Agent Rider terminal\x1b[0m\r\n`,
     )
 
     const terminalData = terminal.onData((data) => writeSocket(data))
     terminal.onExit(({ exitCode, signal }) => {
-      writeSocket(`\r\n\x1b[33mTerminal exited with code ${exitCode}${signal ? ` signal ${signal}` : ''}\x1b[0m\r\n`)
+      // In persistent mode this fires when the tmux *client* exits — i.e. on
+      // detach (socket closed → we killed it) as well as real session end. The
+      // tmux session itself lives on the private server until the agent exits.
+      writeSocket(`\r\n\x1b[33m${persistent ? 'Detached' : 'Terminal exited'} (code ${exitCode}${signal ? ` signal ${signal}` : ''})\x1b[0m\r\n`)
       socket.close()
     })
 
