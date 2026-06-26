@@ -17,6 +17,26 @@ mkdirSync(DB_DIR, { recursive: true })
 const DB_PATH = join(DB_DIR, 'agent-rider.db')
 const PORT = Number(process.env.STORE_PORT || 5174)
 const DEFAULT_CWD = resolve(process.env.HOME || '/root')
+const AGENT_PATH = [
+  join(DEFAULT_CWD, '.local', 'bin'),
+  '/usr/local/bin',
+  '/usr/bin',
+  '/bin',
+  ...(process.env.PATH || '').split(':'),
+].filter((part, index, parts) => part && parts.indexOf(part) === index).join(':')
+
+function resolveCommandFile(name) {
+  if (name.includes('/')) return name
+  for (const dir of AGENT_PATH.split(':')) {
+    const candidate = join(dir, name)
+    if (existsSync(candidate)) return candidate
+  }
+  return name
+}
+
+function shellQuote(args) {
+  return args.map((arg) => `'${String(arg).replaceAll("'", "'\\''")}'`).join(' ')
+}
 
 // ── Persistent TUI agent sessions (tmux) ─────────────────────────────────────
 // TUI agents run inside a tmux session on a private tmux server so they keep
@@ -24,9 +44,9 @@ const DEFAULT_CWD = resolve(process.env.HOME || '/root')
 // reloaded, even this store process restarted). Reconnecting just re-attaches
 // the same session and tmux redraws the current screen.
 const TUI_AGENTS = {
-  claude: { file: 'claude', argv: ['--permission-mode', 'auto'] },
-  codex: { file: 'codex', argv: ['--yolo'] },
-  agy: { file: 'agy', argv: ['--dangerously-skip-permissions'] },
+  claude: { label: 'claude', file: resolveCommandFile('claude'), argv: ['--permission-mode', 'auto'] },
+  codex: { label: 'codex', file: resolveCommandFile('codex'), argv: ['--yolo'] },
+  agy: { label: 'agy', file: resolveCommandFile('agy'), argv: ['--dangerously-skip-permissions'] },
 }
 const TMUX_SOCKET = 'agent-rider' // private server (`tmux -L agent-rider`)
 const TMUX_CONF = join(tmpdir(), 'agent-rider-tmux.conf')
@@ -637,7 +657,8 @@ function attachTerminalSocket(server) {
     // re-attaches it. Without a key it runs directly and dies on disconnect.
     const agentParam = requestUrl.searchParams.get('agent') || ''
     const agentCmd = Object.prototype.hasOwnProperty.call(TUI_AGENTS, agentParam) ? TUI_AGENTS[agentParam] : null
-    const agentLabel = agentCmd ? [agentCmd.file, ...agentCmd.argv].join(' ') : ''
+    const agentLabel = agentCmd ? [agentCmd.label, ...agentCmd.argv].join(' ') : ''
+    const agentShellCommand = agentCmd ? shellQuote([agentCmd.file, ...agentCmd.argv]) : ''
     const sessionKey = (requestUrl.searchParams.get('session') || '').trim()
     const persistent = Boolean(agentCmd && sessionKey)
 
@@ -649,7 +670,7 @@ function attachTerminalSocket(server) {
       const name = tmuxSessionName(`${sessionKey}|${cwd}`, agentParam)
       file = 'tmux'
       argv = ['-L', TMUX_SOCKET, '-f', TMUX_CONF, 'new-session', '-A', '-s', name,
-        '-x', String(cols), '-y', String(rows), '-c', cwd, '--', agentCmd.file, ...agentCmd.argv]
+        '-x', String(cols), '-y', String(rows), '-c', cwd, '-e', `PATH=${AGENT_PATH}`, '--', agentShellCommand]
     } else if (agentCmd) {
       file = agentCmd.file
       argv = agentCmd.argv
@@ -665,6 +686,7 @@ function attachTerminalSocket(server) {
       cwd,
       env: {
         ...process.env,
+        PATH: AGENT_PATH,
         TERM: 'xterm-256color',
         COLORTERM: process.env.COLORTERM || 'truecolor',
       },
