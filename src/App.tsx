@@ -863,6 +863,17 @@ function ConversationCard({
     setAskDraft('')
   }
 
+  function dropFilePathIntoTextarea(
+    event: DragEvent<HTMLTextAreaElement>,
+    setValue: (value: string) => void,
+  ) {
+    const filePath = filePathFromDrag(event)
+    if (!filePath) return
+    event.preventDefault()
+    event.stopPropagation()
+    setValue(insertIntoTextarea(event.currentTarget, filePath))
+  }
+
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const text = draft.trim()
@@ -977,6 +988,10 @@ function ConversationCard({
                   <textarea
                     value={askDraft}
                     onChange={(event) => setAskDraft(event.target.value)}
+                    onDragOver={(event) => {
+                      if (event.dataTransfer.types.includes('application/x-agent-rider-file-path')) event.preventDefault()
+                    }}
+                    onDrop={(event) => dropFilePathIntoTextarea(event, setAskDraft)}
                     placeholder="Ask a follow-up from this reply…"
                     rows={2}
                     autoFocus
@@ -1212,6 +1227,10 @@ function ConversationCard({
                 <textarea
                   value={draft}
                   onChange={(event) => setDraft(event.target.value)}
+                  onDragOver={(event) => {
+                    if (event.dataTransfer.types.includes('application/x-agent-rider-file-path')) event.preventDefault()
+                  }}
+                  onDrop={(event) => dropFilePathIntoTextarea(event, setDraft)}
                   placeholder={isDraft ? 'Describe the task to start this conversation…' : 'Reply in this conversation…'}
                   rows={2}
                 />
@@ -1727,6 +1746,13 @@ function WebTerminal({
     setTerminalCollapsedState((current) => !current)
   }
 
+  function pasteIntoTerminal(value: string) {
+    terminalRef.current?.focus()
+    if (socketRef.current?.readyState === WebSocket.OPEN) {
+      socketRef.current.send(JSON.stringify({ type: 'input', data: value }))
+    }
+  }
+
   return (
     <section className={`web-terminal ${terminalCollapsed ? 'collapsed' : ''} ${terminalFullWindow ? 'full-window' : ''}`} aria-label="Local Terminal">
       <div
@@ -1794,6 +1820,16 @@ function WebTerminal({
           role="application"
           aria-label="Interactive shell terminal"
           onClick={() => terminalRef.current?.focus()}
+          onDragOver={(event) => {
+            if (event.dataTransfer.types.includes('application/x-agent-rider-file-path')) event.preventDefault()
+          }}
+          onDrop={(event) => {
+            const filePath = filePathFromDrag(event)
+            if (!filePath) return
+            event.preventDefault()
+            event.stopPropagation()
+            pasteIntoTerminal(filePath)
+          }}
         />
 
         <div className="terminal-footer">

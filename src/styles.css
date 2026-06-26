@@ -1045,6 +1045,7 @@ button { cursor: pointer; }
   max-height: 420px;
   overflow: auto;
   padding: 10px 12px;
+  user-select: text;
 }
 
 .file-preview.full-window .file-preview-markdown {
@@ -1062,6 +1063,7 @@ button { cursor: pointer; }
   line-height: 1.55;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   white-space: pre;
+  user-select: text;
 }
 
 .file-preview.full-window .file-preview-code {
