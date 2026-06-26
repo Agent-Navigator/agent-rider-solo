@@ -59,6 +59,8 @@ interface RunNode {
   resourceIds: string[]
   sessionId?: string | null
   agentType: AgentType
+  /** Which card column (0 = left, 1 = right) in the two-column layout. */
+  column: number
   createdAt: string
 }
 
@@ -551,6 +553,11 @@ function ConversationCard({
   onAgentChange,
   onOpenPicker,
   onClose,
+  dragging,
+  dragActive,
+  onDragStartCard,
+  onDragEndCard,
+  onDropOnCard,
 }: {
   run: RunNode
   turns: TurnItem[]
@@ -565,9 +572,20 @@ function ConversationCard({
   onAgentChange: (value: AgentType) => void
   onOpenPicker: () => void
   onClose: () => void
+  /** True while THIS card is the one being dragged. */
+  dragging: boolean
+  /** True while SOME other card is being dragged (enables drop targets). */
+  dragActive: boolean
+  onDragStartCard: () => void
+  onDragEndCard: () => void
+  /** Drop the dragged card immediately before this one. */
+  onDropOnCard: () => void
 }) {
   const agentType: AgentType = run.agentType ?? 'hermes'
   const tui = isTuiAgent(agentType)
+  const cardRef = useRef<HTMLElement | null>(null)
+  const [metaCollapsed, setMetaCollapsed] = useState(false)
+  const [dragOver, setDragOver] = useState(false)
   const [draft, setDraft] = useState('')
   const [askParentId, setAskParentId] = useState<string | null>(null)
   const [askDraft, setAskDraft] = useState('')
@@ -745,9 +763,46 @@ function ConversationCard({
   return (
     <article
       id={`conversation-${run.id}`}
-      className={`conv-card ${collapsed ? 'collapsed' : ''} ${active ? 'active' : ''}`}
+      ref={cardRef}
+      className={`conv-card ${collapsed ? 'collapsed' : ''} ${active ? 'active' : ''} ${dragging ? 'dragging' : ''} ${dragOver ? 'drag-over' : ''}`}
+      onDragOver={(event) => {
+        if (!dragActive) return
+        event.preventDefault()
+        if (!dragOver) setDragOver(true)
+      }}
+      onDragLeave={(event) => {
+        // Ignore leaves into child elements.
+        if (event.currentTarget.contains(event.relatedTarget as Node)) return
+        setDragOver(false)
+      }}
+      onDrop={(event) => {
+        if (!dragActive) return
+        event.preventDefault()
+        event.stopPropagation()
+        setDragOver(false)
+        onDropOnCard()
+      }}
     >
       <div className="conv-card-head" onClick={onToggle}>
+        <span
+          className="conv-drag-handle"
+          draggable
+          title="Drag to reorder / move column"
+          aria-label="Drag to reorder"
+          onClick={(event) => event.stopPropagation()}
+          onDragStart={(event) => {
+            event.dataTransfer.effectAllowed = 'move'
+            event.dataTransfer.setData('text/plain', run.id)
+            if (cardRef.current) event.dataTransfer.setDragImage(cardRef.current, 24, 24)
+            onDragStartCard()
+          }}
+          onDragEnd={() => {
+            setDragOver(false)
+            onDragEndCard()
+          }}
+        >
+          ⠿
+        </span>
         <div className="conv-card-titles">
           <span className="eyebrow">
             {timeLabel(run.createdAt)}
@@ -787,7 +842,23 @@ function ConversationCard({
 
       {!collapsed ? (
         <div className="conv-card-body">
-          <div className="conv-meta">
+          <div className={`conv-meta ${metaCollapsed ? 'collapsed' : ''}`}>
+            <button
+              type="button"
+              className="conv-meta-toggle"
+              aria-expanded={!metaCollapsed}
+              onClick={() => setMetaCollapsed((value) => !value)}
+            >
+              <span className={`conv-meta-caret ${metaCollapsed ? '' : 'open'}`} aria-hidden>▾</span>
+              <span className="conv-meta-toggle-label">Context</span>
+              {metaCollapsed ? (
+                <span className="conv-meta-summary">
+                  {[run.category, run.project, agentLabel(agentType)].filter(Boolean).join(' · ') || 'Category · Project · Agent · Workspace'}
+                </span>
+              ) : null}
+            </button>
+            {metaCollapsed ? null : (
+            <div className="conv-meta-fields">
             <div className="conv-meta-row">
               <span className="tree-label">Category</span>
               <input
@@ -831,6 +902,8 @@ function ConversationCard({
               </button>
             </div>
             <FileBrowser rootPath={run.workspacePath} />
+            </div>
+            )}
           </div>
 
           {tui ? (
@@ -1598,6 +1671,9 @@ export default function App() {
   const [newDoneIds, setNewDoneIds] = useState<Set<string>>(new Set())
   const [activeRunId, setActiveRunId] = useState<string | null>(null)
   const [workspaceColumns, setWorkspaceColumns] = useState<1 | 2>(1)
+  // Drag-and-drop reordering of conversation cards (and moving them across
+  // columns in two-column mode). Holds the id of the card being dragged.
+  const [draggingId, setDraggingId] = useState<string | null>(null)
   // Which conversation's workspace picker is open (null = closed).
   const [pickerRunId, setPickerRunId] = useState<string | null>(null)
   const [deletePromptRunId, setDeletePromptRunId] = useState<string | null>(null)
@@ -1680,6 +1756,7 @@ export default function App() {
       resourceIds: [],
       sessionId: null,
       agentType: 'hermes',
+      column: 0,
       createdAt: new Date().toISOString(),
     }
     setRuns((current) => [run, ...current])
@@ -1706,6 +1783,38 @@ export default function App() {
     // session — the next turn runs in the newly chosen folder.
     sessionByRunRef.current.delete(runId)
     updateRunContext(runId, { workspacePath: path, sessionId: null })
+  }
+
+  // Reorder a card: pull `draggedId` out and reinsert it before `beforeId`
+  // (or at the end when beforeId is null). `column` reassigns its column when
+  // defined; left undefined the card keeps its current column.
+  function moveRun(draggedId: string, beforeId: string | null, column?: number) {
+    setRuns((current) => {
+      const dragged = current.find((run) => run.id === draggedId)
+      if (!dragged) return current
+      const next = { ...dragged, column: column ?? dragged.column }
+      const without = current.filter((run) => run.id !== draggedId)
+      if (!beforeId) return [...without, next]
+      const targetIdx = without.findIndex((run) => run.id === beforeId)
+      if (targetIdx < 0) return [...without, next]
+      return [...without.slice(0, targetIdx), next, ...without.slice(targetIdx)]
+    })
+  }
+
+  // Drop the dragged card immediately before `targetId` (same column as target
+  // when in two-column mode).
+  function handleDropBeforeCard(targetId: string) {
+    if (!draggingId || draggingId === targetId) return
+    const targetColumn = workspaceColumns === 2 ? runs.find((run) => run.id === targetId)?.column ?? 0 : undefined
+    moveRun(draggingId, targetId, targetColumn)
+    setDraggingId(null)
+  }
+
+  // Drop onto a column's empty space → append to the end of that column.
+  function handleDropToColumn(column: number) {
+    if (!draggingId) return
+    moveRun(draggingId, null, workspaceColumns === 2 ? column : undefined)
+    setDraggingId(null)
   }
 
   // Known values for the Category/Project comboboxes: built-ins + anything seen in history.
@@ -1966,6 +2075,7 @@ export default function App() {
           const restored = (state.runs as RunNode[]).map((run) => ({
             ...run,
             agentType: run.agentType ?? 'hermes',
+            column: Number.isFinite(run.column) ? run.column : 0,
           }))
           setRuns((current) => (current.length ? current : restored))
           // Only launch the most recent conversation card (restored[0]); keep the rest
@@ -2120,6 +2230,30 @@ export default function App() {
     enqueueOrStart({ turnId, runId, prompt, workspace })
   }
 
+  const renderRunCard = (run: RunNode) => (
+    <ConversationCard
+      key={run.id}
+      run={run}
+      turns={turnsByRun.get(run.id) ?? []}
+      collapsed={collapsedIds.has(run.id)}
+      active={activeRunId === run.id}
+      isNewDone={newDoneIds.has(run.id)}
+      dragging={draggingId === run.id}
+      dragActive={draggingId !== null && draggingId !== run.id}
+      onDragStartCard={() => setDraggingId(run.id)}
+      onDragEndCard={() => setDraggingId(null)}
+      onDropOnCard={() => handleDropBeforeCard(run.id)}
+      onToggle={() => toggleCollapse(run.id)}
+      onSend={(text, parentTurnId) => sendInConversation(run.id, text, parentTurnId ?? null)}
+      onTitleChange={(value) => updateRunContext(run.id, { task: value })}
+      onCategoryChange={(value) => updateRunContext(run.id, { category: value, categoryTags: tagsForCategory(value) })}
+      onProjectChange={(value) => updateRunProject(run.id, value)}
+      onAgentChange={(value) => updateRunContext(run.id, { agentType: value })}
+      onOpenPicker={() => setPickerRunId(run.id)}
+      onClose={() => closeConversation(run.id)}
+    />
+  )
+
   return (
     <div className={`app-shell ${hasContent ? 'has-content' : 'blank'} ${workspaceColumns === 2 ? 'full-width' : ''}`}>
       <header className="topbar card">
@@ -2208,32 +2342,42 @@ export default function App() {
                   </div>
                 ))}
 
-              <div className="conversation-card-column">
+              <div className={`conversation-card-column ${workspaceColumns === 2 ? 'two-col' : ''}`}>
                 {!hasContent ? (
                   <div className="conv-empty">Click “New conversation” to begin.</div>
                 ) : visibleRuns.length ? (
-                  <div className="conv-stack">
-                    {visibleRuns.map((run) => (
-                      <ConversationCard
-                        key={run.id}
-                        run={run}
-                        turns={turnsByRun.get(run.id) ?? []}
-                        collapsed={collapsedIds.has(run.id)}
-                        active={activeRunId === run.id}
-                        isNewDone={newDoneIds.has(run.id)}
-                        onToggle={() => toggleCollapse(run.id)}
-                        onSend={(text, parentTurnId) => sendInConversation(run.id, text, parentTurnId ?? null)}
-                        onTitleChange={(value) => updateRunContext(run.id, { task: value })}
-                        onCategoryChange={(value) =>
-                          updateRunContext(run.id, { category: value, categoryTags: tagsForCategory(value) })
-                        }
-                        onProjectChange={(value) => updateRunProject(run.id, value)}
-                        onAgentChange={(value) => updateRunContext(run.id, { agentType: value })}
-                        onOpenPicker={() => setPickerRunId(run.id)}
-                        onClose={() => closeConversation(run.id)}
-                      />
-                    ))}
-                  </div>
+                  workspaceColumns === 2 ? (
+                    <div className="conv-columns">
+                      {[0, 1].map((col) => (
+                        <div
+                          key={col}
+                          className={`conv-stack conv-column ${draggingId ? 'drag-active' : ''}`}
+                          onDragOver={(event) => {
+                            if (draggingId) event.preventDefault()
+                          }}
+                          onDrop={(event) => {
+                            event.preventDefault()
+                            handleDropToColumn(col)
+                          }}
+                        >
+                          {visibleRuns.filter((run) => (run.column ?? 0) === col).map(renderRunCard)}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div
+                      className={`conv-stack ${draggingId ? 'drag-active' : ''}`}
+                      onDragOver={(event) => {
+                        if (draggingId) event.preventDefault()
+                      }}
+                      onDrop={(event) => {
+                        event.preventDefault()
+                        handleDropToColumn(0)
+                      }}
+                    >
+                      {visibleRuns.map(renderRunCard)}
+                    </div>
+                  )
                 ) : (
                   <div className="conv-empty">All cards closed — reopen one from the Navigator.</div>
                 )}

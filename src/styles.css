@@ -656,6 +656,57 @@ button { cursor: pointer; }
   background: rgba(255, 255, 255, 0.02);
 }
 
+.conv-meta.collapsed {
+  padding: 8px 12px;
+}
+
+/* Collapsible "Context" header for the Category / Project / Agent / Workspace box. */
+.conv-meta-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 2px;
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  text-align: left;
+}
+.conv-meta-toggle:hover { color: var(--text); }
+
+.conv-meta-caret {
+  font-size: 11px;
+  transition: transform 150ms ease;
+}
+.conv-meta-caret.open { transform: rotate(180deg); }
+
+.conv-meta-toggle-label {
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.conv-meta-summary {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text);
+  font-weight: 500;
+  opacity: 0.85;
+}
+
+.conv-meta-fields {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
 .conv-meta-row {
   display: grid;
   grid-template-columns: 92px minmax(0, 1fr);
@@ -1570,6 +1621,61 @@ button { cursor: pointer; }
 
 .conversation-card-column {
   min-width: 0;
+}
+
+/* In two-column mode the card column spans the full workspace width and lays
+   its cards out in two side-by-side stacks. */
+.workspace-panels.columns-2 .conversation-card-column.two-col {
+  grid-column: 1 / -1;
+}
+
+.conv-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.conv-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+/* Make columns (incl. an empty one) a comfortable drop target while dragging. */
+.conv-stack.drag-active {
+  min-height: 80px;
+  border-radius: 16px;
+  outline: 1px dashed rgba(121, 185, 255, 0.35);
+  outline-offset: 6px;
+}
+
+/* Drag-and-drop affordances. */
+.conv-drag-handle {
+  flex-shrink: 0;
+  cursor: grab;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 6px;
+  user-select: none;
+}
+.conv-drag-handle:hover {
+  color: var(--text);
+  background: rgba(148, 163, 184, 0.14);
+}
+.conv-drag-handle:active {
+  cursor: grabbing;
+}
+
+.conv-card.dragging {
+  opacity: 0.4;
+}
+
+.conv-card.drag-over {
+  border-color: rgba(121, 185, 255, 0.65);
+  box-shadow: 0 -3px 0 -1px var(--accent), var(--shadow);
 }
 
 .web-terminal {

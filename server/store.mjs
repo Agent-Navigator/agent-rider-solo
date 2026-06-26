@@ -66,6 +66,7 @@ db.exec(`
     job_status TEXT,
     resource_ids TEXT,
     agent_type TEXT,
+    col_index INTEGER,
     sort_index INTEGER,
     created_at TEXT,
     updated_at TEXT
@@ -97,6 +98,12 @@ try {
 // Migration: which agent backend drives each conversation (hermes | claude | codex).
 try {
   db.exec('ALTER TABLE runs ADD COLUMN agent_type TEXT')
+} catch {
+  // column already present
+}
+// Migration: which card column (0|1) a conversation sits in (two-column layout).
+try {
+  db.exec('ALTER TABLE runs ADD COLUMN col_index INTEGER')
 } catch {
   // column already present
 }
@@ -133,14 +140,14 @@ const upsertAppLabel = db.prepare(`
 const deleteAppLabel = db.prepare('DELETE FROM app_label WHERE slug = ?')
 
 const upsertRun = db.prepare(`
-  INSERT INTO runs (id, session_id, prompt, category, category_tags, project, workspace, workspace_path, task, job, job_status, resource_ids, agent_type, sort_index, created_at, updated_at)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  INSERT INTO runs (id, session_id, prompt, category, category_tags, project, workspace, workspace_path, task, job, job_status, resource_ids, agent_type, col_index, sort_index, created_at, updated_at)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   ON CONFLICT(id) DO UPDATE SET
     session_id = excluded.session_id, prompt = excluded.prompt, category = excluded.category,
     category_tags = excluded.category_tags, project = excluded.project, workspace = excluded.workspace,
     workspace_path = excluded.workspace_path, task = excluded.task, job = excluded.job,
     job_status = excluded.job_status, resource_ids = excluded.resource_ids,
-    agent_type = excluded.agent_type, sort_index = excluded.sort_index,
+    agent_type = excluded.agent_type, col_index = excluded.col_index, sort_index = excluded.sort_index,
     created_at = excluded.created_at, updated_at = excluded.updated_at
 `)
 const upsertTurn = db.prepare(`
@@ -179,6 +186,7 @@ function runRowToApi(r) {
     resourceIds: parseJson(r.resource_ids, []),
     sessionId: r.session_id || null,
     agentType: r.agent_type || 'hermes',
+    column: Number.isFinite(r.col_index) ? r.col_index : 0,
     createdAt: r.created_at,
   }
 }
@@ -213,6 +221,7 @@ function saveState({ runs = [], turns = [], sessionId = null }) {
         r.jobStatus ?? 'queued',
         JSON.stringify(r.resourceIds ?? []),
         r.agentType ?? 'hermes',
+        Number.isFinite(r.column) ? r.column : 0,
         index,
         r.createdAt ?? nowIso(),
         nowIso(),
