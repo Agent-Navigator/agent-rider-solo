@@ -747,7 +747,7 @@ button { cursor: pointer; }
 
 .conv-agent-select option { color: #0b0f17; }
 
-/* TUI agent (claude/codex) running in an embedded terminal inside the card. */
+/* TUI agent running in an embedded terminal inside the card. */
 .conv-agent-terminal {
   margin-top: 4px;
 }

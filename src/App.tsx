@@ -30,16 +30,18 @@ type ChatRole = 'user' | 'assistant'
 // Which agent backend drives a conversation card. 'hermes' streams turns over
 // /api (the default); the others run an interactive TUI CLI in an embedded
 // terminal (see WebTerminal + the /store/terminal/ws `agent` param).
-type AgentType = 'hermes' | 'claude' | 'codex'
+type AgentType = 'hermes' | 'claude' | 'codex' | 'agy'
+type TuiAgentType = Exclude<AgentType, 'hermes'>
 
 const AGENT_OPTIONS: { value: AgentType; label: string }[] = [
   { value: 'hermes', label: 'Hermes Agent' },
   { value: 'claude', label: 'claude (CLI)' },
   { value: 'codex', label: 'codex (CLI)' },
+  { value: 'agy', label: 'agy (Antigravity)' },
 ]
 
-function isTuiAgent(agent: AgentType): agent is 'claude' | 'codex' {
-  return agent === 'claude' || agent === 'codex'
+function isTuiAgent(agent: AgentType): agent is TuiAgentType {
+  return agent === 'claude' || agent === 'codex' || agent === 'agy'
 }
 
 function agentLabel(agent: AgentType) {
@@ -1482,7 +1484,7 @@ function WebTerminal({
   initialCwd: string
   onClose: () => void
   /** When set, the PTY launches this TUI agent CLI instead of a login shell. */
-  agent?: 'claude' | 'codex'
+  agent?: TuiAgentType
   /** Stable key for a persistent (tmux-backed) agent session that survives
    *  disconnects. Only meaningful together with `agent`. */
   sessionKey?: string
@@ -1503,6 +1505,7 @@ function WebTerminal({
   const [internalFullWindow, setInternalFullWindow] = useState(false)
   const terminalCollapsed = collapsed ?? internalCollapsed
   const terminalFullWindow = fullWindow ?? internalFullWindow
+  const agentTerminal = Boolean(agent)
 
   useEffect(() => {
     const container = containerRef.current
@@ -1644,16 +1647,18 @@ function WebTerminal({
           >
             {terminalFullWindow ? '↙' : '⛶'}
           </button>
-          <button
-            type="button"
-            className="terminal-clear"
-            onClick={(event) => {
-              event.stopPropagation()
-              setTerminalKey((current) => current + 1)
-            }}
-          >
-            Restart
-          </button>
+          {!agentTerminal ? (
+            <button
+              type="button"
+              className="terminal-clear"
+              onClick={(event) => {
+                event.stopPropagation()
+                setTerminalKey((current) => current + 1)
+              }}
+            >
+              Restart
+            </button>
+          ) : null}
           {showClose ? (
             <button
               type="button"
@@ -1682,8 +1687,15 @@ function WebTerminal({
 
         <div className="terminal-footer">
           <span>{initialCwd === DEFAULT_TERMINAL_CWD ? '~/' : initialCwd}</span>
-          <button type="button" className="terminal-clear" onClick={() => terminalRef.current?.clear()}>
-            Clear
+          <button
+            type="button"
+            className="terminal-clear"
+            onClick={() => {
+              if (agentTerminal) setTerminalKey((current) => current + 1)
+              else terminalRef.current?.clear()
+            }}
+          >
+            {agentTerminal ? 'Restart' : 'Clear'}
           </button>
         </div>
       </div>
