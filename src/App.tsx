@@ -465,6 +465,7 @@ function FileBrowser({ rootPath }: { rootPath: string }) {
   const [path, setPath] = useState(rootPath)
   const [listing, setListing] = useState<FsListing | null>(null)
   const [preview, setPreview] = useState<FsFilePreview | null>(null)
+  const [previewFullWindow, setPreviewFullWindow] = useState(false)
   const [loading, setLoading] = useState(false)
   const [previewLoading, setPreviewLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -474,6 +475,7 @@ function FileBrowser({ rootPath }: { rootPath: string }) {
     setLoading(true)
     setError(null)
     setPreview(null)
+    setPreviewFullWindow(false)
     setPreviewError(null)
     // Fall back to the workspace root if the target can't be read.
     const result = (await listDir(target)) ?? (await listDir(rootPath))
@@ -494,6 +496,7 @@ function FileBrowser({ rootPath }: { rootPath: string }) {
     const result = await readFilePreview(filePath)
     if ('error' in result) {
       setPreview(null)
+      setPreviewFullWindow(false)
       setPreviewError(result.error)
     } else {
       setPreview(result)
@@ -506,6 +509,7 @@ function FileBrowser({ rootPath }: { rootPath: string }) {
     setPath(rootPath)
     setListing(null)
     setPreview(null)
+    setPreviewFullWindow(false)
     setPreviewError(null)
     if (open) void load(rootPath)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -592,15 +596,34 @@ function FileBrowser({ rootPath }: { rootPath: string }) {
           {previewLoading ? <div className="file-browser-empty">Opening file…</div> : null}
           {previewError ? <p className="error-text">{previewError}</p> : null}
           {preview ? (
-            <div className="file-preview">
+            <div className={`file-preview ${previewFullWindow ? 'full-window' : ''}`}>
               <div className="file-preview-head">
-                <div>
+                <div className="file-preview-title">
                   <strong>{preview.name}</strong>
                   <span>{preview.kind} · {formatBytes(preview.size)}</span>
                 </div>
-                <button type="button" className="file-preview-close" onClick={() => setPreview(null)} aria-label="Close file preview">
-                  ×
-                </button>
+                <div className="file-preview-actions">
+                  <button
+                    type="button"
+                    className="file-preview-icon-button"
+                    title={previewFullWindow ? 'Exit full window' : 'Expand to full window'}
+                    aria-label={previewFullWindow ? 'Exit full window' : 'Expand to full window'}
+                    onClick={() => setPreviewFullWindow((current) => !current)}
+                  >
+                    {previewFullWindow ? '↙' : '⛶'}
+                  </button>
+                  <button
+                    type="button"
+                    className="file-preview-close"
+                    onClick={() => {
+                      setPreview(null)
+                      setPreviewFullWindow(false)
+                    }}
+                    aria-label="Close file preview"
+                  >
+                    ×
+                  </button>
+                </div>
               </div>
               {preview.kind === 'image' ? (
                 <div className="file-preview-media">

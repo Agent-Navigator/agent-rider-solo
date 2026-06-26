@@ -389,7 +389,7 @@ function makeDirectory(parent, name) {
   return { path: target, name: basename(target) }
 }
 
-const FILE_PREVIEW_MAX_BYTES = 8 * 1024 * 1024
+const FILE_PREVIEW_MAX_BYTES = 25 * 1024 * 1024
 const MARKDOWN_EXTS = new Set(['.md', '.mdx', '.markdown'])
 const HTML_EXTS = new Set(['.html', '.htm'])
 const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg'])
