@@ -588,6 +588,7 @@ function DraggablePanel({
   const ref = useRef<HTMLDivElement | null>(null)
   const [dragOver, setDragOver] = useState(false)
   const [dragOverAfter, setDragOverAfter] = useState(false)
+  const dragOverAfterRef = useRef(false)
   return (
     <div
       ref={ref}
@@ -614,6 +615,7 @@ function DraggablePanel({
         event.preventDefault()
         const rect = event.currentTarget.getBoundingClientRect()
         const after = event.clientY > rect.top + rect.height / 2
+        dragOverAfterRef.current = after
         if (!dragOver) setDragOver(true)
         if (after !== dragOverAfter) setDragOverAfter(after)
       }}
@@ -625,10 +627,10 @@ function DraggablePanel({
         if (!dragActive) return
         event.preventDefault()
         event.stopPropagation()
-        const rect = event.currentTarget.getBoundingClientRect()
-        const after = event.clientY > rect.top + rect.height / 2
         setDragOver(false)
-        onDropOnPanel(after)
+        // Use the position computed during dragover (the drop event's clientY
+        // is unreliable across browsers) so it matches the indicator shown.
+        onDropOnPanel(dragOverAfterRef.current)
       }}
     >
       {children}
@@ -684,7 +686,9 @@ function ConversationCard({
   const [metaCollapsed, setMetaCollapsed] = useState(false)
   const [dragOver, setDragOver] = useState(false)
   // Whether the hovering drop would land after (below) this card vs before.
+  // Ref mirrors it for a staleness-free read in the drop handler.
   const [dragOverAfter, setDragOverAfter] = useState(false)
+  const dragOverAfterRef = useRef(false)
   const [draft, setDraft] = useState('')
   const [askParentId, setAskParentId] = useState<string | null>(null)
   const [askDraft, setAskDraft] = useState('')
@@ -889,6 +893,7 @@ function ConversationCard({
         event.preventDefault()
         const rect = event.currentTarget.getBoundingClientRect()
         const after = event.clientY > rect.top + rect.height / 2
+        dragOverAfterRef.current = after
         if (!dragOver) setDragOver(true)
         if (after !== dragOverAfter) setDragOverAfter(after)
       }}
@@ -901,10 +906,10 @@ function ConversationCard({
         if (!dragActive) return
         event.preventDefault()
         event.stopPropagation()
-        const rect = event.currentTarget.getBoundingClientRect()
-        const after = event.clientY > rect.top + rect.height / 2
         setDragOver(false)
-        onDropOnCard(after)
+        // Use the position computed during dragover (the drop event's clientY
+        // is unreliable across browsers) so it matches the indicator shown.
+        onDropOnCard(dragOverAfterRef.current)
       }}
     >
       <div className="conv-card-head" onClick={onToggle}>
