@@ -585,15 +585,28 @@ function FileBrowser({ rootPath }: { rootPath: string }) {
             ) : listing && (listing.dirs.length || listing.files?.length) ? (
               <>
                 {listing.dirs.map((dir) => (
-                  <button
-                    type="button"
+                  <div
+                    role="button"
+                    tabIndex={0}
                     key={dir.path}
                     className="file-row dir"
-                    onClick={() => void load(dir.path)}
                     title={dir.name}
+                    draggable
+                    onDragStart={(event) => {
+                      event.stopPropagation()
+                      event.dataTransfer.effectAllowed = 'copy'
+                      event.dataTransfer.setData('application/x-agent-rider-file-path', dir.path)
+                      event.dataTransfer.setData('text/plain', dir.path)
+                    }}
+                    onClick={() => void load(dir.path)}
+                    onKeyDown={(event) => {
+                      if (event.key !== 'Enter' && event.key !== ' ') return
+                      event.preventDefault()
+                      void load(dir.path)
+                    }}
                   >
                     <span className="file-row-name">📁 {dir.name}</span>
-                  </button>
+                  </div>
                 ))}
                 {(listing.files ?? []).map((file) => (
                   <div
