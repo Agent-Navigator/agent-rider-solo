@@ -1671,6 +1671,7 @@ function WebTerminal({
       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
       fontSize: 13,
       lineHeight: 1.3,
+      macOptionClickForcesSelection: true,
       scrollback: 5000,
       theme: {
         background: '#050a12',
@@ -1683,6 +1684,14 @@ function WebTerminal({
     terminal.loadAddon(fitAddon)
     terminal.open(container)
     terminal.focus()
+    terminal.attachCustomKeyEventHandler((event) => {
+      const wantsCopy = event.type === 'keydown' && event.key.toLowerCase() === 'c' && (event.metaKey || event.ctrlKey)
+      if (!wantsCopy || !terminal.hasSelection()) return true
+      event.preventDefault()
+      event.stopPropagation()
+      void copyToClipboard(terminal.getSelection()).catch(() => {})
+      return false
+    })
     terminalRef.current = terminal
 
     const fit = () => {
