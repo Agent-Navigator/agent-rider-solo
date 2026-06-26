@@ -586,6 +586,9 @@ function ConversationCard({
   const cardRef = useRef<HTMLElement | null>(null)
   const [metaCollapsed, setMetaCollapsed] = useState(false)
   const [dragOver, setDragOver] = useState(false)
+  // Interactive areas that should keep their own mouse behaviour (focus, text
+  // selection, the embedded terminal) rather than starting a card drag.
+  const INTERACTIVE = 'input, textarea, select, button, a, [contenteditable="true"], .conv-agent-terminal'
   const [draft, setDraft] = useState('')
   const [askParentId, setAskParentId] = useState<string | null>(null)
   const [askDraft, setAskDraft] = useState('')
@@ -765,6 +768,34 @@ function ConversationCard({
       id={`conversation-${run.id}`}
       ref={cardRef}
       className={`conv-card ${collapsed ? 'collapsed' : ''} ${active ? 'active' : ''} ${dragging ? 'dragging' : ''} ${dragOver ? 'drag-over' : ''}`}
+      onMouseDown={(event) => {
+        // Toggle draggable synchronously on the element so the browser's
+        // drag-vs-select decision for THIS press is correct: off over inputs
+        // (so they stay selectable), on everywhere else.
+        const target = event.target as HTMLElement
+        if (cardRef.current) cardRef.current.draggable = !target.closest(INTERACTIVE)
+      }}
+      onDragStart={(event) => {
+        // Drag from any non-interactive area of the card. Let form controls,
+        // links, and the embedded terminal keep their own mouse behaviour.
+        const target = event.target as HTMLElement
+        if (target.closest(INTERACTIVE)) {
+          event.preventDefault()
+          return
+        }
+        event.dataTransfer.effectAllowed = 'move'
+        event.dataTransfer.setData('text/plain', run.id)
+        // Offset the drag ghost so it sits exactly under the grab point.
+        if (cardRef.current) {
+          const rect = cardRef.current.getBoundingClientRect()
+          event.dataTransfer.setDragImage(cardRef.current, event.clientX - rect.left, event.clientY - rect.top)
+        }
+        onDragStartCard()
+      }}
+      onDragEnd={() => {
+        setDragOver(false)
+        onDragEndCard()
+      }}
       onDragOver={(event) => {
         if (!dragActive) return
         event.preventDefault()
@@ -786,20 +817,9 @@ function ConversationCard({
       <div className="conv-card-head" onClick={onToggle}>
         <span
           className="conv-drag-handle"
-          draggable
-          title="Drag to reorder / move column"
-          aria-label="Drag to reorder"
+          title="Drag anywhere on the card (except inputs) to reorder / move column"
+          aria-hidden
           onClick={(event) => event.stopPropagation()}
-          onDragStart={(event) => {
-            event.dataTransfer.effectAllowed = 'move'
-            event.dataTransfer.setData('text/plain', run.id)
-            if (cardRef.current) event.dataTransfer.setDragImage(cardRef.current, 24, 24)
-            onDragStartCard()
-          }}
-          onDragEnd={() => {
-            setDragOver(false)
-            onDragEndCard()
-          }}
         >
           ⠿
         </span>
