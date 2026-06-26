@@ -1,0 +1,9 @@
+{
+  "id": "asia-weather-dashboard",
+  "label": "Asia Weather Dashboard",
+  "group": "App",
+  "kind": "static",
+  "description": "Weather forecast snapshot for major Asian cities.",
+  "dataScopes": [],
+  "version": 1
+}

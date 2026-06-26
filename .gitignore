@@ -3,6 +3,8 @@ node_modules/
 
 # Build output
 dist/
+!plugins/asia-weather-dashboard/dist/
+!plugins/asia-weather-dashboard/dist/index.html
 
 # Local SQLite persistence (runtime data)
 data/
