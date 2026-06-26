@@ -552,7 +552,16 @@ function attachTerminalSocket(server) {
     const cwd = safeResolve(requestUrl.searchParams.get('cwd') || DEFAULT_CWD) || DEFAULT_CWD
     const { cols, rows } = parseTerminalSize(requestUrl.searchParams)
     const shell = process.env.SHELL || '/bin/bash'
-    const terminal = pty.spawn(shell, ['-l'], {
+
+    // Optional `agent` param launches a TUI coding agent directly as the PTY's
+    // process instead of an interactive shell. Allowlisted so the param can't
+    // be used to spawn an arbitrary command. When the agent exits, the PTY ends.
+    const TUI_AGENTS = { claude: 'claude', codex: 'codex' }
+    const agentParam = requestUrl.searchParams.get('agent') || ''
+    const agentCmd = Object.prototype.hasOwnProperty.call(TUI_AGENTS, agentParam) ? TUI_AGENTS[agentParam] : null
+    const file = agentCmd || shell
+    const argv = agentCmd ? [] : ['-l']
+    const terminal = pty.spawn(file, argv, {
       name: 'xterm-256color',
       cols,
       rows,
@@ -568,7 +577,11 @@ function attachTerminalSocket(server) {
       if (socket.readyState === WebSocket.OPEN) socket.send(data)
     }
 
-    writeSocket(`\r\n\x1b[32mConnected to Agent Rider terminal\x1b[0m\r\n`)
+    writeSocket(
+      agentCmd
+        ? `\r\n\x1b[32mStarting ${agentCmd} in ${cwd}…\x1b[0m\r\n`
+        : `\r\n\x1b[32mConnected to Agent Rider terminal\x1b[0m\r\n`,
+    )
 
     const terminalData = terminal.onData((data) => writeSocket(data))
     terminal.onExit(({ exitCode, signal }) => {

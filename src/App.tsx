@@ -26,6 +26,25 @@ type ResourceHealth = 'Ready' | 'Needs setup' | 'Draft'
 
 type ChatRole = 'user' | 'assistant'
 
+// Which agent backend drives a conversation card. 'hermes' streams turns over
+// /api (the default); the others run an interactive TUI CLI in an embedded
+// terminal (see WebTerminal + the /store/terminal/ws `agent` param).
+type AgentType = 'hermes' | 'claude' | 'codex'
+
+const AGENT_OPTIONS: { value: AgentType; label: string }[] = [
+  { value: 'hermes', label: 'Hermes Agent' },
+  { value: 'claude', label: 'claude (CLI)' },
+  { value: 'codex', label: 'codex (CLI)' },
+]
+
+function isTuiAgent(agent: AgentType): agent is 'claude' | 'codex' {
+  return agent === 'claude' || agent === 'codex'
+}
+
+function agentLabel(agent: AgentType) {
+  return AGENT_OPTIONS.find((option) => option.value === agent)?.label ?? agent
+}
+
 interface RunNode {
   id: string
   prompt: string
@@ -39,6 +58,7 @@ interface RunNode {
   jobStatus: JobStatus
   resourceIds: string[]
   sessionId?: string | null
+  agentType: AgentType
   createdAt: string
 }
 
@@ -528,6 +548,7 @@ function ConversationCard({
   onTitleChange,
   onCategoryChange,
   onProjectChange,
+  onAgentChange,
   onOpenPicker,
   onClose,
 }: {
@@ -541,9 +562,12 @@ function ConversationCard({
   onTitleChange: (value: string) => void
   onCategoryChange: (value: string) => void
   onProjectChange: (value: string) => void
+  onAgentChange: (value: AgentType) => void
   onOpenPicker: () => void
   onClose: () => void
 }) {
+  const agentType: AgentType = run.agentType ?? 'hermes'
+  const tui = isTuiAgent(agentType)
   const [draft, setDraft] = useState('')
   const [askParentId, setAskParentId] = useState<string | null>(null)
   const [askDraft, setAskDraft] = useState('')
@@ -727,8 +751,9 @@ function ConversationCard({
         <div className="conv-card-titles">
           <span className="eyebrow">
             {timeLabel(run.createdAt)}
+            {` · ${agentLabel(agentType)}`}
             {run.category ? ` · ${run.category}` : ''}
-            {isDraft ? ' · Draft' : ` · ${turns.length} ${turns.length === 1 ? 'turn' : 'turns'}`}
+            {tui ? '' : isDraft ? ' · Draft' : ` · ${turns.length} ${turns.length === 1 ? 'turn' : 'turns'}`}
           </span>
           <input
             className="conv-title-input"
@@ -784,6 +809,21 @@ function ConversationCard({
               />
             </div>
             <div className="conv-meta-row">
+              <span className="tree-label">Agent</span>
+              <select
+                className="conv-input conv-agent-select"
+                value={agentType}
+                onChange={(event) => onAgentChange(event.target.value as AgentType)}
+                aria-label="Conversation agent"
+              >
+                {AGENT_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="conv-meta-row">
               <span className="tree-label">Workspace</span>
               <button type="button" className="conv-workspace-btn" onClick={onOpenPicker} title={run.workspacePath}>
                 <span className="conv-workspace-path">{run.workspacePath}</span>
@@ -793,39 +833,56 @@ function ConversationCard({
             <FileBrowser rootPath={run.workspacePath} />
           </div>
 
-          {turns.length ? (
-            <div className="conversation-feed">
-              <div className="feed-toolbar">
-                <span className="feed-toolbar-label">
-                  {turns.length} {turns.length === 1 ? 'turn' : 'turns'}
-                </span>
-                <button
-                  type="button"
-                  className="hide-all-button"
-                  onClick={hideAllTurns}
-                  title="Collapse every turn in this conversation"
-                >
-                  Hide All
-                </button>
-              </div>
-              {turnTree.map((node) => renderTurnNode(node))}
+          {tui ? (
+            <div className="conv-agent-terminal">
+              <WebTerminal
+                // Reconnect a fresh agent when the workspace changes.
+                key={`${agentType}:${run.workspacePath}`}
+                agent={agentType}
+                initialCwd={run.workspacePath}
+                eyebrow={`Agent · ${agentLabel(agentType)}`}
+                title={`${agentType} — interactive`}
+                showClose={false}
+                onClose={() => {}}
+              />
             </div>
-          ) : null}
+          ) : (
+            <>
+              {turns.length ? (
+                <div className="conversation-feed">
+                  <div className="feed-toolbar">
+                    <span className="feed-toolbar-label">
+                      {turns.length} {turns.length === 1 ? 'turn' : 'turns'}
+                    </span>
+                    <button
+                      type="button"
+                      className="hide-all-button"
+                      onClick={hideAllTurns}
+                      title="Collapse every turn in this conversation"
+                    >
+                      Hide All
+                    </button>
+                  </div>
+                  {turnTree.map((node) => renderTurnNode(node))}
+                </div>
+              ) : null}
 
-          <form className="composer conv-followup" onSubmit={submit}>
-            <textarea
-              value={draft}
-              onChange={(event) => setDraft(event.target.value)}
-              placeholder={isDraft ? 'Describe the task to start this conversation…' : 'Reply in this conversation…'}
-              rows={2}
-            />
-            <div className="composer-meta">
-              <span>{run.workspacePath}</span>
-              <button type="submit" className="send-button">
-                Send
-              </button>
-            </div>
-          </form>
+              <form className="composer conv-followup" onSubmit={submit}>
+                <textarea
+                  value={draft}
+                  onChange={(event) => setDraft(event.target.value)}
+                  placeholder={isDraft ? 'Describe the task to start this conversation…' : 'Reply in this conversation…'}
+                  rows={2}
+                />
+                <div className="composer-meta">
+                  <span>{run.workspacePath}</span>
+                  <button type="submit" className="send-button">
+                    Send
+                  </button>
+                </div>
+              </form>
+            </>
+          )}
         </div>
       ) : null}
     </article>
@@ -1182,7 +1239,22 @@ function PluginTool({ plugin, open, onLaunch }: { plugin: AgentRiderPlugin; open
   )
 }
 
-function WebTerminal({ initialCwd, onClose }: { initialCwd: string; onClose: () => void }) {
+function WebTerminal({
+  initialCwd,
+  onClose,
+  agent,
+  eyebrow = 'Resource · Tools',
+  title = 'Local Terminal',
+  showClose = true,
+}: {
+  initialCwd: string
+  onClose: () => void
+  /** When set, the PTY launches this TUI agent CLI instead of a login shell. */
+  agent?: 'claude' | 'codex'
+  eyebrow?: string
+  title?: string
+  showClose?: boolean
+}) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const terminalRef = useRef<XTermTerminal | null>(null)
   const socketRef = useRef<WebSocket | null>(null)
@@ -1231,8 +1303,9 @@ function WebTerminal({ initialCwd, onClose }: { initialCwd: string; onClose: () 
     window.requestAnimationFrame(fit)
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+    const agentParam = agent ? `&agent=${encodeURIComponent(agent)}` : ''
     const socket = new WebSocket(
-      `${protocol}//${window.location.host}/store/terminal/ws?cwd=${encodeURIComponent(initialCwd)}&cols=${terminal.cols}&rows=${terminal.rows}`,
+      `${protocol}//${window.location.host}/store/terminal/ws?cwd=${encodeURIComponent(initialCwd)}&cols=${terminal.cols}&rows=${terminal.rows}${agentParam}`,
     )
     socketRef.current = socket
     setConnectionState('connecting')
@@ -1275,7 +1348,7 @@ function WebTerminal({ initialCwd, onClose }: { initialCwd: string; onClose: () 
       if (socketRef.current === socket) socketRef.current = null
       if (terminalRef.current === terminal) terminalRef.current = null
     }
-  }, [initialCwd, terminalKey])
+  }, [initialCwd, terminalKey, agent])
 
   useEffect(() => {
     if (!terminalCollapsed) window.requestAnimationFrame(() => fitRef.current())
@@ -1301,8 +1374,8 @@ function WebTerminal({ initialCwd, onClose }: { initialCwd: string; onClose: () 
           ▾
         </span>
         <div>
-          <div className="eyebrow">Resource · Tools</div>
-          <h2>Local Terminal</h2>
+          <div className="eyebrow">{eyebrow}</div>
+          <h2>{title}</h2>
         </div>
         <div className="terminal-actions">
           <span className={`terminal-state ${connectionState}`}>{connectionState}</span>
@@ -1328,18 +1401,20 @@ function WebTerminal({ initialCwd, onClose }: { initialCwd: string; onClose: () 
           >
             Restart
           </button>
-          <button
-            type="button"
-            className="card-close"
-            title="Close Local Terminal"
-            aria-label="Close Local Terminal"
-            onClick={(event) => {
-              event.stopPropagation()
-              onClose()
-            }}
-          >
-            ×
-          </button>
+          {showClose ? (
+            <button
+              type="button"
+              className="card-close"
+              title="Close Local Terminal"
+              aria-label="Close Local Terminal"
+              onClick={(event) => {
+                event.stopPropagation()
+                onClose()
+              }}
+            >
+              ×
+            </button>
+          ) : null}
         </div>
       </div>
 
@@ -1597,6 +1672,7 @@ export default function App() {
       jobStatus: 'queued',
       resourceIds: [],
       sessionId: null,
+      agentType: 'hermes',
       createdAt: new Date().toISOString(),
     }
     setRuns((current) => [run, ...current])
@@ -1879,7 +1955,11 @@ export default function App() {
       if (state) {
         // Merge defensively: never clobber content the user already created this session.
         if (state.runs.length) {
-          const restored = state.runs as RunNode[]
+          // Default agentType for runs persisted before the field existed.
+          const restored = (state.runs as RunNode[]).map((run) => ({
+            ...run,
+            agentType: run.agentType ?? 'hermes',
+          }))
           setRuns((current) => (current.length ? current : restored))
           // Only launch the most recent conversation card (restored[0]); keep the rest
           // hidden in the Navigator so they can be re-launched on demand.
@@ -2141,6 +2221,7 @@ export default function App() {
                           updateRunContext(run.id, { category: value, categoryTags: tagsForCategory(value) })
                         }
                         onProjectChange={(value) => updateRunProject(run.id, value)}
+                        onAgentChange={(value) => updateRunContext(run.id, { agentType: value })}
                         onOpenPicker={() => setPickerRunId(run.id)}
                         onClose={() => closeConversation(run.id)}
                       />
