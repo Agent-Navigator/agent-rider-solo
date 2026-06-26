@@ -2085,6 +2085,10 @@ button { cursor: pointer; }
   border-top: 1px solid rgba(148, 163, 184, 0.12);
 }
 
+.conv-followup + .conversation-feed {
+  margin-top: 14px;
+}
+
 .conv-followup textarea {
   width: 100%;
   resize: vertical;

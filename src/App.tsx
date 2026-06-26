@@ -407,6 +407,10 @@ function buildTurnTree(turns: TurnItem[]) {
     else roots.push(node)
   }
 
+  const newestFirst = (a: TurnTreeNode, b: TurnTreeNode) => b.turn.createdAt.localeCompare(a.turn.createdAt)
+  for (const node of nodes.values()) node.children.sort(newestFirst)
+  roots.sort(newestFirst)
+
   return roots
 }
 
@@ -1224,25 +1228,6 @@ function ConversationCard({
             </div>
           ) : (
             <>
-              {turns.length ? (
-                <div className="conversation-feed">
-                  <div className="feed-toolbar">
-                    <span className="feed-toolbar-label">
-                      {turns.length} {turns.length === 1 ? 'turn' : 'turns'}
-                    </span>
-                    <button
-                      type="button"
-                      className="hide-all-button"
-                      onClick={hideAllTurns}
-                      title="Collapse every turn in this conversation"
-                    >
-                      Hide All
-                    </button>
-                  </div>
-                  {turnTree.map((node) => renderTurnNode(node))}
-                </div>
-              ) : null}
-
               <form className="composer conv-followup" onSubmit={submit}>
                 <textarea
                   value={draft}
@@ -1261,6 +1246,25 @@ function ConversationCard({
                   </button>
                 </div>
               </form>
+
+              {turns.length ? (
+                <div className="conversation-feed">
+                  <div className="feed-toolbar">
+                    <span className="feed-toolbar-label">
+                      {turns.length} {turns.length === 1 ? 'turn' : 'turns'}
+                    </span>
+                    <button
+                      type="button"
+                      className="hide-all-button"
+                      onClick={hideAllTurns}
+                      title="Collapse every turn in this conversation"
+                    >
+                      Hide All
+                    </button>
+                  </div>
+                  {turnTree.map((node) => renderTurnNode(node))}
+                </div>
+              ) : null}
             </>
           )}
         </div>
