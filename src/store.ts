@@ -136,6 +136,20 @@ export async function setAppOrder(order: string[]): Promise<AppListing> {
   }
 }
 
+export async function renameApp(slug: string, label: string): Promise<AppListing> {
+  try {
+    const res = await fetch('/store/apps/rename', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ slug, label }),
+    })
+    if (!res.ok) return EMPTY_APP_LISTING
+    return normalizeAppListing((await res.json()) as Partial<AppListing>)
+  } catch {
+    return EMPTY_APP_LISTING
+  }
+}
+
 export interface TerminalRunResult {
   cwd: string
   nextCwd: string

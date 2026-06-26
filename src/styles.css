@@ -212,6 +212,7 @@ button { cursor: pointer; }
 .conversation-feed {
   display: grid;
   gap: 16px;
+  min-width: 0;
 }
 
 .feed-toolbar {
@@ -249,6 +250,7 @@ button { cursor: pointer; }
 .turn-node {
   display: grid;
   gap: 10px;
+  min-width: 0;
 }
 
 .turn-children {
@@ -269,6 +271,7 @@ button { cursor: pointer; }
 .turn {
   display: grid;
   gap: 10px;
+  min-width: 0;
 }
 
 .turn.collapsed {
@@ -280,6 +283,8 @@ button { cursor: pointer; }
   border-radius: 20px;
   padding: 14px 16px;
   background: rgba(255, 255, 255, 0.03);
+  min-width: 0;
+  overflow-wrap: break-word;
 }
 
 .bubble.user { background: rgba(121, 185, 255, 0.075); border-color: rgba(121, 185, 255, 0.18); }
@@ -1351,13 +1356,13 @@ button { cursor: pointer; }
   cursor: not-allowed;
 }
 
-.app-tool-reorder {
+.app-tool-actions {
   display: inline-flex;
   flex-shrink: 0;
   gap: 2px;
 }
 
-.app-tool-reorder button {
+.app-tool-actions button {
   width: 22px;
   height: 24px;
   display: inline-grid;
@@ -1371,14 +1376,30 @@ button { cursor: pointer; }
   cursor: pointer;
 }
 
-.app-tool-reorder button:hover:not(:disabled) {
+.app-tool-actions button:hover:not(:disabled) {
   border-color: rgba(121, 185, 255, 0.34);
   color: var(--text);
 }
 
-.app-tool-reorder button:disabled {
+.app-tool-actions button:disabled {
   opacity: 0.3;
   cursor: not-allowed;
+}
+
+.app-tool-rename-input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid rgba(121, 185, 255, 0.45);
+  border-radius: 8px;
+  background: rgba(10, 14, 22, 0.6);
+  color: var(--text);
+  font-size: 13px;
+}
+
+.app-tool-rename-input:focus {
+  outline: none;
+  border-color: rgba(121, 185, 255, 0.7);
 }
 
 .app-warning {

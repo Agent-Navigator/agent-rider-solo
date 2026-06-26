@@ -12,6 +12,7 @@ import {
   makeDir,
   listApps,
   setAppOrder,
+  renameApp,
   type FsListing,
   type AgentApp,
   type AppListing,
@@ -906,7 +907,11 @@ const EMPTY_APP_LISTING: AppListing = { apps: [], warnings: [], hash: '0' }
  * app's iframe is never disturbed by polling. Returns a `reorder` that persists a
  * new global order server-side.
  */
-function useAgentApps(): { listing: AppListing; reorder: (order: string[]) => void } {
+function useAgentApps(): {
+  listing: AppListing
+  reorder: (order: string[]) => void
+  rename: (slug: string, label: string) => void
+} {
   const [listing, setListing] = useState<AppListing>(EMPTY_APP_LISTING)
   const hashRef = useRef('0')
 
@@ -936,7 +941,14 @@ function useAgentApps(): { listing: AppListing; reorder: (order: string[]) => vo
     })
   }
 
-  return { listing, reorder }
+  function rename(slug: string, label: string) {
+    void renameApp(slug, label).then((next) => {
+      hashRef.current = next.hash
+      setListing(next)
+    })
+  }
+
+  return { listing, reorder, rename }
 }
 
 function ResourceSidebar({
@@ -949,6 +961,7 @@ function ResourceSidebar({
   openAppSlugs,
   onLaunchApp,
   onReorderApps,
+  onRenameApp,
 }: {
   terminalOpen: boolean
   onLaunchTerminal: () => void
@@ -959,6 +972,7 @@ function ResourceSidebar({
   openAppSlugs: Set<string>
   onLaunchApp: (slug: string) => void
   onReorderApps: (order: string[]) => void
+  onRenameApp: (slug: string, label: string) => void
 }) {
   // Built-in tools plus every registered plugin, grouped by their sidebar heading.
   const groups = useMemo(() => {
@@ -995,7 +1009,7 @@ function ResourceSidebar({
               title={terminalOpen ? 'Local Terminal is open' : 'Launch Local Terminal'}
             >
               <span className="tree-run-title">Local Terminal</span>
-              <span className="resource-tool-action">{terminalOpen ? 'Open' : 'Launch'}</span>
+              <LaunchIcon open={terminalOpen} />
             </button>
             {pluginTools.map((plugin) => (
               <PluginTool
@@ -1037,6 +1051,7 @@ function ResourceSidebar({
                   canMoveDown={index < apps.length - 1}
                   onLaunch={() => onLaunchApp(app.id)}
                   onMove={(delta) => onReorderApps(reorderSlugs(apps, index, delta))}
+                  onRename={(label) => onRenameApp(app.id, label)}
                 />
               ))
             ) : (
@@ -1070,6 +1085,7 @@ function AppTool({
   canMoveDown,
   onLaunch,
   onMove,
+  onRename,
 }: {
   app: AgentApp
   open: boolean
@@ -1077,20 +1093,60 @@ function AppTool({
   canMoveDown: boolean
   onLaunch: () => void
   onMove: (delta: number) => void
+  onRename: (label: string) => void
 }) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(app.label)
+
+  function startEdit() {
+    setDraft(app.label)
+    setEditing(true)
+  }
+
+  function commit() {
+    const value = draft.trim()
+    if (value && value !== app.label) onRename(value)
+    setEditing(false)
+  }
+
+  function onKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key === 'Enter') {
+      event.preventDefault()
+      commit()
+    } else if (event.key === 'Escape') {
+      event.preventDefault()
+      setEditing(false)
+    }
+  }
+
   return (
     <div className="app-tool">
-      <button
-        type="button"
-        className={`tree-nav-run resource-tool app-tool-launch ${open ? 'active' : ''}`}
-        onClick={onLaunch}
-        disabled={!app.hasDist}
-        title={app.hasDist ? (open ? `${app.label} is open` : `Launch ${app.label}`) : `${app.label} is not built yet`}
-      >
-        <span className="tree-run-title">{app.label}</span>
-        <span className="resource-tool-action">{app.hasDist ? (open ? 'Open' : 'Launch') : 'Building…'}</span>
-      </button>
-      <span className="app-tool-reorder">
+      {editing ? (
+        <input
+          className="app-tool-rename-input"
+          value={draft}
+          autoFocus
+          onChange={(event) => setDraft(event.target.value)}
+          onKeyDown={onKeyDown}
+          onBlur={commit}
+          aria-label="App name"
+        />
+      ) : (
+        <button
+          type="button"
+          className={`tree-nav-run resource-tool app-tool-launch ${open ? 'active' : ''}`}
+          onClick={onLaunch}
+          disabled={!app.hasDist}
+          title={app.hasDist ? (open ? `${app.label} is open` : `Launch ${app.label}`) : `${app.label} is not built yet`}
+        >
+          <span className="tree-run-title">{app.label}</span>
+          {app.hasDist ? <LaunchIcon open={open} /> : <span className="resource-tool-action">⏳</span>}
+        </button>
+      )}
+      <span className="app-tool-actions">
+        <button type="button" title="Rename" aria-label="Rename app" onClick={startEdit}>
+          ✎
+        </button>
         <button type="button" title="Move up" aria-label="Move up" disabled={!canMoveUp} onClick={() => onMove(-1)}>
           ↑
         </button>
@@ -1099,6 +1155,16 @@ function AppTool({
         </button>
       </span>
     </div>
+  )
+}
+
+// Compact launch indicator used across all Resource tools — a play glyph to
+// launch, a filled dot once the panel is open. Saves the width of a text label.
+function LaunchIcon({ open }: { open: boolean }) {
+  return (
+    <span className="resource-tool-action" aria-hidden>
+      {open ? '●' : '▶'}
+    </span>
   )
 }
 
@@ -1111,7 +1177,7 @@ function PluginTool({ plugin, open, onLaunch }: { plugin: AgentRiderPlugin; open
       title={open ? `${plugin.label} is open` : `Launch ${plugin.label}`}
     >
       <span className="tree-run-title">{plugin.label}</span>
-      <span className="resource-tool-action">{open ? 'Open' : 'Launch'}</span>
+      <LaunchIcon open={open} />
     </button>
   )
 }
@@ -1460,7 +1526,7 @@ export default function App() {
   // Ids of plugin panels currently open — each launchable from Resources.
   const [openPluginIds, setOpenPluginIds] = useState<Set<string>>(new Set())
   // Runtime Agent Apps (auto-discovered from the store backend) and which are open.
-  const { listing: appListing, reorder: reorderApps } = useAgentApps()
+  const { listing: appListing, reorder: reorderApps, rename: renameAppLabel } = useAgentApps()
   const [openAppSlugs, setOpenAppSlugs] = useState<Set<string>>(new Set())
 
   function launchPlugin(pluginId: string) {
@@ -2001,6 +2067,7 @@ export default function App() {
               openAppSlugs={openAppSlugs}
               onLaunchApp={launchApp}
               onReorderApps={reorderApps}
+              onRenameApp={renameAppLabel}
             />
           </div>
 

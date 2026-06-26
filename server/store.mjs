@@ -77,6 +77,22 @@ const upsertAppOrder = db.prepare(`
   ON CONFLICT(slug) DO UPDATE SET sort_index = excluded.sort_index, updated_at = excluded.updated_at
 `)
 
+// User-chosen display name for an app, overriding the manifest's label. Kept
+// server-side (like order) so it survives the agent rewriting its manifest.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS app_label (
+    slug TEXT PRIMARY KEY,
+    label TEXT,
+    updated_at TEXT
+  );
+`)
+const selectAppLabels = db.prepare('SELECT slug, label FROM app_label')
+const upsertAppLabel = db.prepare(`
+  INSERT INTO app_label (slug, label, updated_at) VALUES (?, ?, ?)
+  ON CONFLICT(slug) DO UPDATE SET label = excluded.label, updated_at = excluded.updated_at
+`)
+const deleteAppLabel = db.prepare('DELETE FROM app_label WHERE slug = ?')
+
 const upsertRun = db.prepare(`
   INSERT INTO runs (id, session_id, prompt, category, category_tags, project, workspace, workspace_path, task, job, job_status, resource_ids, sort_index, created_at, updated_at)
   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -308,6 +324,7 @@ function scanApps() {
   const warnings = []
   const candidates = []
   const seenIds = new Map() // id -> [dirs]
+  const labelMap = new Map(selectAppLabels.all().map((row) => [row.slug, row.label]))
 
   for (const dir of dirs) {
     const manifest = readManifest(dir)
@@ -326,7 +343,7 @@ function scanApps() {
     candidates.push({
       id,
       dir,
-      label: String(manifest.label ?? id),
+      label: labelMap.get(id) ?? String(manifest.label ?? id),
       group: String(manifest.group ?? 'App'),
       kind: manifest.kind === 'embedded' ? 'embedded' : 'static',
       entry: String(manifest.entry ?? `/apps/${id}/`),
@@ -376,6 +393,15 @@ function setAppOrder(slugs) {
     db.exec('ROLLBACK')
     return { error: String(error?.message || error), status: 400 }
   }
+  return scanApps()
+}
+
+// Sets (or clears, when label is empty) a user display-name override for an app.
+function setAppLabel(slug, label) {
+  if (typeof slug !== 'string' || !SLUG_RE.test(slug)) return { error: 'invalid slug', status: 400 }
+  const clean = String(label ?? '').trim().slice(0, 80)
+  if (clean) upsertAppLabel.run(slug, clean, nowIso())
+  else deleteAppLabel.run(slug)
   return scanApps()
 }
 
@@ -604,6 +630,24 @@ const server = createServer((req, res) => {
       try {
         const { order } = JSON.parse(body || '{}')
         const result = setAppOrder(order)
+        sendJson(res, result.error ? result.status : 200, result)
+      } catch (error) {
+        sendJson(res, 400, { error: String(error?.message || error) })
+      }
+    })
+    return
+  }
+
+  if (req.method === 'POST' && url === '/store/apps/rename') {
+    let body = ''
+    req.on('data', (chunk) => {
+      body += chunk
+      if (body.length > 100_000) req.destroy()
+    })
+    req.on('end', () => {
+      try {
+        const { slug, label } = JSON.parse(body || '{}')
+        const result = setAppLabel(slug, label)
         sendJson(res, result.error ? result.status : 200, result)
       } catch (error) {
         sendJson(res, 400, { error: String(error?.message || error) })
