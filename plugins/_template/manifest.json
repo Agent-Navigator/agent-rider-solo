@@ -1,0 +1,9 @@
+{
+  "id": "template-app",
+  "label": "Template App",
+  "group": "App",
+  "kind": "static",
+  "description": "Scaffold for a new Agent Rider App. Copy this folder and rename.",
+  "dataScopes": ["store"],
+  "version": 1
+}

@@ -4,8 +4,8 @@
 import { createServer } from 'node:http'
 import { spawn } from 'node:child_process'
 import { DatabaseSync } from 'node:sqlite'
-import { mkdirSync, readdirSync, statSync } from 'node:fs'
-import { dirname, join, resolve, basename } from 'node:path'
+import { mkdirSync, readdirSync, statSync, readFileSync, existsSync, createReadStream } from 'node:fs'
+import { dirname, join, resolve, basename, extname, normalize } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import * as pty from 'node-pty'
 import { WebSocket, WebSocketServer } from 'ws'
@@ -61,6 +61,21 @@ try {
 } catch {
   // column already present
 }
+
+// Persisted display order for Agent App plugins (existence comes from the
+// manifests under plugins/; this table only records the user's preferred order).
+db.exec(`
+  CREATE TABLE IF NOT EXISTS app_order (
+    slug TEXT PRIMARY KEY,
+    sort_index INTEGER,
+    updated_at TEXT
+  );
+`)
+const selectAppOrder = db.prepare('SELECT slug, sort_index FROM app_order')
+const upsertAppOrder = db.prepare(`
+  INSERT INTO app_order (slug, sort_index, updated_at) VALUES (?, ?, ?)
+  ON CONFLICT(slug) DO UPDATE SET sort_index = excluded.sort_index, updated_at = excluded.updated_at
+`)
 
 const upsertRun = db.prepare(`
   INSERT INTO runs (id, session_id, prompt, category, category_tags, project, workspace, workspace_path, task, job, job_status, resource_ids, sort_index, created_at, updated_at)
@@ -160,6 +175,21 @@ function saveState({ runs = [], turns = [], sessionId = null }) {
         nowIso(),
       )
     }
+    // Reconcile deletions: the client sends the full state, so any row no longer
+    // present has been deleted and must be removed (an upsert-only save would let
+    // deleted conversations reappear on the next reload).
+    const runIds = runs.filter((r) => r && r.id).map((r) => String(r.id))
+    const turnIds = turns.filter((t) => t && t.id).map((t) => String(t.id))
+    if (runIds.length) {
+      db.prepare(`DELETE FROM runs WHERE id NOT IN (${runIds.map(() => '?').join(',')})`).run(...runIds)
+    } else {
+      db.exec('DELETE FROM runs')
+    }
+    if (turnIds.length) {
+      db.prepare(`DELETE FROM turns WHERE id NOT IN (${turnIds.map(() => '?').join(',')})`).run(...turnIds)
+    } else {
+      db.exec('DELETE FROM turns')
+    }
     db.exec('COMMIT')
   } catch (error) {
     db.exec('ROLLBACK')
@@ -195,10 +225,25 @@ function listDirectory(input) {
   if (!stat.isDirectory()) return { error: 'not a directory', status: 400 }
 
   let dirs = []
+  let files = []
   try {
-    dirs = readdirSync(path, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.'))
+    const entries = readdirSync(path, { withFileTypes: true }).filter((entry) => !entry.name.startsWith('.'))
+    dirs = entries
+      .filter((entry) => entry.isDirectory())
       .map((entry) => ({ name: entry.name, path: join(path, entry.name) }))
+      .sort((a, b) => a.name.localeCompare(b.name))
+    files = entries
+      .filter((entry) => entry.isFile())
+      .map((entry) => {
+        const filePath = join(path, entry.name)
+        let size = null
+        try {
+          size = statSync(filePath).size
+        } catch {
+          // Unreadable file (e.g. broken symlink) — list it without a size.
+        }
+        return { name: entry.name, path: filePath, size }
+      })
       .sort((a, b) => a.name.localeCompare(b.name))
   } catch {
     return { error: 'cannot read directory', status: 403 }
@@ -209,6 +254,7 @@ function listDirectory(input) {
     path,
     parent: path === BROWSE_ROOT ? null : dirname(path),
     dirs,
+    files,
   }
 }
 
@@ -227,6 +273,167 @@ function makeDirectory(parent, name) {
     return { error: String(error?.message || error), status: 400 }
   }
   return { path: target, name: basename(target) }
+}
+
+// ── Agent App plugins ───────────────────────────────────────────────────────
+// Apps are self-contained static web apps living under plugins/<slug>/, built to
+// plugins/<slug>/dist/ and served same-origin at /apps/<slug>/. They are
+// discovered at runtime (no rebuild of the main app) by scanning manifests.
+const PLUGINS_DIR = join(__dirname, '..', 'plugins')
+const SLUG_RE = /^[a-z0-9][a-z0-9-]*$/
+
+function readManifest(dir) {
+  const manifestPath = join(PLUGINS_DIR, dir, 'manifest.json')
+  if (!existsSync(manifestPath)) return null
+  try {
+    const raw = JSON.parse(readFileSync(manifestPath, 'utf8'))
+    return raw && typeof raw === 'object' ? raw : null
+  } catch {
+    return { __parseError: true }
+  }
+}
+
+// Returns { apps, warnings, hash }. `apps` is the active, de-duplicated, ordered
+// list; `warnings` surfaces invalid/duplicate manifests so the UI can flag them.
+function scanApps() {
+  let dirs = []
+  try {
+    dirs = readdirSync(PLUGINS_DIR, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && !entry.name.startsWith('_') && !entry.name.startsWith('.'))
+      .map((entry) => entry.name)
+  } catch {
+    return { apps: [], warnings: [], hash: '0' }
+  }
+
+  const warnings = []
+  const candidates = []
+  const seenIds = new Map() // id -> [dirs]
+
+  for (const dir of dirs) {
+    const manifest = readManifest(dir)
+    if (!manifest) continue // no manifest.json → not an app (e.g. first-party build-time plugin)
+    if (manifest.__parseError) {
+      warnings.push({ dir, error: 'manifest.json is not valid JSON' })
+      continue
+    }
+    const id = String(manifest.id ?? dir)
+    if (!SLUG_RE.test(id)) {
+      warnings.push({ dir, id, error: 'invalid slug (use lowercase letters, digits, hyphens)' })
+      continue
+    }
+    seenIds.set(id, [...(seenIds.get(id) ?? []), dir])
+    const distDir = join(PLUGINS_DIR, dir, 'dist')
+    candidates.push({
+      id,
+      dir,
+      label: String(manifest.label ?? id),
+      group: String(manifest.group ?? 'App'),
+      kind: manifest.kind === 'embedded' ? 'embedded' : 'static',
+      entry: String(manifest.entry ?? `/apps/${id}/`),
+      description: manifest.description ? String(manifest.description) : '',
+      dataScopes: Array.isArray(manifest.dataScopes) ? manifest.dataScopes.map(String) : [],
+      version: Number(manifest.version ?? 1),
+      hasDist: existsSync(join(distDir, 'index.html')),
+    })
+  }
+
+  // Global slug uniqueness: a slug claimed by more than one folder is a conflict —
+  // none of them are listed, and we warn instead of silently shadowing.
+  const conflicts = new Set([...seenIds.entries()].filter(([, ds]) => ds.length > 1).map(([id]) => id))
+  for (const id of conflicts) {
+    warnings.push({ id, dirs: seenIds.get(id), error: 'duplicate slug claimed by multiple folders' })
+  }
+
+  const orderMap = new Map(selectAppOrder.all().map((row) => [row.slug, row.sort_index]))
+  const active = candidates.filter((app) => !conflicts.has(app.id))
+  active.sort((a, b) => {
+    const ai = orderMap.has(a.id) ? orderMap.get(a.id) : Number.MAX_SAFE_INTEGER
+    const bi = orderMap.has(b.id) ? orderMap.get(b.id) : Number.MAX_SAFE_INTEGER
+    if (ai !== bi) return ai - bi
+    return a.label.localeCompare(b.label) // new (unordered) apps fall to the end, then alphabetical
+  })
+
+  // Cheap change-detection token for client polling — changes only when the
+  // listing meaningfully changes (set, order, build status, or warnings).
+  const hashSource = JSON.stringify({
+    apps: active.map((a) => [a.id, a.label, a.group, a.kind, a.entry, a.hasDist]),
+    warnings,
+  })
+  let hash = 0
+  for (let i = 0; i < hashSource.length; i += 1) hash = (hash * 31 + hashSource.charCodeAt(i)) | 0
+  return { apps: active, warnings, hash: String(hash) }
+}
+
+function setAppOrder(slugs) {
+  if (!Array.isArray(slugs)) return { error: 'order must be an array of slugs', status: 400 }
+  db.exec('BEGIN')
+  try {
+    slugs.forEach((slug, index) => {
+      if (typeof slug === 'string' && SLUG_RE.test(slug)) upsertAppOrder.run(slug, index, nowIso())
+    })
+    db.exec('COMMIT')
+  } catch (error) {
+    db.exec('ROLLBACK')
+    return { error: String(error?.message || error), status: 400 }
+  }
+  return scanApps()
+}
+
+const MIME_TYPES = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.mjs': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.ico': 'image/x-icon',
+  '.woff': 'font/woff',
+  '.woff2': 'font/woff2',
+  '.ttf': 'font/ttf',
+  '.map': 'application/json; charset=utf-8',
+}
+
+// Serves a built Agent App's static files from plugins/<slug>/dist/.
+// SPA-friendly: requests without a file extension fall back to index.html.
+function serveAppStatic(req, res, urlPath) {
+  const rest = urlPath.slice('/apps/'.length)
+  const slug = rest.split('/')[0]
+  if (!SLUG_RE.test(slug)) {
+    sendJson(res, 404, { error: 'not found' })
+    return
+  }
+  const distDir = join(PLUGINS_DIR, slug, 'dist')
+  let relative = decodeURIComponent(rest.slice(slug.length)) || '/'
+  if (relative.endsWith('/')) relative += 'index.html'
+  // Resolve and confirm the target stays within the app's dist directory.
+  let target = normalize(join(distDir, relative))
+  if (target !== distDir && !target.startsWith(distDir + '/')) {
+    sendJson(res, 403, { error: 'path outside app' })
+    return
+  }
+  if (!existsSync(target) || !statSync(target).isFile()) {
+    // SPA fallback for extension-less routes; otherwise a genuine miss.
+    if (!extname(relative)) {
+      target = join(distDir, 'index.html')
+      if (!existsSync(target)) {
+        sendJson(res, 404, { error: 'app not built (no dist/index.html)' })
+        return
+      }
+    } else {
+      sendJson(res, 404, { error: 'not found' })
+      return
+    }
+  }
+  res.writeHead(200, {
+    'Content-Type': MIME_TYPES[extname(target)] || 'application/octet-stream',
+    'Cache-Control': 'no-store',
+  })
+  createReadStream(target).pipe(res)
 }
 
 function parseTerminalOutput(output, fallbackCwd) {
@@ -374,6 +581,36 @@ function attachTerminalSocket(server) {
 
 const server = createServer((req, res) => {
   const url = (req.url || '').split('?')[0]
+
+  // Static mount for built Agent Apps — served same-origin so they need no
+  // external URL and inherit no frame-blocking headers.
+  if (req.method === 'GET' && url.startsWith('/apps/')) {
+    serveAppStatic(req, res, url)
+    return
+  }
+
+  if (req.method === 'GET' && url === '/store/apps') {
+    sendJson(res, 200, scanApps())
+    return
+  }
+
+  if (req.method === 'POST' && url === '/store/apps/order') {
+    let body = ''
+    req.on('data', (chunk) => {
+      body += chunk
+      if (body.length > 100_000) req.destroy()
+    })
+    req.on('end', () => {
+      try {
+        const { order } = JSON.parse(body || '{}')
+        const result = setAppOrder(order)
+        sendJson(res, result.error ? result.status : 200, result)
+      } catch (error) {
+        sendJson(res, 400, { error: String(error?.message || error) })
+      }
+    })
+    return
+  }
 
   if (req.method === 'GET' && url === '/store/state') {
     const runs = selectRuns.all().map(runRowToApi)

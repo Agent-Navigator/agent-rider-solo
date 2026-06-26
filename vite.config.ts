@@ -20,6 +20,30 @@ const apiProxy = {
     changeOrigin: true,
     ws: true,
   },
+  // Same-origin static mount for built Agent Apps (plugins/<slug>/dist/),
+  // served by the store backend at /apps/<slug>/ so they need no external URL.
+  '/apps': {
+    target: 'http://127.0.0.1:5174',
+    changeOrigin: true,
+  },
+  // Same-origin mount of the Hermes WebUI so it can be embedded in an iframe.
+  // Hermes sends X-Frame-Options: DENY and CSP frame-ancestors 'none', which
+  // block framing outright — we strip those headers on the proxied responses.
+  '/hermes-ui': {
+    target: 'http://127.0.0.1:8789',
+    changeOrigin: true,
+    ws: true,
+    rewrite: (path: string) => path.replace(/^\/hermes-ui/, ''),
+    configure: (proxy: {
+      on: (event: string, cb: (proxyRes: { headers: Record<string, unknown> }) => void) => void
+    }) => {
+      proxy.on('proxyRes', (proxyRes) => {
+        delete proxyRes.headers['x-frame-options']
+        delete proxyRes.headers['content-security-policy']
+        delete proxyRes.headers['content-security-policy-report-only']
+      })
+    },
+  },
 }
 
 export default defineConfig({

@@ -1335,6 +1335,62 @@ button { cursor: pointer; }
   grid-template-columns: minmax(0, 1fr) auto;
 }
 
+.app-tool {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.app-tool-launch {
+  flex: 1;
+  min-width: 0;
+}
+
+.app-tool-launch:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.app-tool-reorder {
+  display: inline-flex;
+  flex-shrink: 0;
+  gap: 2px;
+}
+
+.app-tool-reorder button {
+  width: 22px;
+  height: 24px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.app-tool-reorder button:hover:not(:disabled) {
+  border-color: rgba(121, 185, 255, 0.34);
+  color: var(--text);
+}
+
+.app-tool-reorder button:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.app-warning {
+  font-size: 11px;
+  line-height: 1.4;
+  color: #fecaca;
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: 8px;
+  padding: 6px 8px;
+}
+
 .resource-tool-action {
   flex-shrink: 0;
   font-size: 11px;

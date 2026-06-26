@@ -5,8 +5,20 @@ import { FitAddon } from '@xterm/addon-fit'
 import { Terminal as XTermTerminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 import { HermesBridge, type HermesConnectionState } from './hermesBridge'
-import { loadPersistedState, persistState, listDir, makeDir, type FsListing } from './store'
+import {
+  loadPersistedState,
+  persistState,
+  listDir,
+  makeDir,
+  listApps,
+  setAppOrder,
+  type FsListing,
+  type AgentApp,
+  type AppListing,
+  type AppWarning,
+} from './store'
 import { plugins, type AgentRiderPlugin } from '../plugins'
+import { WebView } from '../plugins/WebView'
 
 type JobStatus = 'queued' | 'running' | 'done' | 'error'
 type ResourceHealth = 'Ready' | 'Needs setup' | 'Draft'
@@ -886,16 +898,67 @@ function ConversationTreeSidebar({
   )
 }
 
+const EMPTY_APP_LISTING: AppListing = { apps: [], warnings: [], hash: '0' }
+
+/**
+ * Auto-discovers runtime Agent Apps from the store backend, polling every 5s and
+ * on window focus. Uses the listing hash to skip no-op re-renders, so a launched
+ * app's iframe is never disturbed by polling. Returns a `reorder` that persists a
+ * new global order server-side.
+ */
+function useAgentApps(): { listing: AppListing; reorder: (order: string[]) => void } {
+  const [listing, setListing] = useState<AppListing>(EMPTY_APP_LISTING)
+  const hashRef = useRef('0')
+
+  useEffect(() => {
+    let cancelled = false
+    async function poll() {
+      const next = await listApps()
+      if (cancelled || next.hash === hashRef.current) return
+      hashRef.current = next.hash
+      setListing(next)
+    }
+    void poll()
+    const id = window.setInterval(poll, 5000)
+    const onFocus = () => void poll()
+    window.addEventListener('focus', onFocus)
+    return () => {
+      cancelled = true
+      window.clearInterval(id)
+      window.removeEventListener('focus', onFocus)
+    }
+  }, [])
+
+  function reorder(order: string[]) {
+    void setAppOrder(order).then((next) => {
+      hashRef.current = next.hash
+      setListing(next)
+    })
+  }
+
+  return { listing, reorder }
+}
+
 function ResourceSidebar({
   terminalOpen,
   onLaunchTerminal,
   openPluginIds,
   onLaunchPlugin,
+  apps,
+  appWarnings,
+  openAppSlugs,
+  onLaunchApp,
+  onReorderApps,
 }: {
   terminalOpen: boolean
   onLaunchTerminal: () => void
   openPluginIds: Set<string>
   onLaunchPlugin: (pluginId: string) => void
+  apps: AgentApp[]
+  appWarnings: AppWarning[]
+  openAppSlugs: Set<string>
+  onLaunchApp: (slug: string) => void
+  onReorderApps: (order: string[]) => void
 }) {
   // Built-in tools plus every registered plugin, grouped by their sidebar heading.
   const groups = useMemo(() => {
@@ -960,8 +1023,82 @@ function ResourceSidebar({
             </div>
           </section>
         ))}
+
+        <section className="tree-nav-category">
+          <h3>App</h3>
+          <div className="tree-nav-runs">
+            {apps.length ? (
+              apps.map((app, index) => (
+                <AppTool
+                  key={app.id}
+                  app={app}
+                  open={openAppSlugs.has(app.id)}
+                  canMoveUp={index > 0}
+                  canMoveDown={index < apps.length - 1}
+                  onLaunch={() => onLaunchApp(app.id)}
+                  onMove={(delta) => onReorderApps(reorderSlugs(apps, index, delta))}
+                />
+              ))
+            ) : (
+              <div className="tree-empty">No apps yet — ask an agent to build one.</div>
+            )}
+            {appWarnings.map((warning, index) => (
+              <div key={`warn-${index}`} className="app-warning" role="alert">
+                ⚠ {warning.id ?? warning.dir ?? 'plugin'}: {warning.error}
+              </div>
+            ))}
+          </div>
+        </section>
       </div>
     </nav>
+  )
+}
+
+// Builds a new global slug order with the app at `index` moved by `delta` (±1).
+function reorderSlugs(apps: AgentApp[], index: number, delta: number): string[] {
+  const order = apps.map((app) => app.id)
+  const target = index + delta
+  if (target < 0 || target >= order.length) return order
+  ;[order[index], order[target]] = [order[target], order[index]]
+  return order
+}
+
+function AppTool({
+  app,
+  open,
+  canMoveUp,
+  canMoveDown,
+  onLaunch,
+  onMove,
+}: {
+  app: AgentApp
+  open: boolean
+  canMoveUp: boolean
+  canMoveDown: boolean
+  onLaunch: () => void
+  onMove: (delta: number) => void
+}) {
+  return (
+    <div className="app-tool">
+      <button
+        type="button"
+        className={`tree-nav-run resource-tool app-tool-launch ${open ? 'active' : ''}`}
+        onClick={onLaunch}
+        disabled={!app.hasDist}
+        title={app.hasDist ? (open ? `${app.label} is open` : `Launch ${app.label}`) : `${app.label} is not built yet`}
+      >
+        <span className="tree-run-title">{app.label}</span>
+        <span className="resource-tool-action">{app.hasDist ? (open ? 'Open' : 'Launch') : 'Building…'}</span>
+      </button>
+      <span className="app-tool-reorder">
+        <button type="button" title="Move up" aria-label="Move up" disabled={!canMoveUp} onClick={() => onMove(-1)}>
+          ↑
+        </button>
+        <button type="button" title="Move down" aria-label="Move down" disabled={!canMoveDown} onClick={() => onMove(1)}>
+          ↓
+        </button>
+      </span>
+    </div>
   )
 }
 
@@ -1322,6 +1459,9 @@ export default function App() {
   const [terminalOpen, setTerminalOpen] = useState(false)
   // Ids of plugin panels currently open — each launchable from Resources.
   const [openPluginIds, setOpenPluginIds] = useState<Set<string>>(new Set())
+  // Runtime Agent Apps (auto-discovered from the store backend) and which are open.
+  const { listing: appListing, reorder: reorderApps } = useAgentApps()
+  const [openAppSlugs, setOpenAppSlugs] = useState<Set<string>>(new Set())
 
   function launchPlugin(pluginId: string) {
     setOpenPluginIds((current) => {
@@ -1335,6 +1475,22 @@ export default function App() {
     setOpenPluginIds((current) => {
       const next = new Set(current)
       next.delete(pluginId)
+      return next
+    })
+  }
+
+  function launchApp(slug: string) {
+    setOpenAppSlugs((current) => {
+      const next = new Set(current)
+      next.add(slug)
+      return next
+    })
+  }
+
+  function closeApp(slug: string) {
+    setOpenAppSlugs((current) => {
+      const next = new Set(current)
+      next.delete(slug)
       return next
     })
   }
@@ -1840,6 +1996,11 @@ export default function App() {
               onLaunchTerminal={() => setTerminalOpen(true)}
               openPluginIds={openPluginIds}
               onLaunchPlugin={launchPlugin}
+              apps={appListing.apps}
+              appWarnings={appListing.warnings}
+              openAppSlugs={openAppSlugs}
+              onLaunchApp={launchApp}
+              onReorderApps={reorderApps}
             />
           </div>
 
@@ -1882,6 +2043,14 @@ export default function App() {
                 .map((plugin) => (
                   <div key={plugin.id} className="plugin-panel">
                     {plugin.renderPanel({ onClose: () => closePlugin(plugin.id) })}
+                  </div>
+                ))}
+
+              {appListing.apps
+                .filter((app) => openAppSlugs.has(app.id))
+                .map((app) => (
+                  <div key={app.id} className="plugin-panel">
+                    <WebView title={app.label} src={app.entry} onClose={() => closeApp(app.id)} />
                   </div>
                 ))}
 
