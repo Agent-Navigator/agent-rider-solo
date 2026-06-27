@@ -1565,6 +1565,46 @@ button { cursor: pointer; }
   letter-spacing: 0;
 }
 
+.tree-collapse-button {
+  width: 100%;
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+
+.tree-category-toggle {
+  padding: 0;
+  font-weight: 700;
+}
+
+.tree-project-toggle {
+  padding: 0;
+}
+
+.tree-toggle-icon {
+  flex: 0 0 auto;
+  width: 12px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1;
+}
+
+.tree-toggle-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tree-collapse-button:hover .tree-toggle-text {
+  color: var(--text);
+}
+
 .tree-nav-project {
   display: grid;
   gap: 6px;

@@ -1293,6 +1293,26 @@ function ConversationTreeSidebar({
   onDeleteRequest: (runId: string) => void
 }) {
   const total = tree.reduce((sum, category) => sum + category.projects.reduce((projectSum, project) => projectSum + project.runs.length, 0), 0)
+  const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set())
+  const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(new Set())
+
+  function toggleCategory(key: string) {
+    setCollapsedCategories((current) => {
+      const next = new Set(current)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
+
+  function toggleProject(key: string) {
+    setCollapsedProjects((current) => {
+      const next = new Set(current)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
 
   return (
     <nav className="conversation-sidebar sidebar-panel card" aria-label="Conversation tree">
@@ -1307,40 +1327,75 @@ function ConversationTreeSidebar({
       <div className="sidebar-body">
         {tree.length ? (
           <div className="tree-nav">
-            {tree.map((category) => (
-              <section key={category.category} className="tree-nav-category">
-                <h3>{category.category}</h3>
-                {category.projects.map((project) => (
-                  <div key={`${category.category}-${project.project}`} className="tree-nav-project">
-                    <div className="tree-nav-label">{project.project}</div>
-                    <div className="tree-nav-runs">
-                      {project.runs.map((run) => (
-                        <div key={run.id} className="tree-nav-run-row">
+            {tree.map((category) => {
+              const categoryCollapsed = collapsedCategories.has(category.category)
+
+              return (
+                <section key={category.category} className="tree-nav-category">
+                  <h3>
+                    <button
+                      type="button"
+                      className="tree-collapse-button tree-category-toggle"
+                      aria-expanded={!categoryCollapsed}
+                      onClick={() => toggleCategory(category.category)}
+                    >
+                      <span className="tree-toggle-icon" aria-hidden>
+                        {categoryCollapsed ? '▸' : '▾'}
+                      </span>
+                      <span className="tree-toggle-text">{category.category}</span>
+                    </button>
+                  </h3>
+                  {categoryCollapsed
+                    ? null
+                    : category.projects.map((project) => {
+                      const projectKey = `${category.category}-${project.project}`
+                      const projectCollapsed = collapsedProjects.has(projectKey)
+
+                      return (
+                        <div key={projectKey} className="tree-nav-project">
                           <button
                             type="button"
-                            className={`tree-nav-run ${activeRunId === run.id ? 'active' : ''}`}
-                            onClick={() => onSelect(run.id)}
-                            aria-current={activeRunId === run.id ? 'true' : undefined}
+                            className="tree-nav-label tree-collapse-button tree-project-toggle"
+                            aria-expanded={!projectCollapsed}
+                            onClick={() => toggleProject(projectKey)}
                           >
-                            <span className="tree-run-title">{conversationTitle(run)}</span>
-                            <span className={`tree-run-status ${run.jobStatus}`} aria-label={run.jobStatus} title={run.jobStatus} />
+                            <span className="tree-toggle-icon" aria-hidden>
+                              {projectCollapsed ? '▸' : '▾'}
+                            </span>
+                            <span className="tree-toggle-text">{project.project}</span>
                           </button>
-                          <button
-                            type="button"
-                            className="tree-run-delete card-close"
-                            title="Delete conversation"
-                            aria-label={`Delete ${conversationTitle(run)}`}
-                            onClick={() => onDeleteRequest(run.id)}
-                          >
-                            ×
-                          </button>
+                          {projectCollapsed ? null : (
+                            <div className="tree-nav-runs">
+                              {project.runs.map((run) => (
+                                <div key={run.id} className="tree-nav-run-row">
+                                  <button
+                                    type="button"
+                                    className={`tree-nav-run ${activeRunId === run.id ? 'active' : ''}`}
+                                    onClick={() => onSelect(run.id)}
+                                    aria-current={activeRunId === run.id ? 'true' : undefined}
+                                  >
+                                    <span className="tree-run-title">{conversationTitle(run)}</span>
+                                    <span className={`tree-run-status ${run.jobStatus}`} aria-label={run.jobStatus} title={run.jobStatus} />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="tree-run-delete card-close"
+                                    title="Delete conversation"
+                                    aria-label={`Delete ${conversationTitle(run)}`}
+                                    onClick={() => onDeleteRequest(run.id)}
+                                  >
+                                    ×
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          )}
                         </div>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </section>
-            ))}
+                      )
+                    })}
+                </section>
+              )
+            })}
           </div>
         ) : (
           <div className="tree-empty">No conversations</div>
