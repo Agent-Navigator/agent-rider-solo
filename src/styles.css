@@ -2213,6 +2213,9 @@ button { cursor: pointer; }
 .conv-card-body .conv-meta { margin-bottom: 14px; }
 
 .conv-followup {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
   margin-top: 16px;
   padding: 12px;
   border: 1px solid rgba(121, 185, 255, 0.34);
@@ -2226,6 +2229,23 @@ button { cursor: pointer; }
   transition: border-color 0.16s ease, box-shadow 0.16s ease, background 0.16s ease;
 }
 
+.conv-followup::before {
+  content: '';
+  position: absolute;
+  inset: -70% -30%;
+  z-index: -1;
+  background:
+    radial-gradient(circle at 20% 45%, rgba(34, 211, 238, 0.34), transparent 28%),
+    radial-gradient(circle at 52% 28%, rgba(121, 185, 255, 0.28), transparent 25%),
+    radial-gradient(circle at 78% 62%, rgba(139, 92, 246, 0.32), transparent 30%),
+    radial-gradient(circle at 38% 76%, rgba(64, 199, 125, 0.18), transparent 24%);
+  filter: blur(22px) saturate(1.25);
+  opacity: 0.72;
+  transform: translate3d(-8%, -4%, 0) rotate(0deg) scale(1.05);
+  animation: hermesComposerAurora 9s ease-in-out infinite alternate;
+  pointer-events: none;
+}
+
 .conv-followup:focus-within {
   border-color: rgba(121, 185, 255, 0.78);
   background:
@@ -2236,8 +2256,19 @@ button { cursor: pointer; }
     0 16px 36px rgba(0, 0, 0, 0.24);
 }
 
+.conv-followup:focus-within::before {
+  opacity: 0.92;
+  animation-duration: 6s;
+}
+
 .conv-followup + .conversation-feed {
   margin-top: 14px;
+}
+
+.conv-followup textarea,
+.conv-followup .composer-meta {
+  position: relative;
+  z-index: 1;
 }
 
 .conv-followup textarea {
@@ -2278,6 +2309,24 @@ button { cursor: pointer; }
   box-shadow:
     0 12px 24px rgba(121, 185, 255, 0.24),
     0 0 0 1px rgba(255, 255, 255, 0.08) inset;
+}
+
+@keyframes hermesComposerAurora {
+  0% {
+    transform: translate3d(-8%, -4%, 0) rotate(0deg) scale(1.05);
+  }
+  50% {
+    transform: translate3d(6%, 4%, 0) rotate(9deg) scale(1.14);
+  }
+  100% {
+    transform: translate3d(10%, -7%, 0) rotate(-6deg) scale(1.1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .conv-followup::before {
+    animation: none;
+  }
 }
 
 /* Running spinner */
