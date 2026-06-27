@@ -1485,9 +1485,10 @@ button { cursor: pointer; }
   gap: 8px;
 }
 
-.rail-collapsed-stack span {
+.rail-collapsed-stack button {
   display: grid;
   min-height: 78px;
+  width: 100%;
   place-items: center;
   border: 1px solid rgba(148, 163, 184, 0.16);
   border-radius: 12px;
@@ -1498,6 +1499,12 @@ button { cursor: pointer; }
   letter-spacing: 0.08em;
   writing-mode: vertical-rl;
   transform: rotate(180deg);
+}
+
+.rail-collapsed-stack button:hover {
+  border-color: rgba(121, 185, 255, 0.34);
+  background: rgba(121, 185, 255, 0.08);
+  color: var(--text);
 }
 
 .conversation-sidebar,

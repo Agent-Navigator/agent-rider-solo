@@ -2895,9 +2895,23 @@ export default function App() {
             </button>
 
             {sidebarCollapsed ? (
-              <div className="rail-collapsed-stack" aria-hidden>
-                <span>NAV</span>
-                <span>RES</span>
+              <div className="rail-collapsed-stack">
+                <button
+                  type="button"
+                  aria-label="Expand sidebar to show Navigator"
+                  title="Expand sidebar to show Navigator"
+                  onClick={() => setSidebarCollapsed(false)}
+                >
+                  NAV
+                </button>
+                <button
+                  type="button"
+                  aria-label="Expand sidebar to show Resources"
+                  title="Expand sidebar to show Resources"
+                  onClick={() => setSidebarCollapsed(false)}
+                >
+                  RES
+                </button>
               </div>
             ) : (
               <>
