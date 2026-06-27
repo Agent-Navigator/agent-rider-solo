@@ -1428,8 +1428,8 @@ button { cursor: pointer; }
   position: sticky;
   top: 12px;
   align-self: start;
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) minmax(0, 1fr);
   gap: 10px;
   max-height: calc(100vh - 24px);
   min-height: 0;
@@ -1437,7 +1437,8 @@ button { cursor: pointer; }
 }
 
 .left-rail.collapsed {
-  align-items: stretch;
+  display: flex;
+  flex-direction: column;
 }
 
 .rail-toggle-button {
@@ -1539,6 +1540,7 @@ button { cursor: pointer; }
 }
 
 .sidebar-body {
+  flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
   padding-right: 2px;
