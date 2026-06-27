@@ -1293,31 +1293,18 @@ function ConversationTreeSidebar({
   onDeleteRequest: (runId: string) => void
 }) {
   const total = tree.reduce((sum, category) => sum + category.projects.reduce((projectSum, project) => projectSum + project.runs.length, 0), 0)
-  const [collapsed, setCollapsed] = useState(false)
 
   return (
-    <nav className={`conversation-sidebar sidebar-panel card ${collapsed ? 'collapsed' : ''}`} aria-label="Conversation tree">
+    <nav className="conversation-sidebar sidebar-panel card" aria-label="Conversation tree">
       <div className="sidebar-head">
         <div>
           <div className="eyebrow">Navigator</div>
           <h2>Conversation Tree</h2>
         </div>
-        <div className="sidebar-actions">
-          <span className="sidebar-count">{total}</span>
-          <button
-            type="button"
-            className="sidebar-toggle"
-            aria-expanded={!collapsed}
-            aria-label={collapsed ? 'Expand Navigator' : 'Collapse Navigator'}
-            title={collapsed ? 'Expand Navigator' : 'Collapse Navigator'}
-            onClick={() => setCollapsed((current) => !current)}
-          >
-            {collapsed ? '▸' : '▾'}
-          </button>
-        </div>
+        <span className="sidebar-count">{total}</span>
       </div>
 
-      <div className="sidebar-body" hidden={collapsed}>
+      <div className="sidebar-body">
         {tree.length ? (
           <div className="tree-nav">
             {tree.map((category) => (
@@ -1452,28 +1439,17 @@ function ResourceSidebar({
 
   const pluginTools = groups.get('Tools') ?? []
   const extraGroups = [...groups.entries()].filter(([group]) => group !== 'Tools')
-  const [collapsed, setCollapsed] = useState(false)
 
   return (
-    <nav className={`resource-sidebar sidebar-panel card ${collapsed ? 'collapsed' : ''}`} aria-label="Resource view">
+    <nav className="resource-sidebar sidebar-panel card" aria-label="Resource view">
       <div className="sidebar-head">
         <div>
           <div className="eyebrow">Resource</div>
           <h2>Resources</h2>
         </div>
-        <button
-          type="button"
-          className="sidebar-toggle"
-          aria-expanded={!collapsed}
-          aria-label={collapsed ? 'Expand Resource' : 'Collapse Resource'}
-          title={collapsed ? 'Expand Resource' : 'Collapse Resource'}
-          onClick={() => setCollapsed((current) => !current)}
-        >
-          {collapsed ? '▸' : '▾'}
-        </button>
       </div>
 
-      <div className="sidebar-body" hidden={collapsed}>
+      <div className="sidebar-body">
         <div className="tree-nav">
           <section className="tree-nav-category">
             <h3>Tools</h3>
@@ -2071,6 +2047,7 @@ export default function App() {
   const [newDoneIds, setNewDoneIds] = useState<Set<string>>(new Set())
   const [activeRunId, setActiveRunId] = useState<string | null>(null)
   const [workspaceColumns, setWorkspaceColumns] = useState<1 | 2>(1)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   // Key of the block (card or panel) currently being dragged. Block keys: a
   // run id (`run-…`) for a card, or a panel id ('terminal' | 'plugin:…' |
   // 'app:…'). One drag system so cards and panels can be freely interleaved.
@@ -2571,6 +2548,9 @@ export default function App() {
           if (layout.workspaceColumns === 1 || layout.workspaceColumns === 2) {
             setWorkspaceColumns(layout.workspaceColumns)
           }
+          if (typeof layout.sidebarCollapsed === 'boolean') {
+            setSidebarCollapsed(layout.sidebarCollapsed)
+          }
           if (layout.panelStates && typeof layout.panelStates === 'object') {
             setPanelStates((current) => (Object.keys(current).length ? current : normalizePanelStates(layout.panelStates)))
           }
@@ -2592,6 +2572,7 @@ export default function App() {
         panelColumns,
         layoutOrder,
         workspaceColumns,
+        sidebarCollapsed,
         closedRunIds: [...closedRunIds],
         collapsedRunIds: [...collapsedIds],
         cardMetaCollapsedIds: [...metaCollapsedIds],
@@ -2599,7 +2580,7 @@ export default function App() {
       })
     }, 700)
     return () => clearTimeout(handle)
-  }, [runs, turns, sessionId, panelOrder, panelColumns, layoutOrder, workspaceColumns, closedRunIds, collapsedIds, metaCollapsedIds, panelStates])
+  }, [runs, turns, sessionId, panelOrder, panelColumns, layoutOrder, workspaceColumns, sidebarCollapsed, closedRunIds, collapsedIds, metaCollapsedIds, panelStates])
 
   async function flushQueue() {
     if (activeTurnRef.current) return
@@ -2842,27 +2823,50 @@ export default function App() {
       </header>
 
       <main className="main-stage">
-        <div className="main-layout">
-          <div className="left-rail">
-            <ConversationTreeSidebar
-              tree={conversationTree}
-              activeRunId={activeRunId}
-              onSelect={selectConversation}
-              onDeleteRequest={requestDeleteConversation}
-            />
-            <ResourceSidebar
-              terminalOpen={terminalOpen}
-              onLaunchTerminal={() => openPanel('terminal')}
-              openPluginIds={openPluginIds}
-              onLaunchPlugin={launchPlugin}
-              apps={appListing.apps}
-              appWarnings={appListing.warnings}
-              openAppSlugs={openAppSlugs}
-              onLaunchApp={launchApp}
-              onReorderApps={reorderApps}
-              onRenameApp={renameAppLabel}
-            />
-          </div>
+        <div className={`main-layout ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
+          <aside className={`left-rail ${sidebarCollapsed ? 'collapsed' : ''}`} aria-label="Sidebar">
+            <button
+              type="button"
+              className="rail-toggle-button"
+              aria-expanded={!sidebarCollapsed}
+              aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+              title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+              onClick={() => setSidebarCollapsed((current) => !current)}
+            >
+              <span className="rail-toggle-icon" aria-hidden>
+                {sidebarCollapsed ? '›' : '‹'}
+              </span>
+              <span className="rail-toggle-text">{sidebarCollapsed ? 'Open sidebar' : 'Collapse sidebar'}</span>
+            </button>
+
+            {sidebarCollapsed ? (
+              <div className="rail-collapsed-stack" aria-hidden>
+                <span>NAV</span>
+                <span>RES</span>
+              </div>
+            ) : (
+              <>
+                <ConversationTreeSidebar
+                  tree={conversationTree}
+                  activeRunId={activeRunId}
+                  onSelect={selectConversation}
+                  onDeleteRequest={requestDeleteConversation}
+                />
+                <ResourceSidebar
+                  terminalOpen={terminalOpen}
+                  onLaunchTerminal={() => openPanel('terminal')}
+                  openPluginIds={openPluginIds}
+                  onLaunchPlugin={launchPlugin}
+                  apps={appListing.apps}
+                  appWarnings={appListing.warnings}
+                  openAppSlugs={openAppSlugs}
+                  onLaunchApp={launchApp}
+                  onReorderApps={reorderApps}
+                  onRenameApp={renameAppLabel}
+                />
+              </>
+            )}
+          </aside>
 
           <section className="conversation-workspace" aria-label="Conversation cards">
             <div className="stack-toolbar">

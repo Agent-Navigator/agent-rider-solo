@@ -16,6 +16,8 @@ export interface WorkspaceLayout {
   /** Unified display order of all blocks (card ids + panel ids). */
   layoutOrder?: string[]
   workspaceColumns?: 1 | 2
+  /** Whole left sidebar rail collapsed to save horizontal space. */
+  sidebarCollapsed?: boolean
   /** Conversation cards hidden via close, but still present in the Navigator. */
   closedRunIds?: string[]
   /** Conversation cards collapsed in the workspace. */
