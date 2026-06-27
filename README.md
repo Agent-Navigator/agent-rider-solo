@@ -1,20 +1,18 @@
 # Agent Rider
 
 Agent Rider 是一個本機 workspace UI，前端使用 React + Vite，後端使用
-Node store backend 保存本機狀態。這個專案目前的部署流程不依賴 GitHub：
-在本機打包 release，透過 `scp` 複製到遠端 server，然後在遠端執行安裝或更新腳本。
+Node store backend 保存本機狀態。
+
+這份 README 以你的部署情境為主：**在 remote server 上執行 `scp`，從這台開發機
+`/root/agent-work/DEV/agent-rider` 把 release 拉過去安裝或更新**。不需要 GitHub。
 
 ## 本機開發
 
-安裝 dependencies：
+在這台開發機：
 
 ```bash
+cd /root/agent-work/DEV/agent-rider
 npm ci
-```
-
-啟動 store backend 與 web UI：
-
-```bash
 npm run store
 npm run dev
 ```
@@ -25,71 +23,72 @@ npm run dev
 npm run build
 ```
 
-## 一鍵 scp 部署
+## 部署模型
 
-目前建議先使用 `scp` release 流程：
+角色分工：
 
-```bash
-scripts/deploy-scp.sh root@your-server
-```
+- Source machine：這台開發機，專案路徑是 `/root/agent-work/DEV/agent-rider`
+- Remote server：正式執行 Agent Rider 的 server
+- 傳輸方向：在 remote server 上執行 `ssh` / `scp`，從 source machine 把 release 拉到 remote
 
-指定遠端安裝目錄：
+前提：
 
-```bash
-scripts/deploy-scp.sh root@your-server /opt/agent-rider
-```
+- Remote server 可以 SSH 到 source machine。
+- Source machine 上已有這個 repo、`node_modules`、以及可執行 `scripts/release.sh`。
+- Remote server 建議是 Ubuntu/Debian，並且可以使用 `sudo`。installer 會安裝必要套件與 Node.js 22+。
 
-指定 SSH port：
+## 第一次安裝
 
-```bash
-SSH_OPTS='-p 2222' scripts/deploy-scp.sh root@your-server
-```
+以下指令都在 **remote server** 上執行。
 
-也可以用 npm wrapper：
+先設定 source machine 與安裝路徑：
 
 ```bash
-npm run deploy:scp -- root@your-server
+export SOURCE_SSH=root@source-machine
+export SOURCE_DIR=/root/agent-work/DEV/agent-rider
+export APP_DIR=/opt/agent-rider
+export WORK_DIR=/tmp/agent-rider-pull
 ```
 
-這個流程會自動完成：
-
-1. 在本機執行 `scripts/release.sh`。
-2. 執行 `npm run build` 產生 `dist/`。
-3. 建立 `releases/agent-rider-*.tar.gz`。
-4. 排除 `.git`、`node_modules`、`data`、`releases`。
-5. 用 `scp` 上傳 release 與遠端腳本。
-6. 遠端第一次部署時執行 install，之後執行 update。
-7. 重啟遠端 systemd services。
-
-## 手動安裝與更新
-
-如果不想使用一鍵腳本，可以手動拆成三步。
-
-本機建立 release：
+如果 source machine 的 SSH port 不是 22：
 
 ```bash
-scripts/release.sh
+export SSH_OPTS='-p 2222'
 ```
 
-上傳 release 與遠端腳本：
+讓 source machine 先打包最新 release：
 
 ```bash
-scp releases/agent-rider-*.tar.gz scripts/install-remote.sh scripts/update-remote.sh root@your-server:/tmp/
+ssh ${SSH_OPTS:-} "$SOURCE_SSH" "cd '$SOURCE_DIR' && scripts/release.sh"
 ```
 
-遠端第一次安裝：
+找出最新 release tarball：
 
 ```bash
-sudo APP_DIR=/opt/agent-rider bash /tmp/install-remote.sh /tmp/agent-rider-*.tar.gz
+RELEASE=$(ssh ${SSH_OPTS:-} "$SOURCE_SSH" "cd '$SOURCE_DIR' && ls -t releases/agent-rider-*.tar.gz | head -1")
+echo "$RELEASE"
 ```
 
-遠端更新既有安裝：
+從 source machine 把 release 和遠端腳本拉到 remote server：
 
 ```bash
-sudo APP_DIR=/opt/agent-rider bash /tmp/update-remote.sh /tmp/agent-rider-*.tar.gz
+rm -rf "$WORK_DIR"
+mkdir -p "$WORK_DIR"
+
+scp ${SSH_OPTS:-} "$SOURCE_SSH:$SOURCE_DIR/$RELEASE" "$WORK_DIR/"
+scp ${SSH_OPTS:-} \
+  "$SOURCE_SSH:$SOURCE_DIR/scripts/install-remote.sh" \
+  "$SOURCE_SSH:$SOURCE_DIR/scripts/update-remote.sh" \
+  "$WORK_DIR/"
 ```
 
-遠端目錄結構：
+執行第一次安裝：
+
+```bash
+sudo APP_DIR="$APP_DIR" bash "$WORK_DIR/install-remote.sh" "$WORK_DIR/$(basename "$RELEASE")"
+```
+
+安裝完成後會建立：
 
 ```text
 /opt/agent-rider/releases/     # 每次部署的 versioned release
@@ -97,9 +96,112 @@ sudo APP_DIR=/opt/agent-rider bash /tmp/update-remote.sh /tmp/agent-rider-*.tar.
 /opt/agent-rider/shared/data   # SQLite 與 runtime data，更新時保留
 ```
 
-## 遠端服務
+預設 Web UI 會在 remote server 的 `5173` port：
 
-遠端 installer 會建立兩個 systemd services：
+```text
+http://<remote-server>:5173
+```
+
+## 持續更新
+
+之後每次要更新，也是在 **remote server** 上執行同一組 pull 流程。
+
+先確定變數：
+
+```bash
+export SOURCE_SSH=root@source-machine
+export SOURCE_DIR=/root/agent-work/DEV/agent-rider
+export APP_DIR=/opt/agent-rider
+export WORK_DIR=/tmp/agent-rider-pull
+```
+
+請 source machine 重新打包最新 release：
+
+```bash
+ssh ${SSH_OPTS:-} "$SOURCE_SSH" "cd '$SOURCE_DIR' && scripts/release.sh"
+```
+
+抓最新 release：
+
+```bash
+RELEASE=$(ssh ${SSH_OPTS:-} "$SOURCE_SSH" "cd '$SOURCE_DIR' && ls -t releases/agent-rider-*.tar.gz | head -1")
+
+rm -rf "$WORK_DIR"
+mkdir -p "$WORK_DIR"
+
+scp ${SSH_OPTS:-} "$SOURCE_SSH:$SOURCE_DIR/$RELEASE" "$WORK_DIR/"
+scp ${SSH_OPTS:-} \
+  "$SOURCE_SSH:$SOURCE_DIR/scripts/install-remote.sh" \
+  "$SOURCE_SSH:$SOURCE_DIR/scripts/update-remote.sh" \
+  "$WORK_DIR/"
+```
+
+執行更新：
+
+```bash
+sudo APP_DIR="$APP_DIR" bash "$WORK_DIR/update-remote.sh" "$WORK_DIR/$(basename "$RELEASE")"
+```
+
+`update-remote.sh` 目前會沿用 `install-remote.sh` 的 idempotent 流程：
+
+- 解壓成新的 versioned release
+- 執行 `npm ci`
+- 執行 `npm run build`
+- 將 `/opt/agent-rider/current` 指向新版本
+- 保留 `/opt/agent-rider/shared/data`
+- 重啟 `agent-rider-store` 和 `agent-rider-web`
+
+## 建議放到 remote server 的更新腳本
+
+可以在 remote server 建立一個固定指令，例如：
+
+```bash
+sudo tee /usr/local/bin/agent-rider-pull-update >/dev/null <<'SCRIPT'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+SOURCE_SSH=${SOURCE_SSH:-root@source-machine}
+SOURCE_DIR=${SOURCE_DIR:-/root/agent-work/DEV/agent-rider}
+APP_DIR=${APP_DIR:-/opt/agent-rider}
+WORK_DIR=${WORK_DIR:-/tmp/agent-rider-pull}
+
+ssh ${SSH_OPTS:-} "$SOURCE_SSH" "cd '$SOURCE_DIR' && scripts/release.sh"
+RELEASE=$(ssh ${SSH_OPTS:-} "$SOURCE_SSH" "cd '$SOURCE_DIR' && ls -t releases/agent-rider-*.tar.gz | head -1")
+
+rm -rf "$WORK_DIR"
+mkdir -p "$WORK_DIR"
+
+scp ${SSH_OPTS:-} "$SOURCE_SSH:$SOURCE_DIR/$RELEASE" "$WORK_DIR/"
+scp ${SSH_OPTS:-} \
+  "$SOURCE_SSH:$SOURCE_DIR/scripts/install-remote.sh" \
+  "$SOURCE_SSH:$SOURCE_DIR/scripts/update-remote.sh" \
+  "$WORK_DIR/"
+
+if [[ -e "$APP_DIR/current" ]]; then
+  sudo APP_DIR="$APP_DIR" bash "$WORK_DIR/update-remote.sh" "$WORK_DIR/$(basename "$RELEASE")"
+else
+  sudo APP_DIR="$APP_DIR" bash "$WORK_DIR/install-remote.sh" "$WORK_DIR/$(basename "$RELEASE")"
+fi
+SCRIPT
+
+sudo chmod +x /usr/local/bin/agent-rider-pull-update
+```
+
+之後更新只要在 remote server 執行：
+
+```bash
+SOURCE_SSH=root@source-machine agent-rider-pull-update
+```
+
+如果需要指定 SSH port：
+
+```bash
+SOURCE_SSH=root@source-machine SSH_OPTS='-p 2222' agent-rider-pull-update
+```
+
+## 遠端服務管理
+
+installer 會建立兩個 systemd services：
 
 ```bash
 systemctl status agent-rider-store
@@ -146,35 +248,14 @@ VITE_ALLOWED_HOSTS=all
 sudo systemctl restart agent-rider-store agent-rider-web
 ```
 
-## 不用 GitHub 的替代方案
+## 不用 GitHub 的下一步選項
 
-`scp` 適合目前階段：簡單、只需要 SSH、不需要第三方 remote。缺點是每次會上傳完整 release tarball，不是增量同步。
+目前這個 pull-based `scp` 流程適合單台 remote server，優點是簡單、只需要 SSH、不需要任何第三方 remote。
 
-如果上傳開始變慢，可以改用 `rsync` over SSH，只傳差異：
+如果之後更新頻率變高，可以考慮：
 
-```bash
-rsync -az --delete \
-  --exclude .git \
-  --exclude node_modules \
-  --exclude data \
-  ./ root@your-server:/opt/agent-rider/current/
-```
+- `rsync` over SSH：只傳差異，適合檔案變多、tarball 上傳變慢時。
+- git over SSH：在 remote server 建 private bare repo，不用 GitHub，但有完整版本紀錄。
+- Tailscale / ZeroTier + git clone：source machine 和 remote server 做 P2P 連線，server 可直接從 source machine clone 或 pull。
 
-如果想保留清楚版本紀錄，但仍然不用 GitHub，建議下一步改成 git over SSH：
-
-```bash
-ssh root@your-server 'mkdir -p /srv/git && git init --bare /srv/git/agent-rider.git'
-git remote add prod root@your-server:/srv/git/agent-rider.git
-git push prod main
-```
-
-如果要做 P2P git clone，可以讓開發機和 server 都加入 Tailscale 或 ZeroTier，
-再讓 server 直接從開發機 clone：
-
-```bash
-git clone ssh://your-user@your-tailnet-ip/path/to/agent-rider.git
-```
-
-P2P 的前提是開發機必須在線，且 SSH 權限與網路路由要先設定好。實務上建議先使用 `scp` release；部署變頻繁後，再升級成 private `git over SSH`。
-
-更完整的部署說明在 [docs/deployment.md](docs/deployment.md)。
+更完整的 push-based 部署說明仍保留在 [docs/deployment.md](docs/deployment.md)。
