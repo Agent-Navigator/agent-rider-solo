@@ -12,6 +12,9 @@ dist/
 # Local SQLite persistence (runtime data)
 data/
 
+# Local release archives
+releases/
+
 # Logs
 *.log
 

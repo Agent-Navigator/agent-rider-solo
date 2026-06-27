@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "release": "bash scripts/release.sh",
+    "deploy:scp": "bash scripts/deploy-scp.sh",
     "preview": "vite preview",
     "store": "node server/store.mjs"
   },

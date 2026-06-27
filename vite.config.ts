@@ -1,9 +1,25 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
+const splitCsv = (value: string | undefined) =>
+  value
+    ?.split(',')
+    .map((item) => item.trim())
+    .filter(Boolean)
+
+const defaultAllowedHosts = ['dev-agent-rider.aicrmtech.com', 'hermes-agent-yen.tailf0a6a7.ts.net']
+const envAllowedHosts = splitCsv(process.env.VITE_ALLOWED_HOSTS)
+const allowedHosts = process.env.VITE_ALLOWED_HOSTS === 'all'
+  ? true
+  : envAllowedHosts?.length
+    ? envAllowedHosts
+    : defaultAllowedHosts
+const hermesTarget = process.env.HERMES_TARGET || 'http://127.0.0.1:8789'
+const storeTarget = `http://127.0.0.1:${process.env.STORE_PORT || '5174'}`
+
 const apiProxy = {
   '/api': {
-    target: 'http://127.0.0.1:8789',
+    target: hermesTarget,
     changeOrigin: true,
     ws: true,
     rewriteWsOrigin: true,
@@ -16,21 +32,21 @@ const apiProxy = {
   },
   // Local SQLite persistence backend (server/store.mjs)
   '/store': {
-    target: 'http://127.0.0.1:5174',
+    target: storeTarget,
     changeOrigin: true,
     ws: true,
   },
   // Same-origin static mount for built Agent Apps (plugins/<slug>/dist/),
   // served by the store backend at /apps/<slug>/ so they need no external URL.
   '/apps': {
-    target: 'http://127.0.0.1:5174',
+    target: storeTarget,
     changeOrigin: true,
   },
   // Same-origin mount of the Hermes WebUI so it can be embedded in an iframe.
   // Hermes sends X-Frame-Options: DENY and CSP frame-ancestors 'none', which
   // block framing outright — we strip those headers on the proxied responses.
   '/hermes-ui': {
-    target: 'http://127.0.0.1:8789',
+    target: hermesTarget,
     changeOrigin: true,
     ws: true,
     rewrite: (path: string) => path.replace(/^\/hermes-ui/, ''),
@@ -52,14 +68,14 @@ export default defineConfig({
     host: true,
     port: 5173,
     strictPort: true,
-    allowedHosts: ['dev-agent-rider.aicrmtech.com', 'hermes-agent-yen.tailf0a6a7.ts.net'],
+    allowedHosts,
     proxy: apiProxy,
   },
   preview: {
     host: true,
     port: 5173,
     strictPort: true,
-    allowedHosts: ['dev-agent-rider.aicrmtech.com', 'hermes-agent-yen.tailf0a6a7.ts.net'],
+    allowedHosts,
     proxy: apiProxy,
   },
 })
