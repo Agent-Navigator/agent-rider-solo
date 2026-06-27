@@ -433,6 +433,14 @@ function StatusPill({ state, detail }: { state: HermesConnectionState | JobStatu
   return <span className={`pill ${tone}`}>{detail}</span>
 }
 
+function headerStatusText(state: HermesConnectionState, detail: string) {
+  if (state === 'ready') return 'Hermes ready'
+  if (state === 'busy') return 'Hermes running'
+  if (state === 'connecting') return 'Hermes connecting'
+  if (state === 'error') return detail || 'Hermes error'
+  return 'Hermes disconnected'
+}
+
 function TreeRow({ label, value, depth }: { label: string; value: string; depth: number }) {
   return (
     <div className={`tree-row depth-${depth}`}>
@@ -1285,57 +1293,72 @@ function ConversationTreeSidebar({
   onDeleteRequest: (runId: string) => void
 }) {
   const total = tree.reduce((sum, category) => sum + category.projects.reduce((projectSum, project) => projectSum + project.runs.length, 0), 0)
+  const [collapsed, setCollapsed] = useState(false)
 
   return (
-    <nav className="conversation-sidebar card" aria-label="Conversation tree">
+    <nav className={`conversation-sidebar sidebar-panel card ${collapsed ? 'collapsed' : ''}`} aria-label="Conversation tree">
       <div className="sidebar-head">
         <div>
           <div className="eyebrow">Navigator</div>
           <h2>Conversation Tree</h2>
         </div>
-        <span className="sidebar-count">{total}</span>
+        <div className="sidebar-actions">
+          <span className="sidebar-count">{total}</span>
+          <button
+            type="button"
+            className="sidebar-toggle"
+            aria-expanded={!collapsed}
+            aria-label={collapsed ? 'Expand Navigator' : 'Collapse Navigator'}
+            title={collapsed ? 'Expand Navigator' : 'Collapse Navigator'}
+            onClick={() => setCollapsed((current) => !current)}
+          >
+            {collapsed ? '▸' : '▾'}
+          </button>
+        </div>
       </div>
 
-      {tree.length ? (
-        <div className="tree-nav">
-          {tree.map((category) => (
-            <section key={category.category} className="tree-nav-category">
-              <h3>{category.category}</h3>
-              {category.projects.map((project) => (
-                <div key={`${category.category}-${project.project}`} className="tree-nav-project">
-                  <div className="tree-nav-label">{project.project}</div>
-                  <div className="tree-nav-runs">
-                    {project.runs.map((run) => (
-                      <div key={run.id} className="tree-nav-run-row">
-                        <button
-                          type="button"
-                          className={`tree-nav-run ${activeRunId === run.id ? 'active' : ''}`}
-                          onClick={() => onSelect(run.id)}
-                          aria-current={activeRunId === run.id ? 'true' : undefined}
-                        >
-                          <span className="tree-run-title">{conversationTitle(run)}</span>
-                          <span className={`tree-run-status ${run.jobStatus}`} aria-label={run.jobStatus} title={run.jobStatus} />
-                        </button>
-                        <button
-                          type="button"
-                          className="tree-run-delete card-close"
-                          title="Delete conversation"
-                          aria-label={`Delete ${conversationTitle(run)}`}
-                          onClick={() => onDeleteRequest(run.id)}
-                        >
-                          ×
-                        </button>
-                      </div>
-                    ))}
+      <div className="sidebar-body" hidden={collapsed}>
+        {tree.length ? (
+          <div className="tree-nav">
+            {tree.map((category) => (
+              <section key={category.category} className="tree-nav-category">
+                <h3>{category.category}</h3>
+                {category.projects.map((project) => (
+                  <div key={`${category.category}-${project.project}`} className="tree-nav-project">
+                    <div className="tree-nav-label">{project.project}</div>
+                    <div className="tree-nav-runs">
+                      {project.runs.map((run) => (
+                        <div key={run.id} className="tree-nav-run-row">
+                          <button
+                            type="button"
+                            className={`tree-nav-run ${activeRunId === run.id ? 'active' : ''}`}
+                            onClick={() => onSelect(run.id)}
+                            aria-current={activeRunId === run.id ? 'true' : undefined}
+                          >
+                            <span className="tree-run-title">{conversationTitle(run)}</span>
+                            <span className={`tree-run-status ${run.jobStatus}`} aria-label={run.jobStatus} title={run.jobStatus} />
+                          </button>
+                          <button
+                            type="button"
+                            className="tree-run-delete card-close"
+                            title="Delete conversation"
+                            aria-label={`Delete ${conversationTitle(run)}`}
+                            onClick={() => onDeleteRequest(run.id)}
+                          >
+                            ×
+                          </button>
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                </div>
-              ))}
-            </section>
-          ))}
-        </div>
-      ) : (
-        <div className="tree-empty">No conversations</div>
-      )}
+                ))}
+              </section>
+            ))}
+          </div>
+        ) : (
+          <div className="tree-empty">No conversations</div>
+        )}
+      </div>
     </nav>
   )
 }
@@ -1429,45 +1452,42 @@ function ResourceSidebar({
 
   const pluginTools = groups.get('Tools') ?? []
   const extraGroups = [...groups.entries()].filter(([group]) => group !== 'Tools')
+  const [collapsed, setCollapsed] = useState(false)
 
   return (
-    <nav className="resource-sidebar card" aria-label="Resource view">
+    <nav className={`resource-sidebar sidebar-panel card ${collapsed ? 'collapsed' : ''}`} aria-label="Resource view">
       <div className="sidebar-head">
         <div>
           <div className="eyebrow">Resource</div>
           <h2>Resources</h2>
         </div>
+        <button
+          type="button"
+          className="sidebar-toggle"
+          aria-expanded={!collapsed}
+          aria-label={collapsed ? 'Expand Resource' : 'Collapse Resource'}
+          title={collapsed ? 'Expand Resource' : 'Collapse Resource'}
+          onClick={() => setCollapsed((current) => !current)}
+        >
+          {collapsed ? '▸' : '▾'}
+        </button>
       </div>
 
-      <div className="tree-nav">
-        <section className="tree-nav-category">
-          <h3>Tools</h3>
-          <div className="tree-nav-runs">
-            <button
-              type="button"
-              className={`tree-nav-run resource-tool ${terminalOpen ? 'active' : ''}`}
-              onClick={onLaunchTerminal}
-              title={terminalOpen ? 'Local Terminal is open' : 'Launch Local Terminal'}
-            >
-              <span className="tree-run-title">Local Terminal</span>
-              <LaunchIcon open={terminalOpen} />
-            </button>
-            {pluginTools.map((plugin) => (
-              <PluginTool
-                key={plugin.id}
-                plugin={plugin}
-                open={openPluginIds.has(plugin.id)}
-                onLaunch={() => onLaunchPlugin(plugin.id)}
-              />
-            ))}
-          </div>
-        </section>
-
-        {extraGroups.map(([group, groupPlugins]) => (
-          <section key={group} className="tree-nav-category">
-            <h3>{group}</h3>
+      <div className="sidebar-body" hidden={collapsed}>
+        <div className="tree-nav">
+          <section className="tree-nav-category">
+            <h3>Tools</h3>
             <div className="tree-nav-runs">
-              {groupPlugins.map((plugin) => (
+              <button
+                type="button"
+                className={`tree-nav-run resource-tool ${terminalOpen ? 'active' : ''}`}
+                onClick={onLaunchTerminal}
+                title={terminalOpen ? 'Local Terminal is open' : 'Launch Local Terminal'}
+              >
+                <span className="tree-run-title">Local Terminal</span>
+                <LaunchIcon open={terminalOpen} />
+              </button>
+              {pluginTools.map((plugin) => (
                 <PluginTool
                   key={plugin.id}
                   plugin={plugin}
@@ -1477,34 +1497,50 @@ function ResourceSidebar({
               ))}
             </div>
           </section>
-        ))}
 
-        <section className="tree-nav-category">
-          <h3>App</h3>
-          <div className="tree-nav-runs">
-            {apps.length ? (
-              apps.map((app, index) => (
-                <AppTool
-                  key={app.id}
-                  app={app}
-                  open={openAppSlugs.has(app.id)}
-                  canMoveUp={index > 0}
-                  canMoveDown={index < apps.length - 1}
-                  onLaunch={() => onLaunchApp(app.id)}
-                  onMove={(delta) => onReorderApps(reorderSlugs(apps, index, delta))}
-                  onRename={(label) => onRenameApp(app.id, label)}
-                />
-              ))
-            ) : (
-              <div className="tree-empty">No apps yet — ask an agent to build one.</div>
-            )}
-            {appWarnings.map((warning, index) => (
-              <div key={`warn-${index}`} className="app-warning" role="alert">
-                ⚠ {warning.id ?? warning.dir ?? 'plugin'}: {warning.error}
+          {extraGroups.map(([group, groupPlugins]) => (
+            <section key={group} className="tree-nav-category">
+              <h3>{group}</h3>
+              <div className="tree-nav-runs">
+                {groupPlugins.map((plugin) => (
+                  <PluginTool
+                    key={plugin.id}
+                    plugin={plugin}
+                    open={openPluginIds.has(plugin.id)}
+                    onLaunch={() => onLaunchPlugin(plugin.id)}
+                  />
+                ))}
               </div>
-            ))}
-          </div>
-        </section>
+            </section>
+          ))}
+
+          <section className="tree-nav-category">
+            <h3>App</h3>
+            <div className="tree-nav-runs">
+              {apps.length ? (
+                apps.map((app, index) => (
+                  <AppTool
+                    key={app.id}
+                    app={app}
+                    open={openAppSlugs.has(app.id)}
+                    canMoveUp={index > 0}
+                    canMoveDown={index < apps.length - 1}
+                    onLaunch={() => onLaunchApp(app.id)}
+                    onMove={(delta) => onReorderApps(reorderSlugs(apps, index, delta))}
+                    onRename={(label) => onRenameApp(app.id, label)}
+                  />
+                ))
+              ) : (
+                <div className="tree-empty">No apps yet — ask an agent to build one.</div>
+              )}
+              {appWarnings.map((warning, index) => (
+                <div key={`warn-${index}`} className="app-warning" role="alert">
+                  ⚠ {warning.id ?? warning.dir ?? 'plugin'}: {warning.error}
+                </div>
+              ))}
+            </div>
+          </section>
+        </div>
       </div>
     </nav>
   )
@@ -2020,7 +2056,6 @@ export default function App() {
   // Each conversation (run) keeps its own Hermes session for multi-turn context.
   const sessionByRunRef = useRef<Map<string, string>>(new Map())
 
-  const [initialized, setInitialized] = useState(false)
   const [turns, setTurns] = useState<TurnItem[]>([])
   const [runs, setRuns] = useState<RunNode[]>([])
   const [resources, setResources] = useState<ResourceItem[]>([])
@@ -2028,7 +2063,6 @@ export default function App() {
   const [connectionDetail, setConnectionDetail] = useState('Disconnected')
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [sessionInfoText, setSessionInfoText] = useState('No Hermes session yet')
-  const [queuedCount, setQueuedCount] = useState(0)
   const [error, setError] = useState<string | null>(null)
 
   // Per-conversation UI state.
@@ -2306,7 +2340,6 @@ export default function App() {
 
     sessionByRunRef.current.delete(runId)
     queuedPromptsRef.current = queuedPromptsRef.current.filter((entry) => entry.runId !== runId)
-    setQueuedCount(queuedPromptsRef.current.length)
 
     setRuns((current) => current.filter((run) => run.id !== runId))
     setTurns((current) => current.filter((turn) => turn.runId !== runId))
@@ -2476,8 +2509,6 @@ export default function App() {
       setError(error instanceof Error ? error.message : String(error))
     })
 
-    setInitialized(true)
-
     return () => {
       removeEvent()
       removeStatus()
@@ -2570,16 +2601,9 @@ export default function App() {
     return () => clearTimeout(handle)
   }, [runs, turns, sessionId, panelOrder, panelColumns, layoutOrder, workspaceColumns, closedRunIds, collapsedIds, metaCollapsedIds, panelStates])
 
-  const summaryLine = useMemo(() => {
-    if (!initialized) return 'Preparing Hermes bridge…'
-    if (sessionId) return `Session ${sessionId}`
-    return 'Waiting for first chat to create a Hermes session'
-  }, [initialized, sessionId])
-
   async function flushQueue() {
     if (activeTurnRef.current) return
     const nextEntry = queuedPromptsRef.current.shift()
-    setQueuedCount(queuedPromptsRef.current.length)
     if (!nextEntry) return
     await startTurn(nextEntry)
   }
@@ -2611,7 +2635,6 @@ export default function App() {
     } catch (error) {
       if (isBusyError(error)) {
         queuedPromptsRef.current.push(entry)
-        setQueuedCount(queuedPromptsRef.current.length)
         setTurns((current) => current.map((item) => (item.id === turnId ? { ...item, status: 'queued', response: 'Queued until Hermes finishes the current turn…' } : item)))
         setRuns((current) => current.map((item) => (item.id === runId ? { ...item, jobStatus: 'queued' } : item)))
         activeTurnRef.current = null
@@ -2635,7 +2658,6 @@ export default function App() {
     const busy = connectionState === 'busy' || activeTurnRef.current !== null
     if (busy) {
       queuedPromptsRef.current.push(entry)
-      setQueuedCount(queuedPromptsRef.current.length)
       setTurns((current) => current.map((item) => (item.id === entry.turnId ? { ...item, status: 'queued', response: 'Queued until Hermes is ready…' } : item)))
       setRuns((current) => current.map((item) => (item.id === entry.runId ? { ...item, jobStatus: 'queued' } : item)))
       return
@@ -2813,15 +2835,9 @@ export default function App() {
   return (
     <div className={`app-shell ${hasContent ? 'has-content' : 'blank'} ${workspaceColumns === 2 ? 'full-width' : ''}`}>
       <header className="topbar card">
-        <div>
-          <div className="eyebrow">Hermes chat bridge</div>
-          <h1>Agent Rider</h1>
-          <p>{summaryLine}</p>
-        </div>
+        <h1>Agent Rider</h1>
         <div className="status-stack">
-          <StatusPill state={connectionState} detail={connectionDetail} />
-          <span className="chip">{queuedCount ? `${queuedCount} queued` : 'No queue'}</span>
-          <span className="chip">Read only gateway</span>
+          <StatusPill state={connectionState} detail={headerStatusText(connectionState, connectionDetail)} />
         </div>
       </header>
 
