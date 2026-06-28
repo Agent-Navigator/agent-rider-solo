@@ -254,6 +254,7 @@ button { cursor: pointer; }
   display: grid;
   gap: 10px;
   min-width: 0;
+  scroll-margin-block: 96px;
 }
 
 .turn-children {
@@ -419,6 +420,7 @@ button { cursor: pointer; }
   margin-top: 10px;
   padding-top: 10px;
   border-top: 1px solid rgba(148, 163, 184, 0.12);
+  scroll-margin-block: 96px;
 }
 
 .ask-more-form textarea {
@@ -2146,6 +2148,7 @@ button { cursor: pointer; }
   box-shadow: var(--shadow);
   min-height: 92px;
   transition: border-color 120ms ease, opacity 120ms ease, transform 120ms ease;
+  scroll-margin-block: 96px;
 }
 
 .conv-card.active {

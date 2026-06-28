@@ -38,8 +38,8 @@ type TuiAgentType = Exclude<AgentType, 'hermes'>
 const AGENT_OPTIONS: { value: AgentType; label: string }[] = [
   { value: 'hermes', label: 'Hermes Agent' },
   { value: 'claude', label: 'claude (CLI)' },
-  { value: 'codex', label: 'codex (CLI)' },
-  { value: 'agy', label: 'agy (Antigravity)' },
+  { value: 'codex', label: 'Codex (CLI)' },
+  { value: 'agy', label: 'Agy (CLI)' },
 ]
 
 function isTuiAgent(agent: AgentType): agent is TuiAgentType {
@@ -48,6 +48,11 @@ function isTuiAgent(agent: AgentType): agent is TuiAgentType {
 
 function agentLabel(agent: AgentType) {
   return AGENT_OPTIONS.find((option) => option.value === agent)?.label ?? agent
+}
+
+function scrollToFocusTarget(target: HTMLElement | null) {
+  if (!target) return
+  target.scrollIntoView({ behavior: 'smooth', block: 'end', inline: 'nearest' })
 }
 
 interface RunNode {
@@ -127,6 +132,8 @@ interface ConversationTreeCategory {
 }
 
 const DEFAULT_CWD = '/root/agent-work/DEV/agent-rider'
+// Default workspace folder for new Conversation Cards (~/).
+const DEFAULT_WORKSPACE_CWD = '/root'
 const DEFAULT_TERMINAL_CWD = '/root'
 const DEFAULT_TITLE = 'Agent Rider'
 const AGENT_TERMINAL_STATE_PREFIX = 'agent-terminal:'
@@ -372,7 +379,7 @@ function deriveRunFields(prompt: string, overrides: RunOverrides = {}) {
   const words = importantWords(prompt)
   const label = titleCase(words.slice(0, 3)) || `${categoryName} Flow`
   const project = (overrides.project ?? '').trim() || `${label} Project`
-  const workspacePath = (overrides.workspace ?? '').trim() || DEFAULT_CWD
+  const workspacePath = (overrides.workspace ?? '').trim() || DEFAULT_WORKSPACE_CWD
 
   return {
     prompt,
@@ -874,20 +881,38 @@ function ConversationCard({
   const turnTree = useMemo(() => buildTurnTree(turns), [turns])
   const status = run.jobStatus
   const isDraft = turns.length === 0
-  const lastTurnId = turns.length ? turns[turns.length - 1].id : null
-  const lastTurnRef = useRef<HTMLDivElement | null>(null)
+  const lastVisibleTurnId = useMemo(() => {
+    function walk(nodes: TurnTreeNode[]): string | null {
+      if (!nodes.length) return null
+      const last = nodes[nodes.length - 1]
+      if (collapsedTurnIds.has(last.turn.id) || !last.children.length) return last.turn.id
+      return walk(last.children) ?? last.turn.id
+    }
+    return walk(turnTree)
+  }, [turnTree, collapsedTurnIds])
+  const lastVisibleTurnRef = useRef<HTMLDivElement | null>(null)
+  const askMoreFormRef = useRef<HTMLFormElement | null>(null)
+  const askMoreTextareaRef = useRef<HTMLTextAreaElement | null>(null)
 
-  // Auto-hide past turns (keeping only the latest expanded) and scroll to it
-  // whenever a new turn arrives.
+  // Keep the viewport anchored to the newest visible bubble in the tree.
+  // If Ask More is open, the inline form becomes the focus target instead.
   useEffect(() => {
-    if (!lastTurnId) return
-    setCollapsedTurnIds(new Set(turns.filter((turn) => turn.id !== lastTurnId).map((turn) => turn.id)))
+    if (askParentId) {
+      const frame = requestAnimationFrame(() => {
+        scrollToFocusTarget(askMoreFormRef.current)
+        askMoreTextareaRef.current?.focus({ preventScroll: true })
+      })
+      return () => cancelAnimationFrame(frame)
+    }
+
+    if (!lastVisibleTurnId) return
+    setCollapsedTurnIds(new Set(turns.filter((turn) => turn.id !== lastVisibleTurnId).map((turn) => turn.id)))
     const frame = requestAnimationFrame(() => {
-      lastTurnRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+      scrollToFocusTarget(lastVisibleTurnRef.current)
     })
     return () => cancelAnimationFrame(frame)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lastTurnId])
+  }, [lastVisibleTurnId, askParentId])
 
   function hideAllTurns() {
     setCollapsedTurnIds(new Set(turns.map((turn) => turn.id)))
@@ -962,7 +987,7 @@ function ConversationCard({
     return (
       <div
         key={turn.id}
-        ref={turn.id === lastTurnId ? lastTurnRef : undefined}
+        ref={turn.id === lastVisibleTurnId ? lastVisibleTurnRef : undefined}
         className={`turn-node depth-${Math.min(depth, 4)}`}
       >
         <article className={`turn ${turn.status} ${isTurnCollapsed ? 'collapsed' : ''}`}>
@@ -1016,8 +1041,9 @@ function ConversationCard({
                 </button>
               </div>
               {askParentId === turn.id ? (
-                <form className="ask-more-form" onSubmit={(event) => submitAskMore(event, turn.id)}>
+                <form ref={askMoreFormRef} className="ask-more-form" onSubmit={(event) => submitAskMore(event, turn.id)}>
                   <textarea
+                    ref={askMoreTextareaRef}
                     value={askDraft}
                     onChange={(event) => setAskDraft(event.target.value)}
                     onDragOver={(event) => {
@@ -1026,7 +1052,6 @@ function ConversationCard({
                     onDrop={(event) => dropFilePathIntoTextarea(event, setAskDraft)}
                     placeholder="Ask a follow-up from this reply…"
                     rows={2}
-                    autoFocus
                   />
                   <div className="ask-more-controls">
                     <button
@@ -1734,7 +1759,11 @@ function WebTerminal({
 
     const terminal = new XTermTerminal({
       cursorBlink: true,
-      convertEol: true,
+      // Must be false for a PTY-backed terminal: the PTY already emits proper CRLF.
+      // With it true, every LF gets an extra CR, which corrupts cursor positioning
+      // in full-screen TUIs that render in the main buffer (e.g. the codex agent),
+      // making some redraws (like the approval menu → feedback view) blank out.
+      convertEol: false,
       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
       fontSize: 13,
       lineHeight: 1.3,
@@ -2209,7 +2238,7 @@ export default function App() {
       categoryTags: [],
       project: '',
       workspace: '',
-      workspacePath: DEFAULT_CWD,
+      workspacePath: DEFAULT_WORKSPACE_CWD,
       task: '',
       job: 'Draft',
       jobStatus: 'queued',
@@ -2431,7 +2460,7 @@ export default function App() {
       return next
     })
     window.requestAnimationFrame(() => {
-      document.getElementById(`conversation-${runId}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      scrollToFocusTarget(document.getElementById(`conversation-${runId}`))
     })
   }
 
@@ -3021,7 +3050,7 @@ export default function App() {
 
       {pickerRunId ? (
         <WorkspacePicker
-          initialPath={runs.find((run) => run.id === pickerRunId)?.workspacePath ?? DEFAULT_CWD}
+          initialPath={runs.find((run) => run.id === pickerRunId)?.workspacePath ?? DEFAULT_WORKSPACE_CWD}
           onSelect={(path) => {
             changeRunWorkspace(pickerRunId, path)
             setPickerRunId(null)
