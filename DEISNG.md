@@ -105,6 +105,16 @@ The current design assumes Hermes is the execution backend.
 - do **not** expose gateway control actions unless explicitly required
 - if Hermes is busy, queue the next prompt locally and replay it after the current turn completes
 
+### Shared memory via MCP
+
+This project should include a built-in **SIRA memory MCP server** as a shared memory backbone.
+
+- Hermes, Agy, Codex, and Claude can all connect to the same memory surface through MCP.
+- The memory server acts as the common source of truth for reusable context.
+- Keep the interface thin and explicit: remember, search, forget, sync_turn, and prefetch.
+- Prefer MCP-based memory access over agent-specific isolated memory silos.
+- Keep the memory layer separate from the visual workspace layer.
+
 ### Important rule
 
 The UI should feel like it is connected to a live agent runtime, but the product surface should remain simple and calm.
