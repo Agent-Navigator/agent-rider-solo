@@ -1,5 +1,7 @@
 import { type DragEvent, type FormEvent, type KeyboardEvent, type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
-import ReactMarkdown from 'react-markdown'
+import ReactMarkdown, { type Components } from 'react-markdown'
+import rehypeRaw from 'rehype-raw'
+import rehypeSanitize from 'rehype-sanitize'
 import remarkGfm from 'remark-gfm'
 import { FitAddon } from '@xterm/addon-fit'
 import { Terminal as XTermTerminal } from '@xterm/xterm'
@@ -57,6 +59,41 @@ function scrollToFocusTarget(target: HTMLElement | null) {
 
 function assistantBubbleBottomId(turnId: string) {
   return `assistant-bubble-bottom-${turnId}`
+}
+
+function hasTextSelectionInside(element: HTMLElement) {
+  const selection = window.getSelection()
+  if (!selection || selection.isCollapsed || !selection.toString()) return false
+  return Boolean(
+    (selection.anchorNode && element.contains(selection.anchorNode)) ||
+    (selection.focusNode && element.contains(selection.focusNode)),
+  )
+}
+
+const richMarkdownComponents: Components = {
+  a({ node: _node, href, children, ...props }) {
+    const external = href?.startsWith('http://') || href?.startsWith('https://')
+    return (
+      <a {...props} href={href} target={external ? '_blank' : undefined} rel={external ? 'noreferrer' : undefined}>
+        {children}
+      </a>
+    )
+  },
+  img({ node: _node, alt, ...props }) {
+    return <img {...props} alt={alt ?? ''} loading="lazy" decoding="async" />
+  },
+  table({ node: _node, children, ...props }) {
+    return (
+      <div className="md-table-scroll">
+        <table {...props}>{children}</table>
+      </div>
+    )
+  },
+}
+
+const richMarkdownPlugins = {
+  remark: [remarkGfm],
+  rehype: [rehypeRaw, rehypeSanitize],
 }
 
 interface RunNode {
@@ -707,7 +744,13 @@ function FileBrowser({ rootPath }: { rootPath: string }) {
                 />
               ) : preview.kind === 'markdown' ? (
                 <div className="file-preview-markdown md-body">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{preview.content ?? ''}</ReactMarkdown>
+                  <ReactMarkdown
+                    remarkPlugins={richMarkdownPlugins.remark}
+                    rehypePlugins={richMarkdownPlugins.rehype}
+                    components={richMarkdownComponents}
+                  >
+                    {preview.content ?? ''}
+                  </ReactMarkdown>
                 </div>
               ) : (
                 <pre className={`file-preview-code ${preview.kind}`}><code>{preview.content ?? ''}</code></pre>
@@ -722,7 +765,7 @@ function FileBrowser({ rootPath }: { rootPath: string }) {
 
 // Interactive areas that should keep their own mouse behaviour rather than
 // starting a drag (shared by cards and workspace panels).
-const DRAG_EXCLUDE = 'input, textarea, select, button, a, iframe, [contenteditable="true"], .conv-agent-terminal, .terminal-screen, .file-browser, .file-preview'
+const DRAG_EXCLUDE = 'input, textarea, select, button, a, iframe, [contenteditable="true"], .bubble, .conv-agent-terminal, .terminal-screen, .file-browser, .file-preview'
 
 // Start an HTML5 drag using an off-screen clone of `element` as the ghost, so
 // the ghost tracks the exact grab point (passing the live element is
@@ -1004,7 +1047,10 @@ function ConversationCard({
             role="button"
             tabIndex={0}
             aria-expanded={!isTurnCollapsed}
-            onClick={() => toggleTurnCollapsed(turn.id)}
+            onClick={(event) => {
+              if (hasTextSelectionInside(event.currentTarget)) return
+              toggleTurnCollapsed(turn.id)
+            }}
             onKeyDown={(event) => toggleTurnFromKey(event, turn.id)}
           >
             <div className="bubble-head">
@@ -1043,7 +1089,13 @@ function ConversationCard({
                 </button>
               </div>
               <div className="md-body">
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{turn.response || '…'}</ReactMarkdown>
+                <ReactMarkdown
+                  remarkPlugins={richMarkdownPlugins.remark}
+                  rehypePlugins={richMarkdownPlugins.rehype}
+                  components={richMarkdownComponents}
+                >
+                  {turn.response || '…'}
+                </ReactMarkdown>
               </div>
               <div className="assistant-actions">
                 <button
