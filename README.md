@@ -37,6 +37,50 @@ npm run build
 - Source machine 上已有這個 repo、`node_modules`、以及可執行 `scripts/release.sh`。
 - Remote server 建議是 Ubuntu/Debian，並且可以使用 `sudo`。installer 會安裝必要套件與 Node.js 22+。
 
+## 版號與 Git tag
+
+正式打包 release 前，建議先把 `package.json` 的版本與 Git tag 對齊。慣例是：
+
+- `package.json` 使用 semver，例如 `0.1.1`
+- Git tag 使用 `v` prefix，例如 `v0.1.1`
+- tag 指向的 commit 就是這次 release 的 source state
+
+最短做法是在 source machine 上執行：
+
+```bash
+npm version patch -m "Release v%s"
+```
+
+這會自動：
+
+- 將 `package.json` / `package-lock.json` 版本從例如 `0.1.0` 更新到 `0.1.1`
+- 建立一個 release commit
+- 建立對應 Git tag，例如 `v0.1.1`
+
+如果要指定明確版本，而不是自動 patch：
+
+```bash
+npm version 0.1.1 -m "Release v%s"
+```
+
+如果只想先改版本、不立刻建立 tag，可以手動分兩步：
+
+```bash
+npm version 0.1.1 --no-git-tag-version
+git add package.json package-lock.json
+git commit -m "Release v0.1.1"
+git tag v0.1.1
+```
+
+目前 `scripts/release.sh` 的 tarball 檔名仍使用 UTC 時間與 Git short SHA：
+
+```text
+agent-rider-YYYYMMDDTHHMMSSZ-<git-sha>.tar.gz
+```
+
+因此版號/tag 是 release 管理用的 source marker；實際部署流程仍照下面的
+`scripts/release.sh` 與 `install/update` 流程執行。
+
 ## 第一次安裝
 
 以下指令都在 **remote server** 上執行。
