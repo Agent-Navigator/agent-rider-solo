@@ -790,6 +790,18 @@ function beginElementDrag(event: DragEvent, element: HTMLElement | null, id: str
   window.setTimeout(() => clone.remove(), 0)
 }
 
+function resetDraggableAfterPointerSettles(element: HTMLElement) {
+  const reset = () => {
+    element.draggable = false
+    window.removeEventListener('mouseup', reset, true)
+    window.removeEventListener('dragend', reset, true)
+    window.removeEventListener('blur', reset)
+  }
+  window.addEventListener('mouseup', reset, true)
+  window.addEventListener('dragend', reset, true)
+  window.addEventListener('blur', reset)
+}
+
 // Wraps a workspace tool/app panel so it can be dragged to reorder among the
 // other panels (same drag affordance as conversation cards).
 function DraggablePanel({
@@ -819,7 +831,13 @@ function DraggablePanel({
       className={`plugin-panel workspace-panel ${dragging ? 'dragging' : ''} ${dragOver ? (dragOverAfter ? 'drag-over after' : 'drag-over') : ''}`}
       onMouseDown={(event) => {
         const target = event.target as HTMLElement
-        if (ref.current) ref.current.draggable = !target.closest(DRAG_EXCLUDE)
+        if (!ref.current) return
+        const canDrag = !target.closest(DRAG_EXCLUDE)
+        ref.current.draggable = canDrag
+        if (canDrag) resetDraggableAfterPointerSettles(ref.current)
+      }}
+      onMouseUp={() => {
+        if (ref.current) ref.current.draggable = false
       }}
       onDragStart={(event) => {
         const target = event.target as HTMLElement
@@ -831,6 +849,7 @@ function DraggablePanel({
         onDragStartPanel()
       }}
       onDragEnd={() => {
+        if (ref.current) ref.current.draggable = false
         setDragOver(false)
         onDragEndPanel()
       }}
@@ -1161,7 +1180,13 @@ function ConversationCard({
         // drag-vs-select decision for THIS press is correct: off over inputs
         // (so they stay selectable), on everywhere else.
         const target = event.target as HTMLElement
-        if (cardRef.current) cardRef.current.draggable = !target.closest(DRAG_EXCLUDE)
+        if (!cardRef.current) return
+        const canDrag = !target.closest(DRAG_EXCLUDE)
+        cardRef.current.draggable = canDrag
+        if (canDrag) resetDraggableAfterPointerSettles(cardRef.current)
+      }}
+      onMouseUp={() => {
+        if (cardRef.current) cardRef.current.draggable = false
       }}
       onDragStart={(event) => {
         const target = event.target as HTMLElement
@@ -1173,6 +1198,7 @@ function ConversationCard({
         onDragStartCard()
       }}
       onDragEnd={() => {
+        if (cardRef.current) cardRef.current.draggable = false
         setDragOver(false)
         onDragEndCard()
       }}

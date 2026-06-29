@@ -1,4 +1,4 @@
-import { type KeyboardEvent, useState } from 'react'
+import { type KeyboardEvent, type MouseEvent, useState } from 'react'
 
 interface WebViewStatePatch {
   collapsed?: boolean
@@ -44,6 +44,15 @@ export function WebView({ title, src, onClose, collapsed, fullWindow, onStateCha
     if (event.key !== 'Enter' && event.key !== ' ') return
     event.preventDefault()
     setCollapsedState((current) => !current)
+  }
+
+  function releaseWorkspacePanelDrag(element: HTMLElement) {
+    const panel = element.closest<HTMLElement>('.workspace-panel')
+    if (panel) panel.draggable = false
+  }
+
+  function releaseWorkspacePanelDragOnHover(event: MouseEvent<HTMLElement>) {
+    if (event.buttons === 0) releaseWorkspacePanelDrag(event.currentTarget)
   }
 
   return (
@@ -110,6 +119,9 @@ export function WebView({ title, src, onClose, collapsed, fullWindow, onStateCha
           className="web-view-frame"
           src={src}
           title={title}
+          draggable={false}
+          onMouseEnter={releaseWorkspacePanelDragOnHover}
+          onFocus={(event) => releaseWorkspacePanelDrag(event.currentTarget)}
           allow="clipboard-write; microphone"
         />
       </div>
