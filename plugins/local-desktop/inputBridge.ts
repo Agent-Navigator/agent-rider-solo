@@ -10,7 +10,7 @@ interface XpraMouseEvent {
   ctrlKey: boolean
   metaKey: boolean
   shiftKey: boolean
-  originalEvent: PointerEvent
+  originalEvent: PointerEvent | MouseEvent
   getModifierState: (key: string) => boolean
   preventDefault: () => void
   stopPropagation: () => void
@@ -29,6 +29,7 @@ interface XpraClient {
 
 interface LocalDesktopWindow extends Window {
   client?: XpraClient
+  jQuery?: (target: string | Element) => { off: (events?: string) => void }
   __agentRiderInputBridge?: boolean
 }
 
@@ -50,7 +51,7 @@ function pointerButtonToXpraWhich(button: number) {
   return Math.max(0, button + 1)
 }
 
-function createXpraMouseEvent(event: PointerEvent, which: number): XpraMouseEvent {
+function createXpraMouseEvent(event: PointerEvent | MouseEvent, which: number): XpraMouseEvent {
   const altKey = event.altKey
   const ctrlKey = event.ctrlKey
   const metaKey = event.metaKey
@@ -93,7 +94,48 @@ function getXpraWindows(desktopWindow: LocalDesktopWindow) {
   return Object.values(desktopWindow.client?.id_to_window ?? {}).filter((xpraWindow) => isXpraCanvas(xpraWindow.canvas))
 }
 
-function installCanvasBridge(desktopWindow: LocalDesktopWindow, xpraWindow: XpraWindow, installed: WeakSet<HTMLCanvasElement>) {
+function suppressNativeInputUi(event: Event) {
+  event.preventDefault()
+  event.stopPropagation()
+  event.stopImmediatePropagation()
+}
+
+function releasePasteboard(desktopWindow: LocalDesktopWindow, desktopDocument: Document) {
+  const pasteboard = desktopDocument.getElementById('pasteboard') as HTMLTextAreaElement | null
+  if (!pasteboard) return
+
+  desktopWindow.jQuery?.(pasteboard).off('blur focus click contextmenu paste copy cut input')
+  pasteboard.blur()
+  pasteboard.readOnly = true
+  pasteboard.tabIndex = -1
+  pasteboard.setAttribute('aria-hidden', 'true')
+  pasteboard.style.pointerEvents = 'none'
+  pasteboard.style.userSelect = 'none'
+  pasteboard.style.width = '0'
+  pasteboard.style.height = '0'
+  pasteboard.style.opacity = '0'
+  pasteboard.style.overflow = 'hidden'
+  if (pasteboard.dataset.agentRiderReleased !== 'true') {
+    pasteboard.dataset.agentRiderReleased = 'true'
+    pasteboard.addEventListener('contextmenu', suppressNativeInputUi, true)
+    pasteboard.addEventListener('pointerdown', suppressNativeInputUi, true)
+    pasteboard.addEventListener('mousedown', suppressNativeInputUi, true)
+  }
+}
+
+function focusDesktopCanvas(canvas: HTMLCanvasElement, desktopDocument: Document) {
+  const pasteboard = desktopDocument.getElementById('pasteboard') as HTMLTextAreaElement | null
+  pasteboard?.blur()
+  canvas.tabIndex = 0
+  canvas.focus({ preventScroll: true })
+}
+
+function installCanvasBridge(
+  desktopWindow: LocalDesktopWindow,
+  desktopDocument: Document,
+  xpraWindow: XpraWindow,
+  installed: WeakSet<HTMLCanvasElement>,
+) {
   const canvas = xpraWindow.canvas
   if (!canvas || installed.has(canvas)) return
   installed.add(canvas)
@@ -119,13 +161,15 @@ function installCanvasBridge(desktopWindow: LocalDesktopWindow, xpraWindow: Xpra
     state.lastMouseMoveAt = now()
   }, true)
   canvas.addEventListener('contextmenu', (event) => {
-    event.preventDefault()
+    suppressNativeInputUi(event)
   }, true)
 
   canvas.addEventListener('pointerdown', (event) => {
-    if (event.pointerType === 'touch' || event.button < 0) return
+    suppressNativeInputUi(event)
+    focusDesktopCanvas(canvas, desktopDocument)
+    if (event.button < 0 && event.pointerType !== 'touch') return
     const pointerAt = now()
-    const which = pointerButtonToXpraWhich(event.button)
+    const which = pointerButtonToXpraWhich(event.button < 0 ? 0 : event.button)
     const fallbackEvent = createXpraMouseEvent(event, which)
     state.pointerButtons.set(event.pointerId, which)
     desktopWindow.setTimeout(() => {
@@ -136,7 +180,7 @@ function installCanvasBridge(desktopWindow: LocalDesktopWindow, xpraWindow: Xpra
   }, true)
 
   canvas.addEventListener('pointerup', (event) => {
-    if (event.pointerType === 'touch') return
+    suppressNativeInputUi(event)
     const pointerAt = now()
     const which = event.button >= 0
       ? pointerButtonToXpraWhich(event.button)
@@ -151,7 +195,7 @@ function installCanvasBridge(desktopWindow: LocalDesktopWindow, xpraWindow: Xpra
   }, true)
 
   canvas.addEventListener('pointermove', (event) => {
-    if (event.pointerType === 'touch') return
+    suppressNativeInputUi(event)
     const pointerAt = now()
     const fallbackEvent = createXpraMouseEvent(event, state.pointerButtons.get(event.pointerId) ?? 0)
     desktopWindow.setTimeout(() => {
@@ -162,8 +206,28 @@ function installCanvasBridge(desktopWindow: LocalDesktopWindow, xpraWindow: Xpra
   }, true)
 
   canvas.addEventListener('pointercancel', (event) => {
+    suppressNativeInputUi(event)
     state.pointerButtons.delete(event.pointerId)
   }, true)
+
+  if (!('PointerEvent' in desktopWindow)) {
+    canvas.addEventListener('mousedown', (event) => {
+      suppressNativeInputUi(event)
+      focusDesktopCanvas(canvas, desktopDocument)
+      state.lastMouseDownAt = now()
+      xpraWindow.on_mousedown?.(createXpraMouseEvent(event, pointerButtonToXpraWhich(event.button)))
+    }, true)
+    canvas.addEventListener('mouseup', (event) => {
+      suppressNativeInputUi(event)
+      state.lastMouseUpAt = now()
+      xpraWindow.on_mouseup?.(createXpraMouseEvent(event, pointerButtonToXpraWhich(event.button)))
+    }, true)
+    canvas.addEventListener('mousemove', (event) => {
+      suppressNativeInputUi(event)
+      state.lastMouseMoveAt = now()
+      xpraWindow.on_mousemove?.(createXpraMouseEvent(event, 0))
+    }, true)
+  }
 }
 
 export function installLocalDesktopInputBridge(frame: HTMLIFrameElement) {
@@ -182,10 +246,16 @@ export function installLocalDesktopInputBridge(frame: HTMLIFrameElement) {
 
   const installed = new WeakSet<HTMLCanvasElement>()
   const installAll = () => {
+    releasePasteboard(desktopWindow, desktopDocument)
     for (const xpraWindow of getXpraWindows(desktopWindow)) {
-      installCanvasBridge(desktopWindow, xpraWindow, installed)
+      installCanvasBridge(desktopWindow, desktopDocument, xpraWindow, installed)
     }
   }
+
+  desktopDocument.addEventListener('contextmenu', suppressNativeInputUi, true)
+  desktopDocument.addEventListener('selectstart', (event) => {
+    if (event.target === desktopDocument.getElementById('pasteboard')) suppressNativeInputUi(event)
+  }, true)
 
   const target = desktopDocument.getElementById('screen') ?? desktopDocument.body
   const MutationObserverCtor =
