@@ -12,6 +12,8 @@ interface WebViewProps {
   collapsed?: boolean
   fullWindow?: boolean
   onStateChange?: (patch: WebViewStatePatch) => void
+  allow?: string
+  onFrameLoad?: (frame: HTMLIFrameElement) => void
 }
 
 /**
@@ -20,7 +22,16 @@ interface WebViewProps {
  * Generic enough for any same-origin web view — shared infrastructure for
  * plugins that surface an embedded UI.
  */
-export function WebView({ title, src, onClose, collapsed, fullWindow, onStateChange }: WebViewProps) {
+export function WebView({
+  title,
+  src,
+  onClose,
+  collapsed,
+  fullWindow,
+  onStateChange,
+  allow = 'clipboard-write; microphone',
+  onFrameLoad,
+}: WebViewProps) {
   const [internalCollapsed, setInternalCollapsed] = useState(false)
   const [internalFullWindow, setInternalFullWindow] = useState(false)
   const isCollapsed = collapsed ?? internalCollapsed
@@ -122,7 +133,12 @@ export function WebView({ title, src, onClose, collapsed, fullWindow, onStateCha
           draggable={false}
           onMouseEnter={releaseWorkspacePanelDragOnHover}
           onFocus={(event) => releaseWorkspacePanelDrag(event.currentTarget)}
-          allow="clipboard-write; microphone"
+          onLoad={(event) => {
+            releaseWorkspacePanelDrag(event.currentTarget)
+            onFrameLoad?.(event.currentTarget)
+          }}
+          allow={allow}
+          allowFullScreen
         />
       </div>
     </section>
