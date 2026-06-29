@@ -1,3 +1,5 @@
+import agentRiderBackground from '../agent-rider-background.md?raw'
+
 export type HermesConnectionState = 'disconnected' | 'connecting' | 'ready' | 'busy' | 'error'
 
 export type HermesRpcEvent = {
@@ -17,9 +19,22 @@ export interface CreateSessionOptions {
 }
 
 const DEFAULT_CWD = '/root/agent-work/DEV/agent-rider'
+const AGENT_RIDER_BACKGROUND = agentRiderBackground.trim()
 
 function errMsg(error: unknown) {
   return error instanceof Error ? error.message : String(error)
+}
+
+function withAgentRiderBackground(message: string) {
+  return [
+    '<agent-rider-background>',
+    AGENT_RIDER_BACKGROUND,
+    '</agent-rider-background>',
+    '',
+    '<user-message>',
+    message,
+    '</user-message>',
+  ].join('\n')
 }
 
 export class HermesBridge {
@@ -98,7 +113,7 @@ export class HermesBridge {
     const res = await fetch('/api/chat/start', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ session_id: sessionId, message: text, workspace: cwd }),
+      body: JSON.stringify({ session_id: sessionId, message: withAgentRiderBackground(text), workspace: cwd }),
     })
 
     if (!res.ok) {

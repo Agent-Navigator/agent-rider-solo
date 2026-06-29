@@ -2,7 +2,7 @@
 // Stores interaction data (runs + conversation turns) so they survive reloads.
 // Uses Node's built-in node:sqlite (Node >= 22.5). No native deps to compile.
 import { createServer } from 'node:http'
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { DatabaseSync } from 'node:sqlite'
 import { mkdirSync, readdirSync, statSync, readFileSync, writeFileSync, existsSync, createReadStream } from 'node:fs'
 import { dirname, join, resolve, basename, extname, normalize } from 'node:path'
@@ -50,6 +50,14 @@ const TUI_AGENTS = {
 }
 const TMUX_SOCKET = 'agent-rider' // private server (`tmux -L agent-rider`)
 const TMUX_CONF = join(tmpdir(), 'agent-rider-tmux.conf')
+const AGENT_RIDER_BACKGROUND_PATH = join(__dirname, '..', 'agent-rider-background.md')
+const AGENT_RIDER_BACKGROUND = (() => {
+  try {
+    return readFileSync(AGENT_RIDER_BACKGROUND_PATH, 'utf8').trim()
+  } catch {
+    return ''
+  }
+})()
 try {
   writeFileSync(
     TMUX_CONF,
@@ -71,6 +79,23 @@ try {
 function tmuxSessionName(sessionKey, agent) {
   const safe = String(sessionKey).replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 80)
   return `ar_${agent}_${safe}`
+}
+
+function tmuxSessionExists(name) {
+  const result = spawnSync('tmux', ['-L', TMUX_SOCKET, 'has-session', '-t', name], { stdio: 'ignore' })
+  return result.status === 0
+}
+
+function agentRiderBackgroundPrompt(agentLabel) {
+  if (!AGENT_RIDER_BACKGROUND) return ''
+  const background = AGENT_RIDER_BACKGROUND.replace(/\s+/g, ' ').trim()
+  return [
+    'Please load the following Agent Rider platform context before helping the user.',
+    'This is background context, not the user task. Keep it in mind for future turns.',
+    background,
+    `You are connected through Agent Rider as ${agentLabel}.`,
+    'Reply briefly that Agent Rider context is loaded, then wait for the user task.',
+  ].join(' ')
 }
 
 const db = new DatabaseSync(DB_PATH)
@@ -719,10 +744,12 @@ function attachTerminalSocket(server) {
 
     let file
     let argv
+    let shouldInjectAgentRiderBackground = Boolean(agentCmd && !persistent)
     if (persistent) {
       // `new-session -A` attaches if the session exists, else creates it running
       // the agent. -x/-y/-c apply only on create; on re-attach tmux redraws.
       const name = tmuxSessionName(`${sessionKey}|${cwd}`, agentParam)
+      shouldInjectAgentRiderBackground = !tmuxSessionExists(name)
       file = 'tmux'
       argv = ['-L', TMUX_SOCKET, '-f', TMUX_CONF, 'new-session', '-A', '-s', name,
         '-x', String(cols), '-y', String(rows), '-c', cwd, '-e', `PATH=${AGENT_PATH}`, '--', agentShellCommand]
@@ -758,6 +785,18 @@ function attachTerminalSocket(server) {
     )
 
     const terminalData = terminal.onData((data) => writeSocket(data))
+    if (shouldInjectAgentRiderBackground) {
+      const backgroundPrompt = agentRiderBackgroundPrompt(agentLabel)
+      if (backgroundPrompt) {
+        setTimeout(() => {
+          try {
+            terminal.write(`${backgroundPrompt}\r`)
+          } catch {
+            // The websocket/PTY may have closed before the delayed injection.
+          }
+        }, 2000)
+      }
+    }
     terminal.onExit(({ exitCode, signal }) => {
       // In persistent mode this fires when the tmux *client* exits — i.e. on
       // detach (socket closed → we killed it) as well as real session end. The
