@@ -55,6 +55,10 @@ function scrollToFocusTarget(target: HTMLElement | null) {
   target.scrollIntoView({ behavior: 'smooth', block: 'end', inline: 'nearest' })
 }
 
+function assistantBubbleBottomId(turnId: string) {
+  return `assistant-bubble-bottom-${turnId}`
+}
+
 interface RunNode {
   id: string
   prompt: string
@@ -979,6 +983,10 @@ function ConversationCard({
     }
   }
 
+  function scrollAssistantBubbleToBottom(turnId: string) {
+    scrollToFocusTarget(document.getElementById(assistantBubbleBottomId(turnId)))
+  }
+
   function renderTurnNode(node: TurnTreeNode, depth = 0): ReactNode {
     const { turn, children } = node
     const canAskMore = turn.status !== 'running' && turn.status !== 'queued'
@@ -1023,7 +1031,17 @@ function ConversationCard({
           </div>
           {!isTurnCollapsed ? (
             <div className="bubble assistant">
-              <span className="role">Hermes · {turnRoleLabel(turn.status)}</span>
+              <div className="assistant-head">
+                <span className="role">Hermes · {turnRoleLabel(turn.status)}</span>
+                <button
+                  type="button"
+                  className="assistant-to-bottom-button"
+                  onClick={() => scrollAssistantBubbleToBottom(turn.id)}
+                  aria-label="Scroll to bottom of this reply"
+                >
+                  To bottom
+                </button>
+              </div>
               <div className="md-body">
                 <ReactMarkdown remarkPlugins={[remarkGfm]}>{turn.response || '…'}</ReactMarkdown>
               </div>
@@ -1070,6 +1088,7 @@ function ConversationCard({
                   </div>
                 </form>
               ) : null}
+              <div id={assistantBubbleBottomId(turn.id)} className="assistant-bubble-bottom" aria-hidden />
             </div>
           ) : null}
         </article>

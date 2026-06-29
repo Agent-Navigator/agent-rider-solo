@@ -367,6 +367,7 @@ button { cursor: pointer; }
 }
 
 .copy-prompt-button,
+.assistant-to-bottom-button,
 .ask-more-button,
 .ask-more-cancel {
   border: 1px solid rgba(148, 163, 184, 0.18);
@@ -381,12 +382,30 @@ button { cursor: pointer; }
   padding: 3px 8px;
 }
 
+.assistant-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.assistant-to-bottom-button {
+  flex-shrink: 0;
+  padding: 3px 8px;
+  white-space: nowrap;
+}
+
 .copy-prompt-button:hover,
+.assistant-to-bottom-button:hover,
 .ask-more-button:hover,
 .ask-more-cancel:hover {
   border-color: rgba(121, 185, 255, 0.34);
   color: var(--text);
   background: rgba(121, 185, 255, 0.08);
+}
+
+.assistant-bubble-bottom {
+  scroll-margin-block-end: 96px;
 }
 
 .assistant-actions {
