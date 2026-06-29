@@ -119,7 +119,7 @@ tar -xzf "$archive" -C "$release_dir"
 ln -sfn "$shared_dir/data" "$release_dir/data"
 
 cd "$release_dir"
-npm ci
+npm ci --include=dev
 npm run build
 
 ln -sfn "$release_dir" "$APP_DIR/current"

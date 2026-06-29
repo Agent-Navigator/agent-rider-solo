@@ -23,6 +23,47 @@ npm run dev
 npm run build
 ```
 
+## Electron 桌面 App
+
+這個專案現在也可以用 Electron desktop shell 啟動。Electron main process 會負責：
+
+1. 啟動本機 `server/store.mjs`
+2. 啟動 Vite dev/preview renderer server
+3. 開啟 Electron `BrowserWindow`
+4. 在 app 關閉時停止它啟動的 child processes
+
+開發模式：
+
+```bash
+npm run electron:dev
+```
+
+Production preview 模式：
+
+```bash
+npm run electron:preview
+```
+
+`electron:preview` 會先執行 `npm run build`，再用 Electron 載入本機
+`http://127.0.0.1:5173`。這讓現有 React/Vite renderer、`/store`、`/apps`、
+Hermes proxy 和 Vite proxy 行為維持一致。
+
+目前 scripts 會帶 `--no-sandbox`，原因是這個 workspace 常以 root 執行；
+Chromium/Electron 在 root 下不允許沒有 `--no-sandbox` 的啟動方式。若之後改成一般桌面使用者執行，可以再移除這個參數。
+
+可用環境變數：
+
+```bash
+WEB_PORT=5173
+STORE_PORT=5174
+HERMES_TARGET=http://127.0.0.1:8789
+VITE_ALLOWED_HOSTS=all
+ELECTRON_RENDERER_URL=http://127.0.0.1:5173
+```
+
+如果已經有外部 renderer server 在跑，可以設定 `ELECTRON_RENDERER_URL`，Electron
+就只會開視窗載入該 URL，不會再啟動 Vite renderer server。
+
 ## 部署模型
 
 角色分工：
@@ -189,7 +230,7 @@ sudo APP_DIR="$APP_DIR" bash "$WORK_DIR/update-remote.sh" "$WORK_DIR/$(basename 
 `update-remote.sh` 目前會沿用 `install-remote.sh` 的 idempotent 流程：
 
 - 解壓成新的 versioned release
-- 執行 `npm ci`
+- 執行 `npm ci --include=dev`
 - 執行 `npm run build`
 - 將 `/opt/agent-rider/current` 指向新版本
 - 保留 `/opt/agent-rider/shared/data`

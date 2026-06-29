@@ -3,8 +3,11 @@
   "private": true,
   "version": "0.1.1",
   "type": "module",
+  "main": "electron/main.mjs",
   "scripts": {
     "dev": "vite",
+    "electron:dev": "ELECTRON_DEV=1 electron --no-sandbox electron/main.mjs",
+    "electron:preview": "npm run build && electron --no-sandbox electron/main.mjs",
     "build": "vite build",
     "release": "bash scripts/release.sh",
     "deploy:scp": "bash scripts/deploy-scp.sh",
@@ -25,6 +28,7 @@
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^5.0.2",
+    "electron": "^42.5.0",
     "typescript": "^5.8.3",
     "vite": "^7.0.4"
   }
