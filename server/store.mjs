@@ -4,7 +4,7 @@
 import { createServer } from 'node:http'
 import { spawn, spawnSync } from 'node:child_process'
 import { DatabaseSync } from 'node:sqlite'
-import { mkdirSync, readdirSync, statSync, readFileSync, writeFileSync, existsSync, createReadStream } from 'node:fs'
+import { mkdirSync, readdirSync, statSync, readFileSync, writeFileSync, existsSync, createReadStream, accessSync, constants } from 'node:fs'
 import { dirname, join, resolve, basename, extname, normalize } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
@@ -16,7 +16,28 @@ const DB_DIR = join(__dirname, '..', 'data')
 mkdirSync(DB_DIR, { recursive: true })
 const DB_PATH = join(DB_DIR, 'agent-rider.db')
 const PORT = Number(process.env.STORE_PORT || 5174)
-const DEFAULT_CWD = resolve(process.env.HOME || '/root')
+const REQUESTED_HOME_CWD = resolve(process.env.HOME || '/root')
+
+function canReadDirectory(path) {
+  try {
+    if (!statSync(path).isDirectory()) return false
+    accessSync(path, constants.R_OK | constants.X_OK)
+    return true
+  } catch {
+    return false
+  }
+}
+
+function firstReadableDirectory(paths) {
+  for (const path of paths) {
+    if (path && canReadDirectory(path)) return path
+  }
+  return null
+}
+
+const CONFIGURED_BROWSE_ROOT = resolve(process.env.BROWSE_ROOT || REQUESTED_HOME_CWD)
+const BROWSE_ROOT = firstReadableDirectory([CONFIGURED_BROWSE_ROOT, REQUESTED_HOME_CWD, process.cwd()]) || CONFIGURED_BROWSE_ROOT
+const DEFAULT_CWD = canReadDirectory(REQUESTED_HOME_CWD) ? REQUESTED_HOME_CWD : BROWSE_ROOT
 const AGENT_PATH = [
   join(DEFAULT_CWD, '.local', 'bin'),
   '/usr/local/bin',
@@ -344,7 +365,6 @@ function sendJson(res, status, payload) {
 
 // ── Workspace filesystem browsing ──────────────────────────────────────────
 // Browsing is sandboxed to BROWSE_ROOT to avoid exposing the whole filesystem.
-const BROWSE_ROOT = resolve(process.env.BROWSE_ROOT || '/root')
 
 function safeResolve(input) {
   const target = resolve(input ? String(input) : BROWSE_ROOT)
@@ -965,5 +985,8 @@ const server = createServer((req, res) => {
 attachTerminalSocket(server)
 
 server.listen(PORT, '127.0.0.1', () => {
+  if (BROWSE_ROOT !== CONFIGURED_BROWSE_ROOT) {
+    console.warn(`[store] BROWSE_ROOT ${CONFIGURED_BROWSE_ROOT} is not readable; using ${BROWSE_ROOT}`)
+  }
   console.log(`[store] Agent Rider SQLite backend on http://127.0.0.1:${PORT} → ${DB_PATH}`)
 })

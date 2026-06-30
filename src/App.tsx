@@ -412,7 +412,7 @@ function tagsForCategory(name: string) {
 
 // Derive a conversation's metadata from its first prompt, honoring any
 // context the user already set on the card (category / project / workspace).
-function deriveRunFields(prompt: string, overrides: RunOverrides = {}) {
+function deriveRunFields(prompt: string, overrides: RunOverrides = {}, defaultWorkspacePath = DEFAULT_WORKSPACE_CWD) {
   const inferred = inferCategory(prompt)
   const categoryName = (overrides.category ?? '').trim() || inferred.name
   const categoryTags = (overrides.category ?? '').trim() ? tagsForCategory(categoryName) : inferred.tags
@@ -420,7 +420,7 @@ function deriveRunFields(prompt: string, overrides: RunOverrides = {}) {
   const words = importantWords(prompt)
   const label = titleCase(words.slice(0, 3)) || `${categoryName} Flow`
   const project = (overrides.project ?? '').trim() || `${label} Project`
-  const workspacePath = (overrides.workspace ?? '').trim() || DEFAULT_WORKSPACE_CWD
+  const workspacePath = (overrides.workspace ?? '').trim() || defaultWorkspacePath
 
   return {
     prompt,
@@ -515,6 +515,10 @@ function formatBytes(size: number | null): string {
   return `${value < 10 ? value.toFixed(1) : Math.round(value)} ${units[unit]}`
 }
 
+function pathWithinRoot(path: string, root: string) {
+  return path === root || root === '/' || path.startsWith(`${root}/`)
+}
+
 function filePathFromDrag(event: DragEvent<HTMLElement>) {
   return event.dataTransfer.getData('application/x-agent-rider-file-path') || event.dataTransfer.getData('text/plain')
 }
@@ -543,6 +547,7 @@ function insertIntoTextarea(textarea: HTMLTextAreaElement, value: string) {
 function FileBrowser({ rootPath }: { rootPath: string }) {
   const [open, setOpen] = useState(false)
   const [path, setPath] = useState(rootPath)
+  const [effectiveRootPath, setEffectiveRootPath] = useState(rootPath)
   const [listing, setListing] = useState<FsListing | null>(null)
   const [preview, setPreview] = useState<FsFilePreview | null>(null)
   const [previewFullWindow, setPreviewFullWindow] = useState(false)
@@ -557,14 +562,21 @@ function FileBrowser({ rootPath }: { rootPath: string }) {
     setPreview(null)
     setPreviewFullWindow(false)
     setPreviewError(null)
-    // Fall back to the workspace root if the target can't be read.
-    const result = (await listDir(target)) ?? (await listDir(rootPath))
+    // Fall back to the workspace root, then the backend's allowed root, if a
+    // persisted card still points at an unreadable or disallowed path.
+    const attempts = Array.from(new Set([target, rootPath, '']))
+    let result: FsListing | null = null
+    for (const attempt of attempts) {
+      result = await listDir(attempt)
+      if (result) break
+    }
     if (!result) {
       setError('Unable to read this folder.')
       setListing(null)
       setLoading(false)
       return
     }
+    setEffectiveRootPath(pathWithinRoot(result.path, rootPath) ? rootPath : result.root)
     setListing(result)
     setPath(result.path)
     setLoading(false)
@@ -587,6 +599,7 @@ function FileBrowser({ rootPath }: { rootPath: string }) {
   // When the conversation's workspace changes, reset to its root (reload if open).
   useEffect(() => {
     setPath(rootPath)
+    setEffectiveRootPath(rootPath)
     setListing(null)
     setPreview(null)
     setPreviewFullWindow(false)
@@ -602,8 +615,12 @@ function FileBrowser({ rootPath }: { rootPath: string }) {
   }
 
   // Only allow walking up while staying within the workspace subtree.
-  const canGoUp = path !== rootPath && (path.startsWith(rootPath + '/') || rootPath === '/')
-  const relLabel = path === rootPath ? '.' : path.startsWith(rootPath + '/') ? path.slice(rootPath.length + 1) : path
+  const canGoUp = path !== effectiveRootPath && pathWithinRoot(path, effectiveRootPath)
+  const relLabel = path === effectiveRootPath
+    ? '.'
+    : path.startsWith(`${effectiveRootPath}/`)
+      ? path.slice(effectiveRootPath.length + 1)
+      : path
 
   return (
     <div className={`file-browser ${open ? 'open' : ''}`}>
@@ -2221,6 +2238,7 @@ export default function App() {
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [sessionInfoText, setSessionInfoText] = useState('No Hermes session yet')
   const [error, setError] = useState<string | null>(null)
+  const [workspaceRoot, setWorkspaceRoot] = useState(DEFAULT_WORKSPACE_CWD)
 
   // Per-conversation UI state.
   const [collapsedIds, setCollapsedIds] = useState<Set<string>>(new Set())
@@ -2308,6 +2326,10 @@ export default function App() {
   const hasContent = runs.length > 0
   // Cards hidden via their close button drop out of the stack but stay in the tree.
   const visibleRuns = useMemo(() => runs.filter((run) => !closedRunIds.has(run.id)), [runs, closedRunIds])
+  const hasLegacyDefaultWorkspace = useMemo(
+    () => runs.some((run) => run.workspacePath === DEFAULT_WORKSPACE_CWD),
+    [runs],
+  )
 
   function toggleCollapse(runId: string) {
     setActiveRunId(runId)
@@ -2335,7 +2357,7 @@ export default function App() {
       categoryTags: [],
       project: '',
       workspace: '',
-      workspacePath: DEFAULT_WORKSPACE_CWD,
+      workspacePath: workspaceRoot,
       task: '',
       job: 'Draft',
       jobStatus: 'queued',
@@ -2674,6 +2696,30 @@ export default function App() {
     }
   }, [])
 
+  useEffect(() => {
+    let cancelled = false
+    void listDir('').then((listing) => {
+      if (!cancelled && listing?.path) setWorkspaceRoot(listing.path)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    if (workspaceRoot === DEFAULT_WORKSPACE_CWD || !hasLegacyDefaultWorkspace) return
+    setRuns((current) => {
+      let changed = false
+      const next = current.map((run) => {
+        if (run.workspacePath !== DEFAULT_WORKSPACE_CWD) return run
+        changed = true
+        sessionByRunRef.current.delete(run.id)
+        return { ...run, workspacePath: workspaceRoot, sessionId: null }
+      })
+      return changed ? next : current
+    })
+  }, [workspaceRoot, hasLegacyDefaultWorkspace])
+
   // Hydrate persisted interaction data from the local SQLite backend on mount.
   useEffect(() => {
     let cancelled = false
@@ -2861,7 +2907,7 @@ export default function App() {
         category: run.category,
         project: run.project,
         workspace: run.workspacePath,
-      })
+      }, workspaceRoot)
       workspace = fields.workspacePath
       setRuns((current) =>
         current.map((item) =>
@@ -2913,7 +2959,7 @@ export default function App() {
     if (panelId === 'terminal') {
       content = (
         <WebTerminal
-          initialCwd={DEFAULT_TERMINAL_CWD}
+          initialCwd={workspaceRoot}
           onClose={() => closePanel('terminal')}
           collapsed={panelStates[panelId]?.collapsed}
           fullWindow={panelStates[panelId]?.fullWindow}
@@ -3147,7 +3193,7 @@ export default function App() {
 
       {pickerRunId ? (
         <WorkspacePicker
-          initialPath={runs.find((run) => run.id === pickerRunId)?.workspacePath ?? DEFAULT_WORKSPACE_CWD}
+          initialPath={runs.find((run) => run.id === pickerRunId)?.workspacePath ?? workspaceRoot}
           onSelect={(path) => {
             changeRunWorkspace(pickerRunId, path)
             setPickerRunId(null)
