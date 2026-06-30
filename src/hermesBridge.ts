@@ -47,6 +47,7 @@ export class HermesBridge {
   public connectionDetail = 'Disconnected'
   public lastGatewaySkin: string | null = null
   public sessionInfo: Record<string, unknown> | null = null
+  public activeStreamId: string | null = null
 
   constructor(private readonly defaults: CreateSessionOptions = {}) {}
 
@@ -64,6 +65,7 @@ export class HermesBridge {
   close() {
     this.activeSource?.close()
     this.activeSource = null
+    this.activeStreamId = null
     this.setStatus('disconnected', 'Disconnected')
   }
 
@@ -126,11 +128,56 @@ export class HermesBridge {
     if (!streamId) throw new Error('chat/start did not return a stream_id')
 
     this.openStream(streamId)
+    return streamId
+  }
+
+  /** Ask Hermes to stop the currently active streamed turn. */
+  async cancelActiveStream() {
+    const streamId = this.activeStreamId
+    if (!streamId) return false
+
+    this.setStatus('busy', 'Stopping Hermes…')
+    const res = await fetch(`/api/chat/cancel?stream_id=${encodeURIComponent(streamId)}`, {
+      credentials: 'include',
+    })
+    const body = await res.text().catch(() => '')
+    let data: { cancelled?: boolean; detail?: unknown; error?: unknown } = {}
+    if (body) {
+      try {
+        data = JSON.parse(body) as typeof data
+      } catch {
+        // Keep the raw body for the error message below.
+      }
+    }
+
+    if (!res.ok) {
+      const message = String(data.detail ?? data.error ?? (body || res.statusText))
+      throw new Error(`chat/cancel failed (${res.status})${message ? ': ' + message : ''}`)
+    }
+
+    if (data.cancelled === false) {
+      this.activeSource?.close()
+      this.activeSource = null
+      this.activeStreamId = null
+      this.setStatus('ready', 'Hermes ready')
+    }
+
+    return data.cancelled !== false
   }
 
   private openStream(streamId: string) {
+    this.activeSource?.close()
     const source = new EventSource(`/api/chat/stream?stream_id=${encodeURIComponent(streamId)}`)
     this.activeSource = source
+    this.activeStreamId = streamId
+
+    const closeSource = () => {
+      source.close()
+      if (this.activeSource === source) {
+        this.activeSource = null
+        this.activeStreamId = null
+      }
+    }
 
     source.addEventListener('token', (raw) => {
       try {
@@ -142,27 +189,40 @@ export class HermesBridge {
     })
 
     const finish = () => {
-      source.close()
-      if (this.activeSource === source) this.activeSource = null
+      closeSource()
+      this.setStatus('ready', 'Assistant response complete')
       this.emit({ type: 'message.complete' })
     }
 
     source.addEventListener('stream_end', finish)
     source.addEventListener('done', finish)
-    source.addEventListener('cancel', finish)
+    source.addEventListener('cancel', (raw) => {
+      let payload: Record<string, unknown> = { message: 'Task stopped.' }
+      try {
+        const parsed = JSON.parse((raw as MessageEvent).data) as unknown
+        if (parsed && typeof parsed === 'object') payload = parsed as Record<string, unknown>
+      } catch {
+        // keep the default payload
+      }
+      closeSource()
+      this.setStatus('ready', 'Hermes stopped')
+      this.emit({ type: 'message.cancelled', payload })
+    })
 
     source.addEventListener('error', (raw) => {
       try {
         const payload = JSON.parse((raw as MessageEvent).data) as { error?: string }
         const msg = String(payload.error ?? 'Hermes stream error')
-        source.close()
-        if (this.activeSource === source) this.activeSource = null
+        closeSource()
         this.setStatus('error', msg)
         this.emit({ type: 'message.error', payload: { error: msg } })
       } catch {
         // onerror fires for network/connection errors too — only act on closed state
         if (source.readyState === EventSource.CLOSED) {
-          if (this.activeSource === source) this.activeSource = null
+          if (this.activeSource === source) {
+            this.activeSource = null
+            this.activeStreamId = null
+          }
           this.setStatus('error', 'Hermes stream disconnected')
           this.emit({ type: 'message.error', payload: { error: 'Hermes stream disconnected' } })
         }

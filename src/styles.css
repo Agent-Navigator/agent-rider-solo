@@ -381,6 +381,7 @@ button { cursor: pointer; }
 
 .copy-prompt-button,
 .assistant-to-bottom-button,
+.assistant-stop-button,
 .ask-more-button,
 .ask-more-cancel {
   border: 1px solid rgba(148, 163, 184, 0.18);
@@ -402,19 +403,42 @@ button { cursor: pointer; }
   gap: 12px;
 }
 
+.assistant-head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
 .assistant-to-bottom-button {
   flex-shrink: 0;
   padding: 3px 8px;
   white-space: nowrap;
 }
 
+.assistant-stop-button {
+  flex-shrink: 0;
+  padding: 3px 9px;
+  border-color: rgba(239, 68, 68, 0.44);
+  background: rgba(239, 68, 68, 0.12);
+  color: #fecaca;
+  white-space: nowrap;
+}
+
 .copy-prompt-button:hover,
 .assistant-to-bottom-button:hover,
+.assistant-stop-button:hover,
 .ask-more-button:hover,
 .ask-more-cancel:hover {
   border-color: rgba(121, 185, 255, 0.34);
   color: var(--text);
   background: rgba(121, 185, 255, 0.08);
+}
+
+.assistant-stop-button:hover {
+  border-color: rgba(239, 68, 68, 0.7);
+  background: rgba(239, 68, 68, 0.2);
+  color: #fff1f2;
 }
 
 .assistant-bubble-bottom {
@@ -1947,6 +1971,7 @@ button { cursor: pointer; }
 .tree-run-status.running { background: var(--accent); box-shadow: 0 0 0 3px rgba(121, 185, 255, 0.12); }
 .tree-run-status.queued { background: var(--warn); box-shadow: 0 0 0 3px rgba(244, 181, 69, 0.10); }
 .tree-run-status.done { background: var(--good); box-shadow: 0 0 0 3px rgba(64, 199, 125, 0.10); }
+.tree-run-status.cancelled { background: var(--muted); box-shadow: 0 0 0 3px rgba(148, 163, 184, 0.10); }
 .tree-run-status.error { background: var(--bad); box-shadow: 0 0 0 3px rgba(239, 109, 109, 0.12); }
 
 .tree-empty {

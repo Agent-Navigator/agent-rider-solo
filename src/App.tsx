@@ -47,7 +47,7 @@ import {
 import { plugins, type AgentRiderPlugin } from '../plugins'
 import { WebView } from '../plugins/WebView'
 
-type JobStatus = 'queued' | 'running' | 'done' | 'error'
+type JobStatus = 'queued' | 'running' | 'done' | 'error' | 'cancelled'
 type ResourceHealth = 'Ready' | 'Needs setup' | 'Draft'
 
 type ChatRole = 'user' | 'assistant'
@@ -562,7 +562,7 @@ function timeLabel(iso: string) {
 
 function StatusPill({ state, detail }: { state: HermesConnectionState | JobStatus; detail: string }) {
   const tone =
-    state === 'ready' || state === 'done'
+    state === 'ready' || state === 'done' || state === 'cancelled'
       ? 'done'
       : state === 'busy' || state === 'running'
         ? 'running'
@@ -593,7 +593,15 @@ function TreeRow({ label, value, depth }: { label: string; value: string; depth:
 }
 
 function turnRoleLabel(status: JobStatus) {
-  return status === 'queued' ? 'Queued' : status === 'error' ? 'Error' : status === 'done' ? 'Done' : 'Running'
+  return status === 'queued'
+    ? 'Queued'
+    : status === 'error'
+      ? 'Error'
+      : status === 'cancelled'
+        ? 'Stopped'
+        : status === 'done'
+          ? 'Done'
+          : 'Running'
 }
 
 function formatBytes(size: number | null): string {
@@ -1049,6 +1057,8 @@ function ConversationCard({
   onAgentChange,
   onOpenPicker,
   onClose,
+  stoppableTurnId,
+  onStopTurn,
   dragging,
   dragActive,
   onDragStartCard,
@@ -1072,6 +1082,8 @@ function ConversationCard({
   onAgentChange: (value: AgentType) => void
   onOpenPicker: () => void
   onClose: () => void
+  stoppableTurnId: string | null
+  onStopTurn: (turnId: string) => void
   /** True while THIS card is the one being dragged. */
   dragging: boolean
   /** True while SOME other card is being dragged (enables drop targets). */
@@ -1204,6 +1216,7 @@ function ConversationCard({
   function renderTurnNode(node: TurnTreeNode, depth = 0): ReactNode {
     const { turn, children } = node
     const canAskMore = turn.status !== 'running' && turn.status !== 'queued'
+    const canStop = turn.status === 'running' && turn.id === stoppableTurnId
     const isTurnCollapsed = collapsedTurnIds.has(turn.id)
 
     return (
@@ -1250,14 +1263,26 @@ function ConversationCard({
             <div className="bubble assistant">
               <div className="assistant-head">
                 <span className="role">Hermes · {turnRoleLabel(turn.status)}</span>
-                <button
-                  type="button"
-                  className="assistant-to-bottom-button"
-                  onClick={() => scrollAssistantBubbleToBottom(turn.id)}
-                  aria-label="Scroll to bottom of this reply"
-                >
-                  To bottom
-                </button>
+                <div className="assistant-head-actions">
+                  {canStop ? (
+                    <button
+                      type="button"
+                      className="assistant-stop-button"
+                      onClick={() => onStopTurn(turn.id)}
+                      aria-label="Stop Hermes"
+                    >
+                      Stop
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    className="assistant-to-bottom-button"
+                    onClick={() => scrollAssistantBubbleToBottom(turn.id)}
+                    aria-label="Scroll to bottom of this reply"
+                  >
+                    To bottom
+                  </button>
+                </div>
               </div>
               <div className="md-body">
                 <ReactMarkdown
@@ -2796,6 +2821,11 @@ export default function App() {
         void flushQueue()
       }
 
+      if (event.type === 'message.cancelled') {
+        finishStoppedTurn(String(event.payload?.message ?? 'Task stopped.'))
+        return
+      }
+
       if (event.type === 'message.error') {
         const message = String(event.payload?.error ?? 'Hermes stream error')
         const turnId = activeTurnRef.current
@@ -2996,6 +3026,43 @@ export default function App() {
     }
   }
 
+  function finishStoppedTurn(message = 'Task stopped.') {
+    const turnId = activeTurnRef.current
+    const runId = activeRunRef.current
+    const response = assistantBufferRef.current.trim() || message
+    if (turnId) {
+      setTurns((current) =>
+        current.map((turn) => (turn.id === turnId ? { ...turn, response, status: 'cancelled' } : turn)),
+      )
+    }
+    if (runId) {
+      setRuns((current) => current.map((item) => (item.id === runId ? { ...item, jobStatus: 'cancelled' } : item)))
+    }
+    activeTurnRef.current = null
+    activeRunRef.current = null
+    assistantBufferRef.current = ''
+    setConnectionState('ready')
+    setConnectionDetail('Hermes stopped')
+    void flushQueue()
+  }
+
+  async function stopHermesTurn(turnId: string) {
+    if (turnId !== activeTurnRef.current) return
+    const bridge = bridgeRef.current
+    if (!bridge) return
+    setError(null)
+    setConnectionDetail('Stopping Hermes…')
+    try {
+      const cancelled = await bridge.cancelActiveStream()
+      if (!cancelled && activeTurnRef.current === turnId) finishStoppedTurn('Hermes stream is no longer active.')
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      setError(message)
+      setConnectionState('error')
+      setConnectionDetail(message)
+    }
+  }
+
   // Queue a turn if Hermes is busy, otherwise start it immediately.
   function enqueueOrStart(entry: QueuedPromptEntry) {
     const busy = connectionState === 'busy' || activeTurnRef.current !== null
@@ -3082,6 +3149,8 @@ export default function App() {
       onAgentChange={(value) => updateRunContext(run.id, { agentType: value })}
       onOpenPicker={() => setPickerRunId(run.id)}
       onClose={() => closeConversation(run.id)}
+      stoppableTurnId={bridgeRef.current?.activeStreamId ? activeTurnRef.current : null}
+      onStopTurn={(turnId) => void stopHermesTurn(turnId)}
       agentTerminalState={panelStates[agentTerminalStateKey(run.id)]}
       onAgentTerminalStateChange={(patch) => updatePanelState(agentTerminalStateKey(run.id), patch)}
     />
