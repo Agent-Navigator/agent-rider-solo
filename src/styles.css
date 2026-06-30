@@ -1103,6 +1103,61 @@ button { cursor: pointer; }
   user-select: text;
 }
 
+.file-preview-code code {
+  display: block;
+  min-width: max-content;
+}
+
+.file-preview-code .hljs-keyword,
+.file-preview-code .hljs-selector-tag,
+.file-preview-code .hljs-built_in,
+.file-preview-code .hljs-type {
+  color: #79b8ff;
+}
+
+.file-preview-code .hljs-string,
+.file-preview-code .hljs-regexp,
+.file-preview-code .hljs-symbol,
+.file-preview-code .hljs-template-variable {
+  color: #9ecbff;
+}
+
+.file-preview-code .hljs-number,
+.file-preview-code .hljs-literal,
+.file-preview-code .hljs-variable,
+.file-preview-code .hljs-attribute {
+  color: #ffab70;
+}
+
+.file-preview-code .hljs-title,
+.file-preview-code .hljs-title.function_,
+.file-preview-code .hljs-title.class_,
+.file-preview-code .hljs-section {
+  color: #b9f27c;
+}
+
+.file-preview-code .hljs-comment,
+.file-preview-code .hljs-quote {
+  color: #7d8fa8;
+  font-style: italic;
+}
+
+.file-preview-code .hljs-meta,
+.file-preview-code .hljs-doctag,
+.file-preview-code .hljs-tag,
+.file-preview-code .hljs-name,
+.file-preview-code .hljs-attr {
+  color: #f7c76f;
+}
+
+.file-preview-code .hljs-deletion {
+  color: #ff7b72;
+}
+
+.file-preview-code .hljs-addition {
+  color: #a5d6ff;
+}
+
 .file-preview.full-window .file-preview-code {
   max-height: none;
   min-height: 0;

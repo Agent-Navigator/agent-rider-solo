@@ -5,6 +5,27 @@ import rehypeSanitize from 'rehype-sanitize'
 import remarkGfm from 'remark-gfm'
 import { FitAddon } from '@xterm/addon-fit'
 import { Terminal as XTermTerminal } from '@xterm/xterm'
+import hljs from 'highlight.js/lib/core'
+import bash from 'highlight.js/lib/languages/bash'
+import c from 'highlight.js/lib/languages/c'
+import cpp from 'highlight.js/lib/languages/cpp'
+import csharp from 'highlight.js/lib/languages/csharp'
+import css from 'highlight.js/lib/languages/css'
+import go from 'highlight.js/lib/languages/go'
+import ini from 'highlight.js/lib/languages/ini'
+import java from 'highlight.js/lib/languages/java'
+import javascript from 'highlight.js/lib/languages/javascript'
+import json from 'highlight.js/lib/languages/json'
+import kotlin from 'highlight.js/lib/languages/kotlin'
+import php from 'highlight.js/lib/languages/php'
+import python from 'highlight.js/lib/languages/python'
+import ruby from 'highlight.js/lib/languages/ruby'
+import rust from 'highlight.js/lib/languages/rust'
+import sql from 'highlight.js/lib/languages/sql'
+import swift from 'highlight.js/lib/languages/swift'
+import typescript from 'highlight.js/lib/languages/typescript'
+import xml from 'highlight.js/lib/languages/xml'
+import yaml from 'highlight.js/lib/languages/yaml'
 import '@xterm/xterm/css/xterm.css'
 import { HermesBridge, type HermesConnectionState } from './hermesBridge'
 import {
@@ -178,6 +199,79 @@ const DEFAULT_WORKSPACE_CWD = '/root'
 const DEFAULT_TERMINAL_CWD = '/root'
 const DEFAULT_TITLE = 'Agent Rider'
 const AGENT_TERMINAL_STATE_PREFIX = 'agent-terminal:'
+
+hljs.registerLanguage('bash', bash)
+hljs.registerLanguage('c', c)
+hljs.registerLanguage('cpp', cpp)
+hljs.registerLanguage('csharp', csharp)
+hljs.registerLanguage('css', css)
+hljs.registerLanguage('go', go)
+hljs.registerLanguage('ini', ini)
+hljs.registerLanguage('java', java)
+hljs.registerLanguage('javascript', javascript)
+hljs.registerLanguage('json', json)
+hljs.registerLanguage('kotlin', kotlin)
+hljs.registerLanguage('php', php)
+hljs.registerLanguage('python', python)
+hljs.registerLanguage('ruby', ruby)
+hljs.registerLanguage('rust', rust)
+hljs.registerLanguage('sql', sql)
+hljs.registerLanguage('swift', swift)
+hljs.registerLanguage('typescript', typescript)
+hljs.registerLanguage('xml', xml)
+hljs.registerLanguage('yaml', yaml)
+
+const CODE_LANGUAGE_BY_EXT: Record<string, string> = {
+  '.bash': 'bash',
+  '.c': 'c',
+  '.cc': 'cpp',
+  '.conf': 'ini',
+  '.config': 'ini',
+  '.cpp': 'cpp',
+  '.cs': 'csharp',
+  '.css': 'css',
+  '.cxx': 'cpp',
+  '.env': 'ini',
+  '.fish': 'bash',
+  '.go': 'go',
+  '.h': 'c',
+  '.hpp': 'cpp',
+  '.htm': 'xml',
+  '.html': 'xml',
+  '.ini': 'ini',
+  '.java': 'java',
+  '.js': 'javascript',
+  '.json': 'json',
+  '.jsonc': 'json',
+  '.jsx': 'javascript',
+  '.kt': 'kotlin',
+  '.less': 'css',
+  '.mjs': 'javascript',
+  '.php': 'php',
+  '.py': 'python',
+  '.rb': 'ruby',
+  '.rs': 'rust',
+  '.sass': 'css',
+  '.scss': 'css',
+  '.sh': 'bash',
+  '.sql': 'sql',
+  '.swift': 'swift',
+  '.toml': 'ini',
+  '.ts': 'typescript',
+  '.tsx': 'typescript',
+  '.xml': 'xml',
+  '.yaml': 'yaml',
+  '.yml': 'yaml',
+  '.zsh': 'bash',
+}
+
+const CODE_LANGUAGE_BY_NAME: Record<string, string> = {
+  Containerfile: 'bash',
+  Dockerfile: 'bash',
+  Gemfile: 'ruby',
+  Makefile: 'bash',
+  Rakefile: 'ruby',
+}
 
 const categoryRules: CategoryRule[] = [
   {
@@ -519,6 +613,20 @@ function pathWithinRoot(path: string, root: string) {
   return path === root || root === '/' || path.startsWith(`${root}/`)
 }
 
+function fileNameFromPath(path: string) {
+  return path.split(/[\\/]/).filter(Boolean).pop() ?? path
+}
+
+function fileExtension(name: string) {
+  const index = name.lastIndexOf('.')
+  return index > 0 ? name.slice(index).toLowerCase() : ''
+}
+
+function languageForFile(path: string) {
+  const name = fileNameFromPath(path)
+  return CODE_LANGUAGE_BY_NAME[name] ?? CODE_LANGUAGE_BY_EXT[fileExtension(name)] ?? null
+}
+
 function filePathFromDrag(event: DragEvent<HTMLElement>) {
   return event.dataTransfer.getData('application/x-agent-rider-file-path') || event.dataTransfer.getData('text/plain')
 }
@@ -537,6 +645,33 @@ function insertIntoTextarea(textarea: HTMLTextAreaElement, value: string) {
   textarea.setRangeText(inserted, start, end, 'end')
   textarea.setSelectionRange(nextCursor, nextCursor)
   return nextValue
+}
+
+function CodeFilePreview({ preview }: { preview: FsFilePreview }) {
+  const highlighted = useMemo(() => {
+    const content = preview.content ?? ''
+    const language = languageForFile(preview.path || preview.name)
+    if (language && hljs.getLanguage(language)) {
+      return {
+        html: hljs.highlight(content, { language, ignoreIllegals: true }).value,
+        language,
+      }
+    }
+    const result = hljs.highlightAuto(content)
+    return {
+      html: result.value,
+      language: result.language ?? null,
+    }
+  }, [preview.content, preview.name, preview.path])
+
+  return (
+    <pre className={`file-preview-code ${preview.kind}`}>
+      <code
+        className={highlighted.language ? `hljs language-${highlighted.language}` : 'hljs'}
+        dangerouslySetInnerHTML={{ __html: highlighted.html }}
+      />
+    </pre>
+  )
 }
 
 /**
@@ -770,7 +905,7 @@ function FileBrowser({ rootPath }: { rootPath: string }) {
                   </ReactMarkdown>
                 </div>
               ) : (
-                <pre className={`file-preview-code ${preview.kind}`}><code>{preview.content ?? ''}</code></pre>
+                <CodeFilePreview preview={preview} />
               )}
             </div>
           ) : null}
