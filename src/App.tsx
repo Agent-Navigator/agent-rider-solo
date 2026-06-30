@@ -1111,16 +1111,8 @@ function ConversationCard({
   const turnTree = useMemo(() => buildTurnTree(turns), [turns])
   const status = run.jobStatus
   const isDraft = turns.length === 0
-  const lastVisibleTurnId = useMemo(() => {
-    function walk(nodes: TurnTreeNode[]): string | null {
-      if (!nodes.length) return null
-      const last = nodes[nodes.length - 1]
-      if (collapsedTurnIds.has(last.turn.id) || !last.children.length) return last.turn.id
-      return walk(last.children) ?? last.turn.id
-    }
-    return walk(turnTree)
-  }, [turnTree, collapsedTurnIds])
-  const lastVisibleTurnRef = useRef<HTMLDivElement | null>(null)
+  const topVisibleTurnId = turnTree[0]?.turn.id ?? null
+  const topVisibleTurnRef = useRef<HTMLDivElement | null>(null)
   const askMoreFormRef = useRef<HTMLFormElement | null>(null)
   const askMoreTextareaRef = useRef<HTMLTextAreaElement | null>(null)
 
@@ -1135,14 +1127,14 @@ function ConversationCard({
       return () => cancelAnimationFrame(frame)
     }
 
-    if (!lastVisibleTurnId) return
-    setCollapsedTurnIds(new Set(turns.filter((turn) => turn.id !== lastVisibleTurnId).map((turn) => turn.id)))
+    if (!topVisibleTurnId) return
+    setCollapsedTurnIds(new Set(turns.filter((turn) => turn.id !== topVisibleTurnId).map((turn) => turn.id)))
     const frame = requestAnimationFrame(() => {
-      scrollToFocusTarget(lastVisibleTurnRef.current)
+      scrollToFocusTarget(topVisibleTurnRef.current)
     })
     return () => cancelAnimationFrame(frame)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lastVisibleTurnId, askParentId])
+  }, [topVisibleTurnId, askParentId])
 
   function hideAllTurns() {
     setCollapsedTurnIds(new Set(turns.map((turn) => turn.id)))
@@ -1222,7 +1214,7 @@ function ConversationCard({
     return (
       <div
         key={turn.id}
-        ref={turn.id === lastVisibleTurnId ? lastVisibleTurnRef : undefined}
+        ref={turn.id === topVisibleTurnId ? topVisibleTurnRef : undefined}
         className={`turn-node depth-${Math.min(depth, 4)}`}
       >
         <article className={`turn ${turn.status} ${isTurnCollapsed ? 'collapsed' : ''}`}>
