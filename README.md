@@ -37,6 +37,17 @@ npm run build
 - Source machine 上已有這個 repo、`node_modules`、以及可執行 `scripts/release.sh`。
 - Remote server 建議是 Ubuntu/Debian，並且可以使用 `sudo`。installer 會安裝必要套件與 Node.js 22+。
 
+## 更新保留策略
+
+更新時只替換程式 release，保留本地狀態：
+
+- `/opt/agent-rider/shared/data`：SQLite 聊天紀錄、Conversation Card 狀態、版面設定、App 排序/改名等 store 資料。
+- `/opt/agent-rider/shared/plugins`：本地 Agent App plugins，包括 `manifest.json`、`dist/`、以及 app source。
+- `/etc/default/agent-rider`：既有 `WEB_PORT`、`STORE_PORT`、`BROWSE_ROOT`、`HERMES_TARGET`、`VITE_ALLOWED_HOSTS` 會沿用；命令列環境變數可覆蓋。
+- `/opt/agent-rider/shared/backups/<timestamp>`：每次更新前會備份 data/plugins。
+
+Release 只更新程式碼、Node dependencies、production build、systemd unit，以及第一方 build-time plugins。若 release 內有新的 App plugin 且 remote 尚未有同名資料夾，會初次帶入；既有同名 App plugin 不會覆蓋。
+
 ## 版號與 Git tag
 
 正式打包 release 前，建議先把 `package.json` 的版本與 Git tag 對齊。慣例是：
@@ -85,51 +96,22 @@ agent-rider-YYYYMMDDTHHMMSSZ-<git-sha>.tar.gz
 
 以下指令都在 **remote server** 上執行。
 
-先設定 source machine 與安裝路徑：
+如果 remote server 可以 `scp` 到 source machine，可以用同一行完成第一次安裝或後續更新；script 會自動判斷是否已有 `/opt/agent-rider/current`：
 
 ```bash
-export SOURCE_SSH=root@source-machine
-export SOURCE_DIR=/root/agent-work/DEV/agent-rider
-export APP_DIR=/opt/agent-rider
-export WORK_DIR=/tmp/agent-rider-pull
+SOURCE_SSH=root@source-machine SOURCE_DIR=/root/agent-work/DEV/agent-rider APP_DIR=/opt/agent-rider bash -lc 'tmp=$(mktemp -d); scp ${SSH_OPTS:-} "$SOURCE_SSH:$SOURCE_DIR/scripts/pull-update.sh" "$tmp/"; bash "$tmp/pull-update.sh"'
 ```
 
 如果 source machine 的 SSH port 不是 22：
 
 ```bash
-export SSH_OPTS='-p 2222'
+SOURCE_SSH=root@source-machine SOURCE_DIR=/root/agent-work/DEV/agent-rider SSH_OPTS='-p 2222' bash -lc 'tmp=$(mktemp -d); scp ${SSH_OPTS:-} "$SOURCE_SSH:$SOURCE_DIR/scripts/pull-update.sh" "$tmp/"; bash "$tmp/pull-update.sh"'
 ```
 
-讓 source machine 先打包最新 release：
+如果你已經把 `scripts/pull-update.sh` 複製到 remote server，也可以直接：
 
 ```bash
-ssh ${SSH_OPTS:-} "$SOURCE_SSH" "cd '$SOURCE_DIR' && scripts/release.sh"
-```
-
-找出最新 release tarball：
-
-```bash
-RELEASE=$(ssh ${SSH_OPTS:-} "$SOURCE_SSH" "cd '$SOURCE_DIR' && ls -t releases/agent-rider-*.tar.gz | head -1")
-echo "$RELEASE"
-```
-
-從 source machine 把 release 和遠端腳本拉到 remote server：
-
-```bash
-rm -rf "$WORK_DIR"
-mkdir -p "$WORK_DIR"
-
-scp ${SSH_OPTS:-} "$SOURCE_SSH:$SOURCE_DIR/$RELEASE" "$WORK_DIR/"
-scp ${SSH_OPTS:-} \
-  "$SOURCE_SSH:$SOURCE_DIR/scripts/install-remote.sh" \
-  "$SOURCE_SSH:$SOURCE_DIR/scripts/update-remote.sh" \
-  "$WORK_DIR/"
-```
-
-執行第一次安裝：
-
-```bash
-sudo APP_DIR="$APP_DIR" bash "$WORK_DIR/install-remote.sh" "$WORK_DIR/$(basename "$RELEASE")"
+SOURCE_SSH=root@source-machine SOURCE_DIR=/root/agent-work/DEV/agent-rider APP_DIR=/opt/agent-rider bash pull-update.sh
 ```
 
 安裝完成後會建立：
@@ -138,6 +120,8 @@ sudo APP_DIR="$APP_DIR" bash "$WORK_DIR/install-remote.sh" "$WORK_DIR/$(basename
 /opt/agent-rider/releases/     # 每次部署的 versioned release
 /opt/agent-rider/current       # 指向目前啟用版本的 symlink
 /opt/agent-rider/shared/data   # SQLite 與 runtime data，更新時保留
+/opt/agent-rider/shared/plugins # App plugins，更新時保留
+/opt/agent-rider/shared/backups # 更新前的 data/plugins 備份
 ```
 
 預設 Web UI 會在 remote server 的 `5173` port：
@@ -148,51 +132,22 @@ http://<remote-server>:5173
 
 ## 持續更新
 
-之後每次要更新，也是在 **remote server** 上執行同一組 pull 流程。
-
-先確定變數：
+之後每次要更新，也是在 **remote server** 上執行同一個 pull update：
 
 ```bash
-export SOURCE_SSH=root@source-machine
-export SOURCE_DIR=/root/agent-work/DEV/agent-rider
-export APP_DIR=/opt/agent-rider
-export WORK_DIR=/tmp/agent-rider-pull
+SOURCE_SSH=root@source-machine SOURCE_DIR=/root/agent-work/DEV/agent-rider APP_DIR=/opt/agent-rider bash -lc 'tmp=$(mktemp -d); scp ${SSH_OPTS:-} "$SOURCE_SSH:$SOURCE_DIR/scripts/pull-update.sh" "$tmp/"; bash "$tmp/pull-update.sh"'
 ```
 
-請 source machine 重新打包最新 release：
+`pull-update.sh` 會：
 
-```bash
-ssh ${SSH_OPTS:-} "$SOURCE_SSH" "cd '$SOURCE_DIR' && scripts/release.sh"
-```
-
-抓最新 release：
-
-```bash
-RELEASE=$(ssh ${SSH_OPTS:-} "$SOURCE_SSH" "cd '$SOURCE_DIR' && ls -t releases/agent-rider-*.tar.gz | head -1")
-
-rm -rf "$WORK_DIR"
-mkdir -p "$WORK_DIR"
-
-scp ${SSH_OPTS:-} "$SOURCE_SSH:$SOURCE_DIR/$RELEASE" "$WORK_DIR/"
-scp ${SSH_OPTS:-} \
-  "$SOURCE_SSH:$SOURCE_DIR/scripts/install-remote.sh" \
-  "$SOURCE_SSH:$SOURCE_DIR/scripts/update-remote.sh" \
-  "$WORK_DIR/"
-```
-
-執行更新：
-
-```bash
-sudo APP_DIR="$APP_DIR" bash "$WORK_DIR/update-remote.sh" "$WORK_DIR/$(basename "$RELEASE")"
-```
-
-`update-remote.sh` 目前會沿用 `install-remote.sh` 的 idempotent 流程：
-
-- 解壓成新的 versioned release
-- 執行 `npm ci`
-- 執行 `npm run build`
+- 在 source machine 執行 `scripts/release.sh`
+- 用 `scp` 拉最新 release tarball 與 remote installer
+- 自動選擇 `install-remote.sh` 或 `update-remote.sh`
+- 更新前備份並保留 `/opt/agent-rider/shared/data`
+- 更新前備份並保留 `/opt/agent-rider/shared/plugins`
+- 沿用 `/etc/default/agent-rider` 既有設定
+- 解壓成新的 versioned release，執行 `npm ci` 與 `npm run build`
 - 將 `/opt/agent-rider/current` 指向新版本
-- 保留 `/opt/agent-rider/shared/data`
 - 重啟 `agent-rider-store` 和 `agent-rider-web`
 
 ## 建議放到 remote server 的更新腳本
@@ -206,26 +161,9 @@ set -Eeuo pipefail
 
 SOURCE_SSH=${SOURCE_SSH:-root@source-machine}
 SOURCE_DIR=${SOURCE_DIR:-/root/agent-work/DEV/agent-rider}
-APP_DIR=${APP_DIR:-/opt/agent-rider}
-WORK_DIR=${WORK_DIR:-/tmp/agent-rider-pull}
-
-ssh ${SSH_OPTS:-} "$SOURCE_SSH" "cd '$SOURCE_DIR' && scripts/release.sh"
-RELEASE=$(ssh ${SSH_OPTS:-} "$SOURCE_SSH" "cd '$SOURCE_DIR' && ls -t releases/agent-rider-*.tar.gz | head -1")
-
-rm -rf "$WORK_DIR"
-mkdir -p "$WORK_DIR"
-
-scp ${SSH_OPTS:-} "$SOURCE_SSH:$SOURCE_DIR/$RELEASE" "$WORK_DIR/"
-scp ${SSH_OPTS:-} \
-  "$SOURCE_SSH:$SOURCE_DIR/scripts/install-remote.sh" \
-  "$SOURCE_SSH:$SOURCE_DIR/scripts/update-remote.sh" \
-  "$WORK_DIR/"
-
-if [[ -e "$APP_DIR/current" ]]; then
-  sudo APP_DIR="$APP_DIR" bash "$WORK_DIR/update-remote.sh" "$WORK_DIR/$(basename "$RELEASE")"
-else
-  sudo APP_DIR="$APP_DIR" bash "$WORK_DIR/install-remote.sh" "$WORK_DIR/$(basename "$RELEASE")"
-fi
+tmp=$(mktemp -d)
+scp ${SSH_OPTS:-} "$SOURCE_SSH:$SOURCE_DIR/scripts/pull-update.sh" "$tmp/"
+SOURCE_SSH="$SOURCE_SSH" SOURCE_DIR="$SOURCE_DIR" APP_DIR="${APP_DIR:-/opt/agent-rider}" SSH_OPTS="${SSH_OPTS:-}" bash "$tmp/pull-update.sh"
 SCRIPT
 
 sudo chmod +x /usr/local/bin/agent-rider-pull-update

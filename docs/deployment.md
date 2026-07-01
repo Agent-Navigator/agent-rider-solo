@@ -6,6 +6,16 @@
 2. 用 `scp` 把 tarball 和遠端腳本丟到 server。
 3. 遠端腳本解壓成 versioned release，安裝 npm dependencies，建立 systemd services，重啟 app。
 4. `data/` 放在 `/opt/agent-rider/shared/data`，更新時不覆蓋 SQLite runtime data。
+5. App plugins 放在 `/opt/agent-rider/shared/plugins`，更新時不覆蓋本地 App plugin。
+
+## 保留內容
+
+更新只替換程式 release；以下內容保留在 shared/config：
+
+- `/opt/agent-rider/shared/data`：聊天紀錄、Conversation Card、版面狀態、App 排序/改名等 store 資料。
+- `/opt/agent-rider/shared/plugins`：本地 Agent App plugins。
+- `/opt/agent-rider/shared/backups/<timestamp>`：每次更新前的 data/plugins 備份。
+- `/etc/default/agent-rider`：既有 port、browse root、Hermes target、allowed hosts 會沿用；環境變數可覆蓋。
 
 ## 最短路徑
 
@@ -29,6 +39,14 @@ SSH_OPTS='-p 2222' scripts/deploy-scp.sh root@your-server
 
 之後更新同一台 server 跑同一個指令即可。script 會偵測遠端是否已有 `/opt/agent-rider/current`，有的話走 update，沒有就走 install。
 
+如果部署方向是 **remote server 主動 scp 回 source machine**，在 remote server 執行一行：
+
+```bash
+SOURCE_SSH=root@source-machine SOURCE_DIR=/root/agent-work/DEV/agent-rider APP_DIR=/opt/agent-rider bash -lc 'tmp=$(mktemp -d); scp ${SSH_OPTS:-} "$SOURCE_SSH:$SOURCE_DIR/scripts/pull-update.sh" "$tmp/"; bash "$tmp/pull-update.sh"'
+```
+
+這個 pull updater 會在 source machine 打包 release，再把 release 和 installer 拉到 remote server 套用。
+
 ## 手動 scp 流程
 
 本機建立 release：
@@ -40,7 +58,7 @@ scripts/release.sh
 上傳：
 
 ```bash
-scp releases/agent-rider-*.tar.gz scripts/install-remote.sh scripts/update-remote.sh root@your-server:/tmp/
+scp releases/agent-rider-*.tar.gz scripts/install-remote.sh scripts/update-remote.sh scripts/pull-update.sh root@your-server:/tmp/
 ```
 
 遠端第一次安裝：
@@ -90,6 +108,7 @@ sudo systemctl restart agent-rider-store agent-rider-web
 
 - 不需要 GitHub 或任何第三方 remote。
 - release tarball 會排除 `.git`、`node_modules`、`data`，不會把本機 runtime DB 帶上去。
+- 遠端 runtime state 在 `shared/data` 和 `shared/plugins`，更新 release 不會覆蓋。
 - 遠端每次用新的 release 目錄，出問題時可以手動把 `/opt/agent-rider/current` 指回前一版。
 
 缺點：
