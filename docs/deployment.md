@@ -1,79 +1,103 @@
 # Agent Rider deployment
 
-這份流程以 `scp` 為主，不需要 GitHub。核心想法是：
-
-1. 在本機 build 成一個 release tarball。
-2. 用 `scp` 把 tarball 和遠端腳本丟到 server。
-3. 遠端腳本解壓成 versioned release，安裝 npm dependencies，建立 systemd services，重啟 app。
-4. `data/` 放在 `/opt/agent-rider/shared/data`，更新時不覆蓋 SQLite runtime data。
-5. App plugins 放在 `/opt/agent-rider/shared/plugins`，更新時不覆蓋本地 App plugin。
+部署方式改為 **Tailscale private git remote**。Remote server 不再從 source
+machine `scp` release tarball；它直接透過 SSH/Tailscale `git fetch` private
+repo，從指定 commit 建立本機 release，然後套用。
 
 ## 保留內容
 
-更新只替換程式 release；以下內容保留在 shared/config：
+更新只替換程式 release；以下內容保留：
 
 - `/opt/agent-rider/shared/data`：聊天紀錄、Conversation Card、版面狀態、App 排序/改名等 store 資料。
 - `/opt/agent-rider/shared/plugins`：本地 Agent App plugins。
 - `/opt/agent-rider/shared/backups/<timestamp>`：每次更新前的 data/plugins 備份。
 - `/etc/default/agent-rider`：既有 port、browse root、Hermes target、allowed hosts 會沿用；環境變數可覆蓋。
 
-## 最短路徑
+## Source machine setup
 
-第一次部署：
-
-```bash
-scripts/deploy-scp.sh root@your-server
-```
-
-指定遠端目錄：
+在 source machine 建 private bare repo：
 
 ```bash
-scripts/deploy-scp.sh root@your-server /opt/agent-rider
+sudo mkdir -p /srv/git
+sudo git init --bare /srv/git/agent-rider.git
+sudo chown -R "$USER:$USER" /srv/git/agent-rider.git
+
+cd /root/agent-work/DEV/agent-rider
+git remote add tailnet /srv/git/agent-rider.git 2>/dev/null || git remote set-url tailnet /srv/git/agent-rider.git
+git push tailnet master --tags
 ```
 
-指定 SSH port：
+每次更新前，在 source machine commit 並 push：
 
 ```bash
-SSH_OPTS='-p 2222' scripts/deploy-scp.sh root@your-server
+git push tailnet master --tags
 ```
 
-之後更新同一台 server 跑同一個指令即可。script 會偵測遠端是否已有 `/opt/agent-rider/current`，有的話走 update，沒有就走 install。
+Remote server 只會看到 private git remote 裡已 push 的 commit。
 
-如果部署方向是 **remote server 主動 scp 回 source machine**，在 remote server 執行一行：
+## Remote install/update
+
+在 remote server 執行一行。把 `source-tailnet-host` 換成 source machine 的
+Tailscale hostname 或 Tailscale IP：
 
 ```bash
-SOURCE_SSH=root@source-machine SOURCE_DIR=/root/agent-work/DEV/agent-rider APP_DIR=/opt/agent-rider bash -lc 'tmp=$(mktemp -d); scp ${SSH_OPTS:-} "$SOURCE_SSH:$SOURCE_DIR/scripts/pull-update.sh" "$tmp/"; bash "$tmp/pull-update.sh"'
+SOURCE_GIT=root@source-tailnet-host:/srv/git/agent-rider.git SOURCE_REF=master APP_DIR=/opt/agent-rider bash -lc 'command -v git >/dev/null || { sudo apt-get update && sudo apt-get install -y git; }; tmp=$(mktemp -d); git clone --depth=1 --branch "${SOURCE_REF:-master}" "$SOURCE_GIT" "$tmp/agent-rider"; bash "$tmp/agent-rider/scripts/pull-update.sh"'
 ```
 
-這個 pull updater 會在 source machine 打包 release，再把 release 和 installer 拉到 remote server 套用。
+第一次安裝和後續更新使用同一行。更新流程：
 
-## 手動 scp 流程
+1. `pull-update.sh` 在 remote server 維護 `~/.cache/agent-rider/source.git` mirror。
+2. Fetch `SOURCE_GIT`。
+3. Resolve `SOURCE_REF`（branch/tag/commit，預設 remote `HEAD`）。
+4. 用 `git archive` 從該 commit 建本機 release archive。
+5. 執行 release 裡的 `install-remote.sh` 或 `update-remote.sh`。
+6. 保留 shared data/plugins，重建 production build，切換 `/opt/agent-rider/current`。
 
-本機建立 release：
+## 固定命令
+
+第一次安裝後，可以直接呼叫目前版本裡的 updater：
 
 ```bash
-scripts/release.sh
+SOURCE_GIT=root@source-tailnet-host:/srv/git/agent-rider.git SOURCE_REF=master APP_DIR=/opt/agent-rider bash /opt/agent-rider/current/scripts/pull-update.sh
 ```
 
-上傳：
+或建立固定 command：
 
 ```bash
-scp releases/agent-rider-*.tar.gz scripts/install-remote.sh scripts/update-remote.sh scripts/pull-update.sh root@your-server:/tmp/
+sudo tee /usr/local/bin/agent-rider-git-update >/dev/null <<'SCRIPT'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+SOURCE_GIT=${SOURCE_GIT:-root@source-tailnet-host:/srv/git/agent-rider.git}
+SOURCE_REF=${SOURCE_REF:-master}
+APP_DIR=${APP_DIR:-/opt/agent-rider}
+
+if [[ -x "$APP_DIR/current/scripts/pull-update.sh" ]]; then
+  exec bash "$APP_DIR/current/scripts/pull-update.sh"
+fi
+
+tmp=$(mktemp -d)
+git clone --depth=1 --branch "$SOURCE_REF" "$SOURCE_GIT" "$tmp/agent-rider"
+exec bash "$tmp/agent-rider/scripts/pull-update.sh"
+SCRIPT
+
+sudo chmod +x /usr/local/bin/agent-rider-git-update
 ```
 
-遠端第一次安裝：
+之後更新：
 
 ```bash
-sudo APP_DIR=/opt/agent-rider bash /tmp/install-remote.sh /tmp/agent-rider-*.tar.gz
+agent-rider-git-update
 ```
 
-遠端更新：
+部署 tag 或指定 commit：
 
 ```bash
-sudo APP_DIR=/opt/agent-rider bash /tmp/update-remote.sh /tmp/agent-rider-*.tar.gz
+SOURCE_REF=v0.1.2 agent-rider-git-update
+SOURCE_REF=abc1234 agent-rider-git-update
 ```
 
-## 服務
+## Services
 
 遠端會建立兩個 systemd services：
 
@@ -102,64 +126,8 @@ VITE_ALLOWED_HOSTS=all
 sudo systemctl restart agent-rider-store agent-rider-web
 ```
 
-## scp 是否夠好
+## Legacy SCP
 
-`scp` 夠適合目前階段：
-
-- 不需要 GitHub 或任何第三方 remote。
-- release tarball 會排除 `.git`、`node_modules`、`data`，不會把本機 runtime DB 帶上去。
-- 遠端 runtime state 在 `shared/data` 和 `shared/plugins`，更新 release 不會覆蓋。
-- 遠端每次用新的 release 目錄，出問題時可以手動把 `/opt/agent-rider/current` 指回前一版。
-
-缺點：
-
-- 每次上傳完整 tarball，不是增量同步。
-- 遠端第一次或 dependency 改變時要跑 `npm ci`。
-- 多台機器時沒有中央版本紀錄。
-
-## 下一階段選項
-
-### rsync over SSH
-
-如果上傳速度成為問題，`rsync` 會比 `scp` 好用，因為它只傳差異：
-
-```bash
-rsync -az --delete \
-  --exclude .git \
-  --exclude node_modules \
-  --exclude data \
-  ./ root@your-server:/opt/agent-rider/current/
-```
-
-這適合單機開發、單機部署，但要小心 `--delete`，不要刪掉遠端想保留的檔案。
-
-### git over SSH, no GitHub
-
-不用 GitHub 也可以用 git。比較推薦這個方向作為 P2P/私有部署的下一步：
-
-1. 在 server 建 bare repo：
-
-```bash
-ssh root@your-server 'mkdir -p /srv/git && git init --bare /srv/git/agent-rider.git'
-```
-
-2. 本機加 remote 並 push：
-
-```bash
-git remote add prod root@your-server:/srv/git/agent-rider.git
-git push prod main
-```
-
-3. server 從自己的 bare repo checkout 或用 post-receive hook 觸發 deploy。
-
-這個方式仍然只走 SSH，不需要 GitHub。更新頻繁、多人協作或需要清楚版本紀錄時，比純 `scp` 更穩。
-
-### P2P git clone through Tailscale or ZeroTier
-
-如果 server 能透過 Tailscale/ZeroTier SSH 回你的開發機，也可以讓 server 直接 clone 你的本機 repo：
-
-```bash
-git clone ssh://your-user@your-tailnet-ip/path/to/agent-rider.git
-```
-
-這是真正 P2P，但前提是你的開發機要在線、SSH 權限要處理好。實務上我會先用 `scp` release，等部署變頻繁後再換成 `git over SSH` 或 Tailscale 上的 private git remote。
+`scripts/release.sh` 和 `scripts/deploy-scp.sh` 仍保留給不能用 Tailscale/git
+remote 的環境。一般部署請使用 `scripts/pull-update.sh` 的 private git remote
+流程。
