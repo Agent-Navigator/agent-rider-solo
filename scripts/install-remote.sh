@@ -9,6 +9,7 @@ Usage:
 Environment:
   APP_DIR             Install root. Default: /opt/agent-rider
   APP_USER            systemd user. Default: SUDO_USER, or root
+  WEB_HOST            Public Vite preview bind host. Default: 127.0.0.1
   WEB_PORT            Public Vite preview port. Default: 5173
   STORE_PORT          Local store backend port. Default: 5174
   BROWSE_ROOT         File browser root. Default: APP_USER home
@@ -55,11 +56,13 @@ existing_app_dir=$(read_env_value APP_DIR || true)
 APP_DIR=${APP_DIR:-${existing_app_dir:-/opt/agent-rider}}
 APP_USER=${APP_USER:-${SUDO_USER:-root}}
 APP_GROUP=${APP_GROUP:-$APP_USER}
+existing_web_host=$(read_env_value WEB_HOST || true)
 existing_web_port=$(read_env_value WEB_PORT || true)
 existing_store_port=$(read_env_value STORE_PORT || true)
 existing_browse_root=$(read_env_value BROWSE_ROOT || true)
 existing_hermes_target=$(read_env_value HERMES_TARGET || true)
 existing_allowed_hosts=$(read_env_value VITE_ALLOWED_HOSTS || true)
+WEB_HOST=${WEB_HOST:-${existing_web_host:-127.0.0.1}}
 WEB_PORT=${WEB_PORT:-${existing_web_port:-5173}}
 STORE_PORT=${STORE_PORT:-${existing_store_port:-5174}}
 HERMES_TARGET=${HERMES_TARGET:-${existing_hermes_target:-http://127.0.0.1:8789}}
@@ -238,6 +241,7 @@ cat > "$ENV_FILE" <<EOF
 APP_DIR=$APP_DIR
 HOME=$app_home
 BROWSE_ROOT=$BROWSE_ROOT
+WEB_HOST=$WEB_HOST
 STORE_PORT=$STORE_PORT
 WEB_PORT=$WEB_PORT
 HERMES_TARGET=$HERMES_TARGET

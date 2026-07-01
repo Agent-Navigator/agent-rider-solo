@@ -12,6 +12,7 @@ repo，從指定 commit 建立本機 release，然後套用。
 - `/opt/agent-rider/shared/plugins`：本地 Agent App plugins。
 - `/opt/agent-rider/shared/backups/<timestamp>`：每次更新前的 data/plugins 備份。
 - `/etc/default/agent-rider`：既有 port、browse root、Hermes target、allowed hosts 會沿用；環境變數可覆蓋。
+- 遠端 preview 預設只監聽 `127.0.0.1`，避免和 `tailscale serve` 在同一個介面搶 `5173`。
 
 ## Source machine setup
 
@@ -114,6 +115,7 @@ journalctl -u agent-rider-web -f
 
 ```bash
 WEB_PORT=5173
+WEB_HOST=127.0.0.1
 STORE_PORT=5174
 BROWSE_ROOT=/root
 HERMES_TARGET=http://127.0.0.1:8789

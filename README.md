@@ -32,6 +32,7 @@ npm run build
 - `/opt/agent-rider/shared/data`：SQLite 聊天紀錄、Conversation Card 狀態、版面設定、App 排序/改名等 store 資料。
 - `/opt/agent-rider/shared/plugins`：本地 Agent App plugins，包括 `manifest.json`、`dist/`、以及 app source。
 - `/etc/default/agent-rider`：既有 `WEB_PORT`、`STORE_PORT`、`BROWSE_ROOT`、`HERMES_TARGET`、`VITE_ALLOWED_HOSTS` 會沿用；命令列環境變數可覆蓋。
+- 遠端 preview 預設只監聽 `127.0.0.1`，讓 `tailscale serve` 代理到本機而不是搶同一個 5173 介面。
 - `/opt/agent-rider/shared/backups/<timestamp>`：每次更新前會備份 data/plugins。
 
 Release 只更新程式碼、Node dependencies、production build、systemd unit，以及第一方 build-time plugins。若 git release 內有新的 App plugin 且 remote 尚未有同名資料夾，會初次帶入；既有同名 App plugin 不會覆蓋。
@@ -170,6 +171,7 @@ sudo systemctl restart agent-rider-store agent-rider-web
 
 ```bash
 WEB_PORT=5173
+WEB_HOST=127.0.0.1
 STORE_PORT=5174
 BROWSE_ROOT=/root
 HERMES_TARGET=http://127.0.0.1:8789
