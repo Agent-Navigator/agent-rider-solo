@@ -97,12 +97,12 @@ restart_services() {
 install_packages() {
   if command -v apt-get >/dev/null 2>&1; then
     apt-get update
-    apt-get install -y ca-certificates curl gnupg tar gzip tmux build-essential python3
+    apt-get install -y ca-certificates curl git gnupg tar gzip tmux build-essential python3
     return
   fi
 
   missing=()
-  for cmd in tar gzip tmux; do
+  for cmd in git tar gzip tmux; do
     if ! command -v "$cmd" >/dev/null 2>&1; then
       missing+=("$cmd")
     fi
