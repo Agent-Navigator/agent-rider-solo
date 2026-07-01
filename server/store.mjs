@@ -111,11 +111,10 @@ function agentRiderBackgroundPrompt(agentLabel) {
   if (!AGENT_RIDER_BACKGROUND) return ''
   const background = AGENT_RIDER_BACKGROUND.replace(/\s+/g, ' ').trim()
   return [
-    'Please load the following Agent Rider platform context before helping the user.',
-    'This is background context, not the user task. Keep it in mind for future turns.',
+    'Context only:',
     background,
-    `You are connected through Agent Rider as ${agentLabel}.`,
-    'Reply briefly that Agent Rider context is loaded, then wait for the user task.',
+    `Agent Rider connection: ${agentLabel}.`,
+    'Say context loaded, then wait.',
   ].join(' ')
 }
 
