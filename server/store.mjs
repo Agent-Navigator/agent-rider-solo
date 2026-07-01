@@ -3,6 +3,7 @@
 // Uses Node's built-in node:sqlite (Node >= 22.5). No native deps to compile.
 import { createServer } from 'node:http'
 import { spawn, spawnSync } from 'node:child_process'
+import { createHmac, pbkdf2Sync, randomBytes, timingSafeEqual } from 'node:crypto'
 import { DatabaseSync } from 'node:sqlite'
 import { mkdirSync, readdirSync, statSync, readFileSync, writeFileSync, existsSync, createReadStream, accessSync, constants } from 'node:fs'
 import { dirname, join, resolve, basename, extname, normalize } from 'node:path'
@@ -356,10 +357,162 @@ function saveState({ runs = [], turns = [], sessionId = null, layout = undefined
   }
 }
 
-function sendJson(res, status, payload) {
+function sendJson(res, status, payload, headers = {}) {
   const body = JSON.stringify(payload)
-  res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
+  res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...headers })
   res.end(body)
+}
+
+// ── Page password gate ─────────────────────────────────────────────────────
+
+const PASSWORD_KV_KEY = 'page_password'
+const PASSWORD_SECRET_KV_KEY = 'page_password_session_secret'
+const PASSWORD_COOKIE = 'agent_rider_auth'
+const PASSWORD_MIN_LENGTH = 4
+const PASSWORD_ITERATIONS = 210_000
+const PASSWORD_KEYLEN = 32
+const PASSWORD_DIGEST = 'sha256'
+const PASSWORD_SESSION_MS = 30 * 24 * 60 * 60 * 1000
+
+function safeEqualText(a, b) {
+  const left = Buffer.from(String(a))
+  const right = Buffer.from(String(b))
+  return left.length === right.length && timingSafeEqual(left, right)
+}
+
+function passwordRecord() {
+  const record = parseJson(getKv(PASSWORD_KV_KEY), null)
+  if (!record || typeof record !== 'object') return null
+  if (!record.salt || !record.hash || !record.version) return null
+  return record
+}
+
+function hashPassword(password, salt, iterations = PASSWORD_ITERATIONS) {
+  return pbkdf2Sync(String(password), String(salt), iterations, PASSWORD_KEYLEN, PASSWORD_DIGEST).toString('base64url')
+}
+
+function verifyPassword(password, record = passwordRecord()) {
+  if (!record || typeof password !== 'string') return false
+  const hash = hashPassword(password, record.salt, Number(record.iterations) || PASSWORD_ITERATIONS)
+  return safeEqualText(hash, record.hash)
+}
+
+function setPasswordRecord(password) {
+  const salt = randomBytes(16).toString('base64url')
+  const record = {
+    salt,
+    hash: hashPassword(password, salt),
+    iterations: PASSWORD_ITERATIONS,
+    digest: PASSWORD_DIGEST,
+    version: randomBytes(12).toString('base64url'),
+    updatedAt: nowIso(),
+  }
+  upsertKv.run(PASSWORD_KV_KEY, JSON.stringify(record), nowIso())
+  return record
+}
+
+function sessionSecret() {
+  const existing = getKv(PASSWORD_SECRET_KV_KEY)
+  if (existing) return existing
+  const secret = randomBytes(32).toString('base64url')
+  upsertKv.run(PASSWORD_SECRET_KV_KEY, secret, nowIso())
+  return secret
+}
+
+function signAuthToken(version, expiresAt) {
+  return createHmac('sha256', sessionSecret()).update(`${version}.${expiresAt}`).digest('base64url')
+}
+
+function authCookieValue(record) {
+  const expiresAt = Date.now() + PASSWORD_SESSION_MS
+  return `${record.version}.${expiresAt}.${signAuthToken(record.version, expiresAt)}`
+}
+
+function authCookieHeader(record) {
+  return `${PASSWORD_COOKIE}=${authCookieValue(record)}; Path=/; Max-Age=${Math.floor(PASSWORD_SESSION_MS / 1000)}; HttpOnly; SameSite=Strict`
+}
+
+function clearAuthCookieHeader() {
+  return `${PASSWORD_COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict`
+}
+
+function cookies(req) {
+  return Object.fromEntries(
+    String(req.headers.cookie || '')
+      .split(';')
+      .map((part) => part.trim())
+      .filter(Boolean)
+      .map((part) => {
+        const index = part.indexOf('=')
+        if (index === -1) return [part, '']
+        return [part.slice(0, index), decodeURIComponent(part.slice(index + 1))]
+      }),
+  )
+}
+
+function isAuthorized(req) {
+  const record = passwordRecord()
+  if (!record) return true
+  const token = cookies(req)[PASSWORD_COOKIE]
+  if (!token) return false
+  const [version, expiresAtRaw, signature] = token.split('.')
+  const expiresAt = Number(expiresAtRaw)
+  if (!version || !signature || version !== record.version || !Number.isFinite(expiresAt) || expiresAt < Date.now()) return false
+  return safeEqualText(signature, signAuthToken(version, expiresAt))
+}
+
+function readJsonBody(req, limit, onDone) {
+  let body = ''
+  req.on('data', (chunk) => {
+    body += chunk
+    if (body.length > limit) req.destroy()
+  })
+  req.on('end', () => {
+    try {
+      onDone(JSON.parse(body || '{}'))
+    } catch (error) {
+      onDone(null, error)
+    }
+  })
+}
+
+function handlePasswordRoute(req, res, url) {
+  if (req.method === 'GET' && url === '/store/password/status') {
+    const enabled = Boolean(passwordRecord())
+    sendJson(res, 200, { enabled, authenticated: !enabled || isAuthorized(req), version: passwordRecord()?.version || null })
+    return true
+  }
+
+  if (req.method === 'POST' && url === '/store/password/login') {
+    readJsonBody(req, 20_000, (body, error) => {
+      if (error) return sendJson(res, 400, { error: String(error?.message || error) })
+      const record = passwordRecord()
+      if (!record) return sendJson(res, 200, { ok: true, enabled: false, authenticated: true })
+      if (!verifyPassword(body?.password, record)) return sendJson(res, 401, { error: 'Invalid password' })
+      sendJson(res, 200, { ok: true, enabled: true, authenticated: true, version: record.version }, { 'Set-Cookie': authCookieHeader(record) })
+    })
+    return true
+  }
+
+  if (req.method === 'POST' && url === '/store/password/set') {
+    readJsonBody(req, 20_000, (body, error) => {
+      if (error) return sendJson(res, 400, { error: String(error?.message || error) })
+      const nextPassword = String(body?.nextPassword || '')
+      if (nextPassword.length < PASSWORD_MIN_LENGTH) return sendJson(res, 400, { error: `Password must be at least ${PASSWORD_MIN_LENGTH} characters` })
+      const current = passwordRecord()
+      if (current && !verifyPassword(body?.currentPassword, current)) return sendJson(res, 401, { error: 'Current password is incorrect' })
+      const next = setPasswordRecord(nextPassword)
+      sendJson(res, 200, { ok: true, enabled: true, authenticated: true, version: next.version }, { 'Set-Cookie': authCookieHeader(next) })
+    })
+    return true
+  }
+
+  if (req.method === 'POST' && url === '/store/password/logout') {
+    sendJson(res, 200, { ok: true }, { 'Set-Cookie': clearAuthCookieHeader() })
+    return true
+  }
+
+  return false
 }
 
 // ── Workspace filesystem browsing ──────────────────────────────────────────
@@ -745,6 +898,11 @@ function attachTerminalSocket(server) {
   const terminalWss = new WebSocketServer({ server, path: '/store/terminal/ws' })
 
   terminalWss.on('connection', (socket, req) => {
+    if (!isAuthorized(req)) {
+      socket.close(1008, 'locked')
+      return
+    }
+
     const requestUrl = new URL(req.url || '/store/terminal/ws', 'http://localhost')
     const cwd = safeResolve(requestUrl.searchParams.get('cwd') || DEFAULT_CWD) || DEFAULT_CWD
     const { cols, rows } = parseTerminalSize(requestUrl.searchParams)
@@ -855,6 +1013,13 @@ function attachTerminalSocket(server) {
 
 const server = createServer((req, res) => {
   const url = (req.url || '').split('?')[0]
+
+  if (handlePasswordRoute(req, res, url)) return
+
+  if (!isAuthorized(req)) {
+    sendJson(res, 401, { error: 'locked' })
+    return
+  }
 
   // Static mount for built Agent Apps — served same-origin so they need no
   // external URL and inherit no frame-blocking headers.
