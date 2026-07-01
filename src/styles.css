@@ -117,6 +117,122 @@ button { cursor: pointer; }
   margin-top: 0;
 }
 
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  min-width: 0;
+}
+
+.topbar-button {
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 999px;
+  padding: 7px 11px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.topbar-button:hover:not(:disabled) {
+  border-color: rgba(121, 185, 255, 0.42);
+  background: rgba(121, 185, 255, 0.08);
+}
+
+.topbar-button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.password-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(5, 10, 18, 0.76);
+  backdrop-filter: blur(14px);
+}
+
+.password-panel {
+  width: min(420px, 100%);
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 14px;
+  background: rgba(9, 15, 26, 0.98);
+  box-shadow: var(--shadow);
+}
+
+.password-panel h2 {
+  margin: 2px 0 0;
+  font-size: 1.05rem;
+  letter-spacing: 0;
+}
+
+.password-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.password-field {
+  display: grid;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.password-field input {
+  width: 100%;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 10px;
+  padding: 10px 11px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+  outline: none;
+}
+
+.password-field input:focus {
+  border-color: rgba(121, 185, 255, 0.58);
+  box-shadow: 0 0 0 3px rgba(121, 185, 255, 0.12);
+}
+
+.password-error {
+  border: 1px solid rgba(239, 109, 109, 0.28);
+  border-radius: 10px;
+  padding: 9px 10px;
+  background: rgba(239, 109, 109, 0.10);
+  color: #ffd6d6;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.password-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.password-secondary {
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 999px;
+  padding: 9px 12px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.password-submit {
+  min-width: 126px;
+}
+
 .pill,
 .chip,
 .tag {

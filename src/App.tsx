@@ -37,12 +37,17 @@ import {
   listApps,
   setAppOrder,
   renameApp,
+  loadPasswordStatus,
+  loginPagePassword,
+  setPagePassword,
+  logoutPagePassword,
   type FsListing,
   type FsFilePreview,
   type AgentApp,
   type AppListing,
   type AppWarning,
   type WorkspacePanelState,
+  type PasswordStatus,
 } from './store'
 import { plugins, type AgentRiderPlugin } from '../plugins'
 import { WebView } from '../plugins/WebView'
@@ -1704,7 +1709,7 @@ const EMPTY_APP_LISTING: AppListing = { apps: [], warnings: [], hash: '0' }
  * app's iframe is never disturbed by polling. Returns a `reorder` that persists a
  * new global order server-side.
  */
-function useAgentApps(): {
+function useAgentApps(enabled: boolean): {
   listing: AppListing
   reorder: (order: string[]) => void
   rename: (slug: string, label: string) => void
@@ -1713,6 +1718,7 @@ function useAgentApps(): {
   const hashRef = useRef('0')
 
   useEffect(() => {
+    if (!enabled) return
     let cancelled = false
     async function poll() {
       const next = await listApps()
@@ -1729,7 +1735,7 @@ function useAgentApps(): {
       window.clearInterval(id)
       window.removeEventListener('focus', onFocus)
     }
-  }, [])
+  }, [enabled])
 
   function reorder(order: string[]) {
     void setAppOrder(order).then((next) => {
@@ -2237,11 +2243,167 @@ function WebTerminal({
               else terminalRef.current?.clear()
             }}
           >
-            {agentTerminal ? 'Restart' : 'Clear'}
+            {agentTerminal ? 'Refresh' : 'Clear'}
           </button>
         </div>
       </div>
     </section>
+  )
+}
+
+function PasswordUnlock({ onUnlocked }: { onUnlocked: (status: PasswordStatus) => void }) {
+  const [password, setPassword] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function submit(event: FormEvent) {
+    event.preventDefault()
+    if (!password || busy) return
+    setBusy(true)
+    setError(null)
+    const result = await loginPagePassword(password)
+    setBusy(false)
+    if ('error' in result) {
+      setError(result.error)
+      return
+    }
+    setPassword('')
+    onUnlocked(result)
+  }
+
+  return (
+    <div className="password-overlay">
+      <form className="password-panel" onSubmit={submit}>
+        <div>
+          <div className="eyebrow">Agent Rider</div>
+          <h2>Page Locked</h2>
+        </div>
+        <label className="password-field">
+          <span>Password</span>
+          <input
+            type="password"
+            value={password}
+            autoFocus
+            onChange={(event) => setPassword(event.target.value)}
+            autoComplete="current-password"
+          />
+        </label>
+        {error ? <div className="password-error">{error}</div> : null}
+        <button type="submit" className="send-button password-submit" disabled={!password || busy}>
+          {busy ? 'Unlocking…' : 'Unlock'}
+        </button>
+      </form>
+    </div>
+  )
+}
+
+function PasswordDialog({
+  status,
+  onClose,
+  onStatusChange,
+}: {
+  status: PasswordStatus
+  onClose: () => void
+  onStatusChange: (status: PasswordStatus) => void
+}) {
+  const [currentPassword, setCurrentPassword] = useState('')
+  const [nextPassword, setNextPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const title = status.enabled ? 'Change Password' : 'Set Password'
+
+  async function submit(event: FormEvent) {
+    event.preventDefault()
+    if (busy) return
+    if (nextPassword !== confirmPassword) {
+      setError('New passwords do not match')
+      return
+    }
+    setBusy(true)
+    setError(null)
+    const result = await setPagePassword(status.enabled ? currentPassword : '', nextPassword)
+    setBusy(false)
+    if ('error' in result) {
+      setError(result.error)
+      return
+    }
+    onStatusChange(result)
+    onClose()
+  }
+
+  async function lockPage() {
+    if (!status.enabled || busy) return
+    setBusy(true)
+    await logoutPagePassword()
+    setBusy(false)
+    onStatusChange({ ...status, authenticated: false })
+    onClose()
+  }
+
+  return (
+    <div className="password-overlay" role="dialog" aria-modal="true" aria-label={title}>
+      <form className="password-panel" onSubmit={submit}>
+        <div className="password-head">
+          <div>
+            <div className="eyebrow">Security</div>
+            <h2>{title}</h2>
+          </div>
+          <button type="button" className="card-close" onClick={onClose} aria-label="Close password dialog">
+            ×
+          </button>
+        </div>
+
+        {status.enabled ? (
+          <label className="password-field">
+            <span>Current password</span>
+            <input
+              type="password"
+              value={currentPassword}
+              onChange={(event) => setCurrentPassword(event.target.value)}
+              autoComplete="current-password"
+            />
+          </label>
+        ) : null}
+
+        <label className="password-field">
+          <span>New password</span>
+          <input
+            type="password"
+            value={nextPassword}
+            onChange={(event) => setNextPassword(event.target.value)}
+            autoComplete="new-password"
+          />
+        </label>
+
+        <label className="password-field">
+          <span>Confirm password</span>
+          <input
+            type="password"
+            value={confirmPassword}
+            onChange={(event) => setConfirmPassword(event.target.value)}
+            autoComplete="new-password"
+          />
+        </label>
+
+        {error ? <div className="password-error">{error}</div> : null}
+
+        <div className="password-actions">
+          {status.enabled ? (
+            <button type="button" className="password-secondary" onClick={lockPage} disabled={busy}>
+              Lock page
+            </button>
+          ) : null}
+          <button
+            type="submit"
+            className="send-button password-submit"
+            disabled={busy || !nextPassword || !confirmPassword || (status.enabled && !currentPassword)}
+          >
+            {busy ? 'Saving…' : status.enabled ? 'Change password' : 'Set password'}
+          </button>
+        </div>
+      </form>
+    </div>
   )
 }
 
@@ -2391,6 +2553,8 @@ export default function App() {
   const [sessionInfoText, setSessionInfoText] = useState('No Hermes session yet')
   const [error, setError] = useState<string | null>(null)
   const [workspaceRoot, setWorkspaceRoot] = useState(DEFAULT_WORKSPACE_CWD)
+  const [passwordStatus, setPasswordStatus] = useState<PasswordStatus | null>(null)
+  const [passwordDialogOpen, setPasswordDialogOpen] = useState(false)
 
   // Per-conversation UI state.
   const [collapsedIds, setCollapsedIds] = useState<Set<string>>(new Set())
@@ -2424,7 +2588,7 @@ export default function App() {
   // Collapsed/full-window chrome state for Tools and Apps, keyed by panel id.
   const [panelStates, setPanelStates] = useState<Record<string, WorkspacePanelState>>({})
   // Runtime Agent Apps (auto-discovered from the store backend).
-  const { listing: appListing, reorder: reorderApps, rename: renameAppLabel } = useAgentApps()
+  const { listing: appListing, reorder: reorderApps, rename: renameAppLabel } = useAgentApps(Boolean(passwordStatus?.authenticated))
 
   const terminalOpen = panelOrder.includes('terminal')
   const openPluginIds = useMemo(
@@ -2736,6 +2900,16 @@ export default function App() {
   }
 
   useEffect(() => {
+    let cancelled = false
+    void loadPasswordStatus().then((status) => {
+      if (!cancelled) setPasswordStatus(status)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
     const bridge = new HermesBridge({ title: DEFAULT_TITLE, cwd: DEFAULT_CWD, source: 'web' })
     bridgeRef.current = bridge
 
@@ -2879,6 +3053,7 @@ export default function App() {
 
   // Hydrate persisted interaction data from the local SQLite backend on mount.
   useEffect(() => {
+    if (!passwordStatus?.authenticated || hydratedRef.current) return
     let cancelled = false
     void loadPersistedState().then((state) => {
       if (cancelled) return
@@ -2945,11 +3120,11 @@ export default function App() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [passwordStatus?.authenticated])
 
   // Debounced auto-save of runs/turns + layout to the local SQLite backend.
   useEffect(() => {
-    if (!hydratedRef.current) return
+    if (!hydratedRef.current || !passwordStatus?.authenticated) return
     const handle = setTimeout(() => {
       void persistState(runs, turns, sessionId, {
         panelOrder,
@@ -2964,7 +3139,7 @@ export default function App() {
       })
     }, 700)
     return () => clearTimeout(handle)
-  }, [runs, turns, sessionId, panelOrder, panelColumns, layoutOrder, workspaceColumns, sidebarCollapsed, closedRunIds, collapsedIds, metaCollapsedIds, panelStates])
+  }, [runs, turns, sessionId, panelOrder, panelColumns, layoutOrder, workspaceColumns, sidebarCollapsed, closedRunIds, collapsedIds, metaCollapsedIds, panelStates, passwordStatus?.authenticated])
 
   async function flushQueue() {
     if (activeTurnRef.current) return
@@ -3240,10 +3415,31 @@ export default function App() {
     <div className={`app-shell ${hasContent ? 'has-content' : 'blank'} ${workspaceColumns === 2 ? 'full-width' : ''}`}>
       <header className="topbar card">
         <h1>Agent Rider</h1>
-        <div className="status-stack">
-          <StatusPill state={connectionState} detail={headerStatusText(connectionState, connectionDetail)} />
+        <div className="topbar-actions">
+          <button
+            type="button"
+            className="topbar-button"
+            onClick={() => setPasswordDialogOpen(true)}
+            disabled={!passwordStatus}
+            title={passwordStatus?.enabled ? 'Change page password' : 'Set page password'}
+          >
+            Password
+          </button>
+          <div className="status-stack">
+            <StatusPill state={connectionState} detail={headerStatusText(connectionState, connectionDetail)} />
+          </div>
         </div>
       </header>
+
+      {passwordDialogOpen && passwordStatus ? (
+        <PasswordDialog
+          status={passwordStatus}
+          onClose={() => setPasswordDialogOpen(false)}
+          onStatusChange={setPasswordStatus}
+        />
+      ) : null}
+
+      {passwordStatus && !passwordStatus.authenticated ? <PasswordUnlock onUnlocked={setPasswordStatus} /> : null}
 
       <main className="main-stage">
         <div className={`main-layout ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>

@@ -66,6 +66,59 @@ export async function persistState(
   }
 }
 
+// ── Page password gate ─────────────────────────────────────────────────────
+
+export interface PasswordStatus {
+  enabled: boolean
+  authenticated: boolean
+  version: string | null
+}
+
+function normalizePasswordStatus(data: Partial<PasswordStatus> | null): PasswordStatus {
+  return {
+    enabled: Boolean(data?.enabled),
+    authenticated: Boolean(data?.authenticated),
+    version: typeof data?.version === 'string' ? data.version : null,
+  }
+}
+
+async function passwordJson(path: string, body?: Record<string, string>): Promise<PasswordStatus | { error: string }> {
+  try {
+    const res = await fetch(path, {
+      method: body ? 'POST' : 'GET',
+      headers: body ? { 'Content-Type': 'application/json' } : undefined,
+      body: body ? JSON.stringify(body) : undefined,
+    })
+    const data = (await res.json()) as Partial<PasswordStatus> & { error?: string }
+    if (!res.ok || data.error) return { error: data.error || 'Password request failed' }
+    return normalizePasswordStatus(data)
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : String(error) }
+  }
+}
+
+export async function loadPasswordStatus(): Promise<PasswordStatus> {
+  const result = await passwordJson('/store/password/status')
+  if ('error' in result) return { enabled: false, authenticated: true, version: null }
+  return result
+}
+
+export async function loginPagePassword(password: string): Promise<PasswordStatus | { error: string }> {
+  return passwordJson('/store/password/login', { password })
+}
+
+export async function setPagePassword(currentPassword: string, nextPassword: string): Promise<PasswordStatus | { error: string }> {
+  return passwordJson('/store/password/set', { currentPassword, nextPassword })
+}
+
+export async function logoutPagePassword(): Promise<void> {
+  try {
+    await fetch('/store/password/logout', { method: 'POST' })
+  } catch {
+    // ignore — the UI can still return to the locked state locally
+  }
+}
+
 export interface FsEntry {
   name: string
   path: string
