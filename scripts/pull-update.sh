@@ -4,8 +4,8 @@ set -Eeuo pipefail
 usage() {
   cat <<'USAGE'
 Usage:
-  SOURCE_GIT=root@dev-tailnet:/srv/git/agent-rider.git bash scripts/pull-update.sh
-  SOURCE_GIT=root@dev-tailnet:/srv/git/agent-rider.git SOURCE_REF=master APP_DIR=/opt/agent-rider bash scripts/pull-update.sh
+  SOURCE_GIT=root@YOUR-SOURCE-TAILNET-HOST:/srv/git/agent-rider.git bash scripts/pull-update.sh
+  SOURCE_GIT=root@YOUR-SOURCE-TAILNET-HOST:/srv/git/agent-rider.git SOURCE_REF=master APP_DIR=/opt/agent-rider bash scripts/pull-update.sh
 
 Environment:
   SOURCE_GIT          SSH git remote for Agent Rider. Required, or pass as arg 1.

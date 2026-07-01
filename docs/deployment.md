@@ -41,7 +41,7 @@ Remote server 只會看到 private git remote 裡已 push 的 commit。
 Tailscale hostname 或 Tailscale IP：
 
 ```bash
-SOURCE_GIT=root@source-tailnet-host:/srv/git/agent-rider.git SOURCE_REF=master APP_DIR=/opt/agent-rider bash -lc 'command -v git >/dev/null || { sudo apt-get update && sudo apt-get install -y git; }; tmp=$(mktemp -d); git clone --depth=1 --branch "${SOURCE_REF:-master}" "$SOURCE_GIT" "$tmp/agent-rider"; bash "$tmp/agent-rider/scripts/pull-update.sh"'
+SOURCE_GIT=root@YOUR-SOURCE-TAILNET-HOST:/srv/git/agent-rider.git SOURCE_REF=master APP_DIR=/opt/agent-rider bash -lc ': "${SOURCE_GIT:?replace YOUR-SOURCE-TAILNET-HOST with the actual Tailscale host}"; command -v git >/dev/null || { sudo apt-get update && sudo apt-get install -y git; }; tmp=$(mktemp -d); git clone --depth=1 --branch "${SOURCE_REF:-master}" "$SOURCE_GIT" "$tmp/agent-rider" && bash "$tmp/agent-rider/scripts/pull-update.sh"'
 ```
 
 第一次安裝和後續更新使用同一行。更新流程：
@@ -58,7 +58,7 @@ SOURCE_GIT=root@source-tailnet-host:/srv/git/agent-rider.git SOURCE_REF=master A
 第一次安裝後，可以直接呼叫目前版本裡的 updater：
 
 ```bash
-SOURCE_GIT=root@source-tailnet-host:/srv/git/agent-rider.git SOURCE_REF=master APP_DIR=/opt/agent-rider bash /opt/agent-rider/current/scripts/pull-update.sh
+SOURCE_GIT=root@YOUR-SOURCE-TAILNET-HOST:/srv/git/agent-rider.git SOURCE_REF=master APP_DIR=/opt/agent-rider bash /opt/agent-rider/current/scripts/pull-update.sh
 ```
 
 或建立固定 command：
@@ -68,7 +68,7 @@ sudo tee /usr/local/bin/agent-rider-git-update >/dev/null <<'SCRIPT'
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-SOURCE_GIT=${SOURCE_GIT:-root@source-tailnet-host:/srv/git/agent-rider.git}
+SOURCE_GIT=${SOURCE_GIT:-root@YOUR-SOURCE-TAILNET-HOST:/srv/git/agent-rider.git}
 SOURCE_REF=${SOURCE_REF:-master}
 APP_DIR=${APP_DIR:-/opt/agent-rider}
 

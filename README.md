@@ -64,7 +64,7 @@ git push tailnet master --tags
 Tailscale hostname 或 Tailscale IP。
 
 ```bash
-SOURCE_GIT=root@source-tailnet-host:/srv/git/agent-rider.git SOURCE_REF=master APP_DIR=/opt/agent-rider bash -lc 'command -v git >/dev/null || { sudo apt-get update && sudo apt-get install -y git; }; tmp=$(mktemp -d); git clone --depth=1 --branch "${SOURCE_REF:-master}" "$SOURCE_GIT" "$tmp/agent-rider"; bash "$tmp/agent-rider/scripts/pull-update.sh"'
+SOURCE_GIT=root@YOUR-SOURCE-TAILNET-HOST:/srv/git/agent-rider.git SOURCE_REF=master APP_DIR=/opt/agent-rider bash -lc ': "${SOURCE_GIT:?replace YOUR-SOURCE-TAILNET-HOST with the actual Tailscale host}"; command -v git >/dev/null || { sudo apt-get update && sudo apt-get install -y git; }; tmp=$(mktemp -d); git clone --depth=1 --branch "${SOURCE_REF:-master}" "$SOURCE_GIT" "$tmp/agent-rider" && bash "$tmp/agent-rider/scripts/pull-update.sh"'
 ```
 
 這一行可用於第一次安裝，也可用於之後更新。`pull-update.sh` 會：
@@ -95,7 +95,7 @@ SOURCE_GIT=root@source-tailnet-host:/srv/git/agent-rider.git SOURCE_REF=master A
 第一次安裝完成後，也可以直接用 current 裡的 updater：
 
 ```bash
-SOURCE_GIT=root@source-tailnet-host:/srv/git/agent-rider.git SOURCE_REF=master APP_DIR=/opt/agent-rider bash /opt/agent-rider/current/scripts/pull-update.sh
+SOURCE_GIT=root@YOUR-SOURCE-TAILNET-HOST:/srv/git/agent-rider.git SOURCE_REF=master APP_DIR=/opt/agent-rider bash /opt/agent-rider/current/scripts/pull-update.sh
 ```
 
 建議在 remote server 放一個固定命令：
@@ -105,7 +105,7 @@ sudo tee /usr/local/bin/agent-rider-git-update >/dev/null <<'SCRIPT'
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-SOURCE_GIT=${SOURCE_GIT:-root@source-tailnet-host:/srv/git/agent-rider.git}
+SOURCE_GIT=${SOURCE_GIT:-root@YOUR-SOURCE-TAILNET-HOST:/srv/git/agent-rider.git}
 SOURCE_REF=${SOURCE_REF:-master}
 APP_DIR=${APP_DIR:-/opt/agent-rider}
 
