@@ -34,13 +34,36 @@ if [[ $EUID -ne 0 ]]; then
 fi
 
 APP_NAME=${APP_NAME:-agent-rider}
-APP_DIR=${APP_DIR:-/opt/agent-rider}
+ENV_FILE=${ENV_FILE:-/etc/default/agent-rider}
+
+read_env_value() {
+  local key=$1
+  [[ -f "$ENV_FILE" ]] || return 1
+  awk -F= -v key="$key" '
+    $0 ~ /^[[:space:]]*#/ { next }
+    $1 == key {
+      value = substr($0, index($0, "=") + 1)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+      gsub(/^"|"$/, "", value)
+      gsub(/^'\''|'\''$/, "", value)
+      print value
+    }
+  ' "$ENV_FILE" | tail -n 1
+}
+
+existing_app_dir=$(read_env_value APP_DIR || true)
+APP_DIR=${APP_DIR:-${existing_app_dir:-/opt/agent-rider}}
 APP_USER=${APP_USER:-${SUDO_USER:-root}}
 APP_GROUP=${APP_GROUP:-$APP_USER}
-WEB_PORT=${WEB_PORT:-5173}
-STORE_PORT=${STORE_PORT:-5174}
-HERMES_TARGET=${HERMES_TARGET:-http://127.0.0.1:8789}
-VITE_ALLOWED_HOSTS=${VITE_ALLOWED_HOSTS:-all}
+existing_web_port=$(read_env_value WEB_PORT || true)
+existing_store_port=$(read_env_value STORE_PORT || true)
+existing_browse_root=$(read_env_value BROWSE_ROOT || true)
+existing_hermes_target=$(read_env_value HERMES_TARGET || true)
+existing_allowed_hosts=$(read_env_value VITE_ALLOWED_HOSTS || true)
+WEB_PORT=${WEB_PORT:-${existing_web_port:-5173}}
+STORE_PORT=${STORE_PORT:-${existing_store_port:-5174}}
+HERMES_TARGET=${HERMES_TARGET:-${existing_hermes_target:-http://127.0.0.1:8789}}
+VITE_ALLOWED_HOSTS=${VITE_ALLOWED_HOSTS:-${existing_allowed_hosts:-all}}
 
 if ! id "$APP_USER" >/dev/null 2>&1; then
   echo "APP_USER '$APP_USER' does not exist." >&2
@@ -51,7 +74,25 @@ app_home=$(getent passwd "$APP_USER" | cut -d: -f6)
 if [[ -z "$app_home" ]]; then
   app_home=/root
 fi
-BROWSE_ROOT=${BROWSE_ROOT:-$app_home}
+BROWSE_ROOT=${BROWSE_ROOT:-${existing_browse_root:-$app_home}}
+
+systemd_available() {
+  command -v systemctl >/dev/null 2>&1 && [[ -d /run/systemd/system ]]
+}
+
+stop_existing_services() {
+  if systemd_available; then
+    systemctl stop agent-rider-web.service agent-rider-store.service 2>/dev/null || true
+  fi
+}
+
+restart_services() {
+  if systemd_available; then
+    systemctl daemon-reload
+    systemctl enable agent-rider-store.service agent-rider-web.service
+    systemctl restart agent-rider-store.service agent-rider-web.service
+  fi
+}
 
 install_packages() {
   if command -v apt-get >/dev/null 2>&1; then
@@ -109,14 +150,82 @@ fi
 
 releases_dir="$APP_DIR/releases"
 shared_dir="$APP_DIR/shared"
+shared_data_dir="$shared_dir/data"
+shared_plugins_dir="$shared_dir/plugins"
 release_dir="$releases_dir/$release_name"
 if [[ -e "$release_dir" ]]; then
   release_dir="$releases_dir/${release_name}-$(date -u +%Y%m%dT%H%M%SZ)"
 fi
 
-mkdir -p "$releases_dir" "$shared_dir/data" "$shared_dir/logs" "$release_dir"
+backup_shared_state() {
+  local backup_root="$shared_dir/backups"
+  local backup_dir="$backup_root/$(date -u +%Y%m%dT%H%M%SZ)"
+  local has_state=0
+  [[ -e "$shared_data_dir" ]] && has_state=1
+  [[ -e "$shared_plugins_dir" ]] && has_state=1
+  (( has_state == 1 )) || return 0
+
+  mkdir -p "$backup_dir"
+  [[ -e "$shared_data_dir" ]] && cp -a "$shared_data_dir" "$backup_dir/data"
+  [[ -e "$shared_plugins_dir" ]] && cp -a "$shared_plugins_dir" "$backup_dir/plugins"
+  echo "Local state backup: $backup_dir"
+}
+
+replace_shared_path() {
+  local src=$1
+  local dest=$2
+  rm -rf "$dest"
+  cp -a "$src" "$dest"
+}
+
+sync_plugins() {
+  local release_plugins=$1
+  local shared_plugins=$2
+  [[ -d "$release_plugins" ]] || return 0
+  mkdir -p "$shared_plugins"
+
+  while IFS= read -r -d '' src; do
+    cp -a "$src" "$shared_plugins/"
+  done < <(find "$release_plugins" -mindepth 1 -maxdepth 1 -type f -print0)
+
+  while IFS= read -r -d '' src; do
+    local name dest
+    name=$(basename "$src")
+    [[ "$name" == .* ]] && continue
+    dest="$shared_plugins/$name"
+
+    if [[ "$name" == _* ]]; then
+      replace_shared_path "$src" "$dest"
+    elif [[ -f "$src/manifest.json" ]]; then
+      if [[ ! -e "$dest" ]]; then
+        cp -a "$src" "$dest"
+      else
+        echo "Preserving local App plugin: plugins/$name"
+      fi
+    else
+      replace_shared_path "$src" "$dest"
+    fi
+  done < <(find "$release_plugins" -mindepth 1 -maxdepth 1 -type d -print0)
+}
+
+mkdir -p "$releases_dir" "$shared_data_dir" "$shared_plugins_dir" "$shared_dir/logs" "$release_dir"
 tar -xzf "$archive" -C "$release_dir"
-ln -sfn "$shared_dir/data" "$release_dir/data"
+
+services_were_stopped=0
+on_error() {
+  if (( services_were_stopped == 1 )) && systemd_available; then
+    systemctl start agent-rider-store.service agent-rider-web.service 2>/dev/null || true
+  fi
+}
+trap on_error ERR
+
+stop_existing_services
+services_were_stopped=1
+backup_shared_state
+sync_plugins "$release_dir/plugins" "$shared_plugins_dir"
+rm -rf "$release_dir/data" "$release_dir/plugins"
+ln -sfn "$shared_data_dir" "$release_dir/data"
+ln -sfn "$shared_plugins_dir" "$release_dir/plugins"
 
 cd "$release_dir"
 npm ci
@@ -125,7 +234,7 @@ npm run build
 ln -sfn "$release_dir" "$APP_DIR/current"
 chown -R "$APP_USER:$APP_GROUP" "$APP_DIR"
 
-cat > /etc/default/agent-rider <<EOF
+cat > "$ENV_FILE" <<EOF
 APP_DIR=$APP_DIR
 HOME=$app_home
 BROWSE_ROOT=$BROWSE_ROOT
@@ -174,11 +283,13 @@ RestartSec=3
 WantedBy=multi-user.target
 EOF
 
-systemctl daemon-reload
-systemctl enable agent-rider-store.service agent-rider-web.service
-systemctl restart agent-rider-store.service agent-rider-web.service
+restart_services
+services_were_stopped=0
+trap - ERR
 
 echo "Agent Rider deployed to $release_dir"
 echo "Current symlink: $APP_DIR/current"
+echo "Preserved data: $shared_data_dir"
+echo "Preserved App plugins: $shared_plugins_dir"
 echo "Web UI: http://<server>:$WEB_PORT"
 echo "Check status: systemctl status agent-rider-web agent-rider-store"

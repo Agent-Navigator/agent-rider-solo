@@ -80,6 +80,9 @@ const apiProxy = {
 
 export default defineConfig({
   plugins: [react()],
+  resolve: {
+    preserveSymlinks: true,
+  },
   server: {
     host: true,
     port: 5173,

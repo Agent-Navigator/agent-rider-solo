@@ -55,6 +55,7 @@ scp "${ssh_opts[@]}" \
   "$archive" \
   "$SCRIPT_DIR/install-remote.sh" \
   "$SCRIPT_DIR/update-remote.sh" \
+  "$SCRIPT_DIR/pull-update.sh" \
   "$target:$remote_tmp/"
 
 if ssh "${ssh_opts[@]}" "$target" "test -e $quoted_app_dir/current"; then
