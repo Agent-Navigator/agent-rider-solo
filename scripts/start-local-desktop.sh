@@ -9,5 +9,5 @@ exec xpra start-desktop ":${DISPLAY_NUMBER}" \
   --html=on \
   --bind-tcp="${DESKTOP_BIND}:${DESKTOP_PORT}" \
   --start-child="$(dirname "$0")/start-gnome-flashback-session.sh" \
-  --daemon=no \
+  --daemon=yes \
   --exit-with-children=no
