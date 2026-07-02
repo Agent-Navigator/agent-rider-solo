@@ -18,6 +18,16 @@ export interface CreateSessionOptions {
   source?: string
 }
 
+export class HermesActiveStreamError extends Error {
+  constructor(
+    message: string,
+    public readonly activeStreamId: string,
+  ) {
+    super(message)
+    this.name = 'HermesActiveStreamError'
+  }
+}
+
 const DEFAULT_CWD = '/root/agent-work/DEV/agent-rider'
 const AGENT_RIDER_BACKGROUND = agentRiderBackground.trim()
 
@@ -120,6 +130,20 @@ export class HermesBridge {
 
     if (!res.ok) {
       const body = await res.text().catch(() => '')
+      if (res.status === 409 && body) {
+        try {
+          const payload = JSON.parse(body) as { active_stream_id?: unknown; error?: unknown }
+          const activeStreamId = String(payload.active_stream_id ?? '').trim()
+          if (activeStreamId) {
+            throw new HermesActiveStreamError(
+              String(payload.error ?? 'session already has an active stream'),
+              activeStreamId,
+            )
+          }
+        } catch (error) {
+          if (error instanceof HermesActiveStreamError) throw error
+        }
+      }
       throw new Error(`chat/start failed (${res.status})${body ? ': ' + body : ''}`)
     }
 

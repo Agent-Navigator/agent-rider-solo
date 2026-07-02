@@ -27,7 +27,7 @@ import typescript from 'highlight.js/lib/languages/typescript'
 import xml from 'highlight.js/lib/languages/xml'
 import yaml from 'highlight.js/lib/languages/yaml'
 import '@xterm/xterm/css/xterm.css'
-import { HermesBridge, type HermesConnectionState } from './hermesBridge'
+import { HermesActiveStreamError, HermesBridge, type HermesConnectionState } from './hermesBridge'
 import {
   loadPersistedState,
   persistState,
@@ -2430,7 +2430,11 @@ function PasswordDialog({
 
 function isBusyError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error)
-  return /session busy|subagent still running|busy/i.test(message)
+  return /session busy|subagent still running|busy|active stream/i.test(message)
+}
+
+function isThinkingPlaceholder(response: string) {
+  return response === 'Thinking…' || response === 'Thinking...'
 }
 
 function WorkspacePicker({
@@ -2562,6 +2566,7 @@ export default function App() {
   const hydratedRef = useRef(false)
   const queuedPromptsRef = useRef<QueuedPromptEntry[]>([])
   const assistantBufferRef = useRef('')
+  const turnsRef = useRef<TurnItem[]>([])
   const [activeHermesTurnId, setActiveHermesTurnId] = useState<string | null>(null)
   const [activeHermesStreamId, setActiveHermesStreamId] = useState<string | null>(null)
   // Each conversation (run) keeps its own Hermes session for multi-turn context.
@@ -2612,6 +2617,10 @@ export default function App() {
   const [panelStates, setPanelStates] = useState<Record<string, WorkspacePanelState>>({})
   // Runtime Agent Apps (auto-discovered from the store backend).
   const { listing: appListing, reorder: reorderApps, rename: renameAppLabel } = useAgentApps(Boolean(passwordStatus?.authenticated))
+
+  useEffect(() => {
+    turnsRef.current = turns
+  }, [turns])
 
   const terminalOpen = panelOrder.includes('terminal')
   const openPluginIds = useMemo(
@@ -3175,6 +3184,39 @@ export default function App() {
     await startTurn(nextEntry)
   }
 
+  function recoverActiveHermesStream(entry: QueuedPromptEntry, activeStreamId: string) {
+    const bridge = bridgeRef.current
+    const ownerTurn = turnsRef.current.find((turn) =>
+      turn.runId === entry.runId && turn.id !== entry.turnId && turn.status === 'running')
+
+    queuedPromptsRef.current.push(entry)
+    setTurns((current) =>
+      current.map((turn) =>
+        turn.id === entry.turnId
+          ? { ...turn, status: 'queued', response: 'Queued until the active Hermes stream finishes...' }
+          : turn,
+      ),
+    )
+
+    activeTurnRef.current = ownerTurn?.id ?? null
+    activeRunRef.current = entry.runId
+    assistantBufferRef.current = ownerTurn && !isThinkingPlaceholder(ownerTurn.response) ? ownerTurn.response : ''
+    setActiveHermesTurnId(ownerTurn?.id ?? null)
+    setActiveHermesStreamId(activeStreamId)
+    setConnectionState('busy')
+    setConnectionDetail('Reconnected to active Hermes stream...')
+    setRuns((current) => current.map((item) => (item.id === entry.runId ? { ...item, jobStatus: 'running' } : item)))
+    if (bridge?.reconnectStream(activeStreamId)) return
+
+    activeTurnRef.current = null
+    activeRunRef.current = null
+    assistantBufferRef.current = ''
+    setActiveHermesTurnId(null)
+    setActiveHermesStreamId(null)
+    setConnectionState('error')
+    setConnectionDetail('Hermes reported an active stream, but it could not be reconnected.')
+  }
+
   async function startTurn(entry: QueuedPromptEntry) {
     const bridge = bridgeRef.current
     if (!bridge) return
@@ -3202,6 +3244,11 @@ export default function App() {
       setTurns((current) => current.map((item) => (item.id === turnId ? { ...item, status: 'running', response: 'Thinking…' } : item)))
       setRuns((current) => current.map((item) => (item.id === runId ? { ...item, jobStatus: 'running' } : item)))
     } catch (error) {
+      if (error instanceof HermesActiveStreamError) {
+        recoverActiveHermesStream(entry, error.activeStreamId)
+        return
+      }
+
       if (isBusyError(error)) {
         queuedPromptsRef.current.push(entry)
         setTurns((current) => current.map((item) => (item.id === turnId ? { ...item, status: 'queued', response: 'Queued until Hermes finishes the current turn…' } : item)))
