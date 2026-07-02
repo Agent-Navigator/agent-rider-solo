@@ -2,7 +2,7 @@ import type { AgentRiderPlugin } from '../types'
 import { WebView } from '../WebView'
 import { installLocalDesktopInputBridge } from './inputBridge'
 
-// Local XFCE desktop rendered through xpra's HTML client.
+// Local GNOME desktop rendered through xpra's HTML client.
 // The Vite dev/preview server proxies /desktop -> 127.0.0.1:14500.
 const LOCAL_DESKTOP_SRC = '/desktop/?sharing=true&steal=true&insecure=true&clipboard=false'
 const LOCAL_DESKTOP_ALLOW = 'fullscreen; pointer-lock; microphone'
