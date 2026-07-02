@@ -1,0 +1,71 @@
+# TODO — KasmVNC Local Desktop upgrade (handoff for next agent)
+
+## Context
+Replacing/augmenting the xpra-based "Local Desktop" panel (Resources → Tools)
+with KasmVNC (web-first VNC, works through the Cloudflare tunnel, no tailnet
+needed). Evaluation + decision already made with the user: KasmVNC over
+Selkies (Selkies needs WebRTC UDP which cannot traverse cloudflared).
+Reply to the user in Traditional Chinese (繁體中文).
+
+## Already DONE (verified working)
+1. kasmvncserver 1.4.0 (noble deb) installed on host.
+   - deb cached at: /tmp/claude-0/-root-agent-work-DEV-agent-rider/d4bd843c-fab4-4997-93c5-d566dda51418/scratchpad/kasmvncserver_noble_1.4.0_amd64.deb
+2. VNC user "rider" with random password:
+   - kasm password db: /root/.kasmpasswd
+   - plain "user:pass" for the proxy: /root/.kasmvnc-proxy-auth (chmod 600, NOT in repo)
+3. Config /root/.vnc/kasmvnc.yaml: protocol http, interface 127.0.0.1,
+   websocket_port 14510, require_ssl false, 1920x1080, allow_resize, 60fps.
+4. /root/.vnc/xstartup → exec scripts/start-gnome-flashback-session.sh
+   (same GNOME Flashback session as xpra; session script already has the
+   "die with X server" fix, commit f0a96f2).
+5. KasmVNC RUNNING on :101 — verified:
+   - ss shows Xvnc listening 127.0.0.1:14510
+   - curl no-auth → 401; with basic auth → 200
+   - DISPLAY=:101 xset q OK; its own metacity running (xpra :100 still coexists)
+   - started with: vncserver :101 -select-de manual
+6. vite.config.ts: PARTIALLY EDITED (uncommitted!) — added at top:
+   import { readFileSync } from 'node:fs' and a kasmAuthHeader IIFE that reads
+   /root/.kasmvnc-proxy-auth and builds "Basic <base64>". Nothing uses it yet.
+
+## REMAINING WORK
+1. vite.config.ts — add '/kasm' proxy entry to apiProxy (next to '/desktop'):
+   - target http://127.0.0.1:14510, changeOrigin true, ws: true
+   - rewrite: strip leading /kasm
+   - headers: { Authorization: kasmAuthHeader } (only if kasmAuthHeader defined;
+     http-proxy applies options.headers to both HTTP and WS upgrade requests)
+   - strip x-frame-options / CSP headers on proxyRes (copy the '/desktop' block)
+2. New plugin plugins/local-desktop-kasm/index.tsx (copy pattern from
+   plugins/local-desktop/index.tsx, auto-discovered via plugins/index.ts glob):
+   - id 'local-desktop-kasm', label e.g. 'Local Desktop (Kasm)', group 'Tools'
+   - WebView src '/kasm/' — NO inputBridge (KasmVNC handles input natively;
+     inputBridge.ts is xpra-specific, leave it alone for the old panel)
+   - allow: 'fullscreen; pointer-lock; microphone' (same as xpra panel)
+3. Build + deploy: npm run build && systemctl restart agent-rider-preview
+   (production preview setup — no HMR; user must hard-refresh browser).
+4. Verify through the proxy: curl -s -o /dev/null -w '%{http_code}'
+   http://127.0.0.1:5173/kasm/  → expect 200 (auth injected by proxy, no 401).
+   Also check the websocket path the Kasm client uses (relative, should pass
+   through the same /kasm rule; ws:true covers the upgrade).
+5. Ask user to test panel: Resources → Tools → Local Desktop (Kasm) —
+   mouse/keyboard/clipboard, compare latency vs old xpra panel.
+6. Persistence: xpra had no systemd unit either (script + daemon), but consider
+   a scripts/start-kasmvnc-desktop.sh (mirror scripts/start-local-desktop.sh)
+   so it survives reboots the same way; ask user if they want a systemd unit.
+7. git commit after each change (repo rule: commit every change; end commit
+   messages with Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>).
+8. If user confirms Kasm panel is good, ask whether to retire the xpra panel
+   (plugins/local-desktop/, xpra :100, port 14500 proxy) — do NOT remove
+   without asking.
+
+## Gotchas learned this session
+- pkill -f with a pattern that appears in your own bash -c command kills your
+  own shell — kill by PID instead.
+- xpra stop does NOT kill the session script loop; fixed in
+  scripts/start-gnome-flashback-session.sh (xset q probe). KasmVNC's vncserver
+  -kill :101 kills Xvnc, and the loop now exits itself when X dies.
+- The old xpra input bugs (paste bubble on every click = _poll_clipboard
+  calling navigator.clipboard.readText; unbalanced button releases) are all
+  patched in plugins/local-desktop/inputBridge.ts — none of that applies to
+  KasmVNC.
+- KasmVNC prints "https://..." on start but serves plain http (protocol: http
+  in kasmvnc.yaml) — that's expected.

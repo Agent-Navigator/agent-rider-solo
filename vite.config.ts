@@ -1,5 +1,17 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import { readFileSync } from 'node:fs'
+
+// KasmVNC requires basic auth; the credentials live outside the repo and are
+// injected server-side by the proxy so the embedded client needs no login.
+const kasmAuthHeader = (() => {
+  try {
+    const credentials = readFileSync('/root/.kasmvnc-proxy-auth', 'utf8').trim()
+    return credentials ? `Basic ${Buffer.from(credentials).toString('base64')}` : undefined
+  } catch {
+    return undefined
+  }
+})()
 
 const splitCsv = (value: string | undefined) =>
   value
