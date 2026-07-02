@@ -28,7 +28,6 @@ interface XpraClient {
   send?: (...args: unknown[]) => unknown
   _poll_clipboard?: (event: Event) => void
   send_clipboard_token?: (data: unknown) => void
-  __agentRiderSendWrapped?: boolean
   __agentRiderClipboardNeutralized?: boolean
 }
 
@@ -36,7 +35,6 @@ interface LocalDesktopWindow extends Window {
   client?: XpraClient
   jQuery?: (target: string | Element) => { off: (events?: string) => void }
   __agentRiderInputBridge?: boolean
-  __agentRiderDiag?: boolean
 }
 
 // xpra wires native mouse input twice: jQuery(canvas).mousedown/up/move in
@@ -135,58 +133,6 @@ const SUPPRESSED_MOUSE_EVENTS = ['mousedown', 'mouseup', 'mousemove', 'click', '
 function installNativeMouseSuppression(desktopDocument: Document) {
   for (const type of SUPPRESSED_MOUSE_EVENTS) {
     desktopDocument.addEventListener(type, suppressNativeInputUi, true)
-  }
-}
-
-// ── TEMPORARY diagnostic ─────────────────────────────────────────────────────
-// Shows pointer events and the actual button-action (button + down/up tally)
-// sent to xpra. Remove once the fix is confirmed. Set to false to disable.
-const DIAGNOSTIC = true
-
-function installDiagnostics(desktopWindow: LocalDesktopWindow, desktopDocument: Document) {
-  if (!DIAGNOSTIC) return
-  const lines: string[] = []
-  let overlay = desktopDocument.getElementById('agent-rider-diag') as HTMLDivElement | null
-  if (!overlay) {
-    overlay = desktopDocument.createElement('div')
-    overlay.id = 'agent-rider-diag'
-    overlay.style.cssText =
-      'position:fixed;top:8px;left:8px;z-index:2147483647;max-width:70vw;padding:8px 10px;' +
-      'background:rgba(4,10,18,0.92);color:#7be0a4;font:12px/1.4 ui-monospace,Menlo,monospace;' +
-      'border:1px solid #2b6;border-radius:8px;white-space:pre;pointer-events:none;'
-    overlay.textContent = 'diagnostic — click left then right (expect d==u)'
-    ;(desktopDocument.body || desktopDocument.documentElement).appendChild(overlay)
-  }
-  const log = (line: string) => {
-    lines.push(line)
-    while (lines.length > 14) lines.shift()
-    if (overlay) overlay.textContent = lines.join('\n')
-  }
-
-  const client = desktopWindow.client
-  if (client && typeof client.send === 'function' && !client.__agentRiderSendWrapped) {
-    const original = client.send.bind(client)
-    client.__agentRiderSendWrapped = true
-    let downs = 0
-    let ups = 0
-    client.send = (...args: unknown[]) => {
-      const packet = args[0]
-      if (Array.isArray(packet) && packet[0] === 'button-action') {
-        if (packet[3]) downs += 1
-        else ups += 1
-        log(`→ xpra button=${packet[2]} pressed=${packet[3]} [d=${downs} u=${ups}]`)
-      }
-      return original(...args)
-    }
-  }
-
-  if (desktopWindow.__agentRiderDiag) return
-  desktopWindow.__agentRiderDiag = true
-  for (const type of ['pointerdown', 'pointerup', 'pointercancel']) {
-    desktopDocument.addEventListener(type, (event) => {
-      const pe = event as PointerEvent
-      log(`${type}: button=${pe.button} which=${(pe as unknown as MouseEvent).which} type=${pe.pointerType}`)
-    }, true)
   }
 }
 
@@ -330,7 +276,6 @@ export function installLocalDesktopInputBridge(frame: HTMLIFrameElement) {
     neutralizeClipboardPolling(desktopWindow)
     unbindXpraNativeMouseHandlers(desktopWindow)
     releasePasteboard(desktopWindow, desktopDocument)
-    installDiagnostics(desktopWindow, desktopDocument)
     for (const xpraWindow of getXpraWindows(desktopWindow)) {
       installCanvasBridge(desktopWindow, desktopDocument, xpraWindow, installed)
     }
