@@ -63,6 +63,23 @@ type ChatRole = 'user' | 'assistant'
 type AgentType = 'hermes' | 'claude' | 'codex' | 'agy'
 type TuiAgentType = Exclude<AgentType, 'hermes'>
 
+interface HermesModel {
+  id: string
+  label: string
+}
+
+interface HermesModelGroup {
+  provider: string
+  providerId: string | null
+  models: HermesModel[]
+}
+
+interface HermesModelCatalog {
+  groups: HermesModelGroup[]
+  defaultModel: string
+  activeProvider: string | null
+}
+
 const AGENT_OPTIONS: { value: AgentType; label: string }[] = [
   { value: 'hermes', label: 'Hermes Agent' },
   { value: 'claude', label: 'claude (CLI)' },
@@ -85,6 +102,65 @@ function scrollToFocusTarget(target: HTMLElement | null) {
 
 function assistantBubbleBottomId(turnId: string) {
   return `assistant-bubble-bottom-${turnId}`
+}
+
+function modelSelectValue(model: string, provider: string | null = null) {
+  return JSON.stringify([provider ?? '', model])
+}
+
+function parseModelSelectValue(value: string) {
+  if (!value) return { model: '', modelProvider: null }
+  try {
+    const parsed = JSON.parse(value) as unknown
+    if (!Array.isArray(parsed)) return { model: '', modelProvider: null }
+    const [provider, model] = parsed
+    return {
+      model: String(model ?? '').trim(),
+      modelProvider: String(provider ?? '').trim() || null,
+    }
+  } catch {
+    return { model: '', modelProvider: null }
+  }
+}
+
+async function fetchHermesModelCatalog(): Promise<HermesModelCatalog> {
+  const res = await fetch('/api/models')
+  if (!res.ok) throw new Error(`models failed (${res.status})`)
+  const data = (await res.json()) as Record<string, unknown>
+  const rawGroups = Array.isArray(data.groups) ? data.groups : []
+  const groups = rawGroups.map((group) => {
+    const item = group as Record<string, unknown>
+    const provider = String(item.provider ?? 'Provider').trim() || 'Provider'
+    const providerId = String(item.provider_id ?? '').trim() || null
+    const rawModels = Array.isArray(item.models) ? item.models : []
+    return {
+      provider,
+      providerId,
+      models: rawModels.map((model) => {
+        const modelItem = model as Record<string, unknown>
+        const id = String(modelItem.id ?? '').trim()
+        return { id, label: String(modelItem.label ?? id).trim() || id }
+      }).filter((model) => model.id),
+    }
+  }).filter((group) => group.models.length)
+
+  return {
+    groups,
+    defaultModel: String(data.default_model ?? '').trim(),
+    activeProvider: String(data.active_provider ?? '').trim() || null,
+  }
+}
+
+async function fetchHermesReasoningEfforts() {
+  const res = await fetch('/api/reasoning')
+  if (!res.ok) throw new Error(`reasoning failed (${res.status})`)
+  const data = (await res.json()) as Record<string, unknown>
+  const supported = Array.isArray(data.supported_efforts) ? data.supported_efforts : []
+  const efforts = supported.map((effort) => String(effort).trim()).filter(Boolean)
+  return {
+    efforts: efforts.length ? efforts : DEFAULT_REASONING_EFFORTS,
+    defaultEffort: String(data.reasoning_effort ?? '').trim(),
+  }
 }
 
 function hasTextSelectionInside(element: HTMLElement) {
@@ -134,6 +210,9 @@ interface RunNode {
   job: string
   jobStatus: JobStatus
   resourceIds: string[]
+  model?: string
+  modelProvider?: string | null
+  reasoningEffort?: string
   sessionId?: string | null
   agentType: AgentType
   /** Which card column (0 = left, 1 = right) in the two-column layout. */
@@ -166,6 +245,9 @@ interface QueuedPromptEntry {
   runId: string
   prompt: string
   workspace: string
+  model?: string
+  modelProvider?: string | null
+  reasoningEffort?: string
 }
 
 interface CategoryRule {
@@ -199,6 +281,8 @@ const DEFAULT_WORKSPACE_CWD = '/root'
 const DEFAULT_TERMINAL_CWD = '/root'
 const DEFAULT_TITLE = 'Agent Rider'
 const AGENT_TERMINAL_STATE_PREFIX = 'agent-terminal:'
+const DEFAULT_REASONING_EFFORTS = ['minimal', 'low', 'medium', 'high', 'xhigh']
+const EMPTY_MODEL_CATALOG: HermesModelCatalog = { groups: [], defaultModel: '', activeProvider: null }
 
 hljs.registerLanguage('bash', bash)
 hljs.registerLanguage('c', c)
@@ -1066,8 +1150,13 @@ function ConversationCard({
   onCategoryChange,
   onProjectChange,
   onAgentChange,
+  modelCatalog,
+  reasoningEfforts,
+  onModelChange,
+  onReasoningEffortChange,
   onOpenPicker,
   onClose,
+  onDeleteTurn,
   stoppableTurnId,
   refreshableTurnId,
   onStopTurn,
@@ -1093,8 +1182,13 @@ function ConversationCard({
   onCategoryChange: (value: string) => void
   onProjectChange: (value: string) => void
   onAgentChange: (value: AgentType) => void
+  modelCatalog: HermesModelCatalog
+  reasoningEfforts: string[]
+  onModelChange: (model: string, modelProvider: string | null) => void
+  onReasoningEffortChange: (effort: string) => void
   onOpenPicker: () => void
   onClose: () => void
+  onDeleteTurn: (turnId: string) => void
   stoppableTurnId: string | null
   refreshableTurnId: string | null
   onStopTurn: (turnId: string) => void
@@ -1112,6 +1206,8 @@ function ConversationCard({
 }) {
   const agentType: AgentType = run.agentType ?? 'hermes'
   const tui = isTuiAgent(agentType)
+  const selectedModelValue = run.model ? modelSelectValue(run.model, run.modelProvider ?? null) : ''
+  const selectedReasoningEffort = run.reasoningEffort ?? ''
   const cardRef = useRef<HTMLElement | null>(null)
   const [dragOver, setDragOver] = useState(false)
   // Whether the hovering drop would land after (below) this card vs before.
@@ -1226,6 +1322,7 @@ function ConversationCard({
 
   function renderTurn(turn: TurnItem): ReactNode {
     const canAskMore = turn.status !== 'running' && turn.status !== 'queued'
+    const canDelete = turn.status !== 'running' && turn.status !== 'queued'
     const canStop = turn.status === 'running' && turn.id === stoppableTurnId
     const canRefresh = turn.status === 'running' && turn.id === refreshableTurnId
     const isTurnCollapsed = collapsedTurnIds.has(turn.id)
@@ -1257,17 +1354,32 @@ function ConversationCard({
                 <span className="turn-prompt-sep" aria-hidden>|</span>
                 <span className="turn-prompt-text">{turn.prompt}</span>
               </span>
-              <button
-                type="button"
-                className="copy-prompt-button"
-                onKeyDown={(event) => event.stopPropagation()}
-                onClick={(event) => {
-                  event.stopPropagation()
-                  void copyPrompt(turn)
-                }}
-              >
-                {copiedTurnId === turn.id ? 'Copied' : 'Copy'}
-              </button>
+              <span className="turn-head-actions">
+                <button
+                  type="button"
+                  className="copy-prompt-button"
+                  onKeyDown={(event) => event.stopPropagation()}
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    void copyPrompt(turn)
+                  }}
+                >
+                  {copiedTurnId === turn.id ? 'Copied' : 'Copy'}
+                </button>
+                <button
+                  type="button"
+                  className="turn-delete-button"
+                  disabled={!canDelete}
+                  title={canDelete ? 'Delete this Q/A turn' : 'Stop the running turn before deleting it'}
+                  onKeyDown={(event) => event.stopPropagation()}
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    if (canDelete) onDeleteTurn(turn.id)
+                  }}
+                >
+                  Delete
+                </button>
+              </span>
             </div>
           </div>
           {!isTurnCollapsed ? (
@@ -1565,7 +1677,46 @@ function ConversationCard({
                   rows={2}
                 />
                 <div className="composer-meta">
-                  <span>{run.workspacePath}</span>
+                  <div className="composer-controls" aria-label="Hermes options">
+                    <label className="composer-control">
+                      <span>Model</span>
+                      <select
+                        value={selectedModelValue}
+                        onChange={(event) => {
+                          const next = parseModelSelectValue(event.target.value)
+                          onModelChange(next.model, next.modelProvider)
+                        }}
+                      >
+                        <option value="">
+                          {modelCatalog.defaultModel ? `Default · ${modelCatalog.defaultModel}` : 'Default model'}
+                        </option>
+                        {modelCatalog.groups.map((group) => (
+                          <optgroup key={`${group.providerId ?? group.provider}:${group.provider}`} label={group.provider}>
+                            {group.models.map((model) => (
+                              <option key={`${group.providerId ?? group.provider}:${model.id}`} value={modelSelectValue(model.id, group.providerId)}>
+                                {model.label}
+                              </option>
+                            ))}
+                          </optgroup>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="composer-control">
+                      <span>Reasoning</span>
+                      <select
+                        value={selectedReasoningEffort}
+                        onChange={(event) => onReasoningEffortChange(event.target.value)}
+                      >
+                        <option value="">Default effort</option>
+                        {reasoningEfforts.map((effort) => (
+                          <option key={effort} value={effort}>
+                            {effort}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+                  <span className="composer-workspace-path">{run.workspacePath}</span>
                   <button type="submit" className="send-button">
                     Send
                   </button>
@@ -2581,6 +2732,8 @@ export default function App() {
   const [sessionInfoText, setSessionInfoText] = useState('No Hermes session yet')
   const [error, setError] = useState<string | null>(null)
   const [workspaceRoot, setWorkspaceRoot] = useState(DEFAULT_WORKSPACE_CWD)
+  const [modelCatalog, setModelCatalog] = useState<HermesModelCatalog>(EMPTY_MODEL_CATALOG)
+  const [reasoningEfforts, setReasoningEfforts] = useState<string[]>(DEFAULT_REASONING_EFFORTS)
   const [passwordStatus, setPasswordStatus] = useState<PasswordStatus | null>(null)
   const [passwordDialogOpen, setPasswordDialogOpen] = useState(false)
 
@@ -2710,6 +2863,9 @@ export default function App() {
       job: 'Draft',
       jobStatus: 'queued',
       resourceIds: [],
+      model: '',
+      modelProvider: null,
+      reasoningEffort: '',
       sessionId: null,
       agentType: 'hermes',
       column: 0,
@@ -2739,6 +2895,14 @@ export default function App() {
     // session — the next turn runs in the newly chosen folder.
     sessionByRunRef.current.delete(runId)
     updateRunContext(runId, { workspacePath: path, sessionId: null })
+  }
+
+  function updateRunHermesModel(runId: string, model: string, modelProvider: string | null) {
+    updateRunContext(runId, { model, modelProvider })
+  }
+
+  function updateRunReasoningEffort(runId: string, reasoningEffort: string) {
+    updateRunContext(runId, { reasoningEffort })
   }
 
   // ── Unified block ordering (cards + panels) ────────────────────────────────
@@ -2901,6 +3065,43 @@ export default function App() {
       if (!(key in current)) return current
       const next = { ...current }
       delete next[key]
+      return next
+    })
+  }
+
+  function deleteConversationTurn(runId: string, turnId: string) {
+    const runTurns = turnsRef.current.filter((turn) => turn.runId === runId)
+    const childrenByParent = new Map<string, TurnItem[]>()
+    for (const turn of runTurns) {
+      if (!turn.parentTurnId) continue
+      const children = childrenByParent.get(turn.parentTurnId) ?? []
+      children.push(turn)
+      childrenByParent.set(turn.parentTurnId, children)
+    }
+
+    const idsToDelete = new Set<string>()
+    const visit = (id: string) => {
+      if (idsToDelete.has(id)) return
+      idsToDelete.add(id)
+      for (const child of childrenByParent.get(id) ?? []) visit(child.id)
+    }
+    visit(turnId)
+
+    if ([...idsToDelete].some((id) => id === activeTurnRef.current)) return
+
+    queuedPromptsRef.current = queuedPromptsRef.current.filter((entry) => !idsToDelete.has(entry.turnId))
+    setTurns((current) => current.filter((turn) => !idsToDelete.has(turn.id)))
+    setRuns((current) =>
+      current.map((run) => {
+        if (run.id !== runId) return run
+        const hasRemainingTurns = runTurns.some((turn) => !idsToDelete.has(turn.id))
+        return hasRemainingTurns ? run : { ...run, jobStatus: 'queued' }
+      }),
+    )
+    setNewDoneIds((current) => {
+      if (!current.has(runId)) return current
+      const next = new Set(current)
+      next.delete(runId)
       return next
     })
   }
@@ -3074,6 +3275,27 @@ export default function App() {
   }, [])
 
   useEffect(() => {
+    let cancelled = false
+    void fetchHermesModelCatalog()
+      .then((catalog) => {
+        if (!cancelled) setModelCatalog(catalog)
+      })
+      .catch(() => {
+        if (!cancelled) setModelCatalog(EMPTY_MODEL_CATALOG)
+      })
+    void fetchHermesReasoningEfforts()
+      .then(({ efforts }) => {
+        if (!cancelled) setReasoningEfforts(efforts)
+      })
+      .catch(() => {
+        if (!cancelled) setReasoningEfforts(DEFAULT_REASONING_EFFORTS)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
     if (workspaceRoot === DEFAULT_WORKSPACE_CWD || !hasLegacyDefaultWorkspace) return
     setRuns((current) => {
       let changed = false
@@ -3102,6 +3324,9 @@ export default function App() {
             ...run,
             agentType: run.agentType ?? 'hermes',
             column: Number.isFinite(run.column) ? run.column : 0,
+            model: typeof run.model === 'string' ? run.model : '',
+            modelProvider: typeof run.modelProvider === 'string' ? run.modelProvider : null,
+            reasoningEffort: typeof run.reasoningEffort === 'string' ? run.reasoningEffort : '',
           }))
           const restoredRunIds = new Set(restored.map((run) => run.id))
           setRuns((current) => (current.length ? current : restored))
@@ -3221,7 +3446,7 @@ export default function App() {
     const bridge = bridgeRef.current
     if (!bridge) return
 
-    const { turnId, runId, prompt, workspace } = entry
+    const { turnId, runId, prompt, workspace, model, modelProvider, reasoningEffort } = entry
 
     activeTurnRef.current = turnId
     activeRunRef.current = runId
@@ -3236,7 +3461,9 @@ export default function App() {
       }
       setSessionId(session)
       setSessionInfoText(`Hermes session ${session}`)
-      await bridge.submitPrompt(session, prompt, workspace)
+      const promptOptions = { model, modelProvider }
+      if (reasoningEffort?.trim()) await bridge.setReasoningEffort(reasoningEffort, promptOptions)
+      await bridge.submitPrompt(session, prompt, workspace, promptOptions)
       setActiveHermesTurnId(turnId)
       setActiveHermesStreamId(bridge.activeStreamId)
       setConnectionState('busy')
@@ -3372,6 +3599,9 @@ export default function App() {
     if (!run) return null
 
     setActiveRunId(runId)
+    const model = (run.model ?? '').trim()
+    const modelProvider = (run.modelProvider ?? '').trim() || null
+    const reasoningEffort = (run.reasoningEffort ?? '').trim()
     const hasTurns = turns.some((turn) => turn.runId === runId)
     let workspace = run.workspacePath
     if (!hasTurns) {
@@ -3393,7 +3623,7 @@ export default function App() {
     const { turn, turnId } = newTurn(runId, prompt, parentTurnId)
     setTurns((current) => [turn, ...current])
     setError(null)
-    enqueueOrStart({ turnId, runId, prompt, workspace })
+    enqueueOrStart({ turnId, runId, prompt, workspace, model, modelProvider, reasoningEffort })
     return turnId
   }
 
@@ -3418,8 +3648,13 @@ export default function App() {
       onCategoryChange={(value) => updateRunContext(run.id, { category: value, categoryTags: tagsForCategory(value) })}
       onProjectChange={(value) => updateRunProject(run.id, value)}
       onAgentChange={(value) => updateRunContext(run.id, { agentType: value })}
+      modelCatalog={modelCatalog}
+      reasoningEfforts={reasoningEfforts}
+      onModelChange={(model, modelProvider) => updateRunHermesModel(run.id, model, modelProvider)}
+      onReasoningEffortChange={(reasoningEffort) => updateRunReasoningEffort(run.id, reasoningEffort)}
       onOpenPicker={() => setPickerRunId(run.id)}
       onClose={() => closeConversation(run.id)}
+      onDeleteTurn={(turnId) => deleteConversationTurn(run.id, turnId)}
       stoppableTurnId={activeHermesStreamId ? activeHermesTurnId : null}
       refreshableTurnId={activeHermesStreamId ? activeHermesTurnId : null}
       onStopTurn={(turnId) => void stopHermesTurn(turnId)}

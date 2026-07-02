@@ -18,6 +18,11 @@ export interface CreateSessionOptions {
   source?: string
 }
 
+export interface SubmitPromptOptions {
+  model?: string
+  modelProvider?: string | null
+}
+
 export class HermesActiveStreamError extends Error {
   constructor(
     message: string,
@@ -117,15 +122,48 @@ export class HermesBridge {
     return sessionId
   }
 
+  async setReasoningEffort(effort: string, options: SubmitPromptOptions = {}) {
+    const cleanEffort = effort.trim()
+    if (!cleanEffort) return
+
+    const body: Record<string, unknown> = { effort: cleanEffort }
+    if (options.model?.trim()) body.model = options.model.trim()
+    if (options.modelProvider?.trim()) body.provider = options.modelProvider.trim()
+
+    const res = await fetch('/api/reasoning', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => '')
+      throw new Error(`reasoning update failed (${res.status})${text ? ': ' + text : ''}`)
+    }
+  }
+
   /** Submit a prompt to a specific session and stream the response. */
-  async submitPrompt(sessionId: string, text: string, workspace?: string) {
+  async submitPrompt(sessionId: string, text: string, workspace?: string, options: SubmitPromptOptions = {}) {
     this.setStatus('busy', 'Hermes is running…')
 
     const cwd = (workspace || '').trim() || this.defaults.cwd || DEFAULT_CWD
+    const cleanModel = options.model?.trim()
+    const cleanProvider = options.modelProvider?.trim()
+    const body: Record<string, unknown> = {
+      session_id: sessionId,
+      message: withAgentRiderBackground(text),
+      workspace: cwd,
+    }
+    if (cleanModel) {
+      body.model = cleanModel
+      body.explicit_model_pick = true
+    }
+    if (cleanProvider) body.model_provider = cleanProvider
+
     const res = await fetch('/api/chat/start', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ session_id: sessionId, message: withAgentRiderBackground(text), workspace: cwd }),
+      body: JSON.stringify(body),
     })
 
     if (!res.ok) {

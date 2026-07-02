@@ -481,6 +481,7 @@ button { cursor: pointer; }
 }
 
 .copy-prompt-button,
+.turn-delete-button,
 .assistant-to-bottom-button,
 .assistant-refresh-button,
 .assistant-stop-button,
@@ -496,6 +497,28 @@ button { cursor: pointer; }
 
 .copy-prompt-button {
   padding: 3px 8px;
+}
+
+.turn-head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.turn-delete-button {
+  padding: 3px 8px;
+}
+
+.turn-delete-button:hover:not(:disabled) {
+  border-color: rgba(239, 109, 109, 0.4);
+  color: #ffd6d6;
+  background: rgba(239, 109, 109, 0.10);
+}
+
+.turn-delete-button:disabled {
+  cursor: default;
+  opacity: 0.45;
 }
 
 .assistant-head {
@@ -798,6 +821,49 @@ button { cursor: pointer; }
   gap: 12px;
   color: var(--muted);
   font-size: 13px;
+}
+
+.composer-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.composer-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.composer-control select {
+  max-width: min(280px, 42vw);
+  min-width: 132px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 999px;
+  padding: 6px 28px 6px 10px;
+  background: rgba(8, 14, 24, 0.88);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: none;
+  outline: none;
+}
+
+.composer-control select:focus {
+  border-color: rgba(121, 185, 255, 0.56);
+  box-shadow: 0 0 0 3px rgba(121, 185, 255, 0.12);
+}
+
+.composer-workspace-path {
+  flex: 1;
+  min-width: 140px;
 }
 
 .send-button {
@@ -2568,6 +2634,12 @@ button { cursor: pointer; }
 .conv-followup .composer-meta span {
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conv-followup .composer-controls span {
+  overflow: visible;
+  text-overflow: clip;
   white-space: nowrap;
 }
 

@@ -135,6 +135,9 @@ db.exec(`
     job TEXT,
     job_status TEXT,
     resource_ids TEXT,
+    model TEXT,
+    model_provider TEXT,
+    reasoning_effort TEXT,
     agent_type TEXT,
     col_index INTEGER,
     sort_index INTEGER,
@@ -174,6 +177,22 @@ try {
 // Migration: which card column (0|1) a conversation sits in (two-column layout).
 try {
   db.exec('ALTER TABLE runs ADD COLUMN col_index INTEGER')
+} catch {
+  // column already present
+}
+// Migration: per-card Hermes model/reasoning controls.
+try {
+  db.exec('ALTER TABLE runs ADD COLUMN model TEXT')
+} catch {
+  // column already present
+}
+try {
+  db.exec('ALTER TABLE runs ADD COLUMN model_provider TEXT')
+} catch {
+  // column already present
+}
+try {
+  db.exec('ALTER TABLE runs ADD COLUMN reasoning_effort TEXT')
 } catch {
   // column already present
 }
@@ -229,13 +248,15 @@ function getKv(key) {
 }
 
 const upsertRun = db.prepare(`
-  INSERT INTO runs (id, session_id, prompt, category, category_tags, project, workspace, workspace_path, task, job, job_status, resource_ids, agent_type, col_index, sort_index, created_at, updated_at)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  INSERT INTO runs (id, session_id, prompt, category, category_tags, project, workspace, workspace_path, task, job, job_status, resource_ids, model, model_provider, reasoning_effort, agent_type, col_index, sort_index, created_at, updated_at)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   ON CONFLICT(id) DO UPDATE SET
     session_id = excluded.session_id, prompt = excluded.prompt, category = excluded.category,
     category_tags = excluded.category_tags, project = excluded.project, workspace = excluded.workspace,
     workspace_path = excluded.workspace_path, task = excluded.task, job = excluded.job,
     job_status = excluded.job_status, resource_ids = excluded.resource_ids,
+    model = excluded.model, model_provider = excluded.model_provider,
+    reasoning_effort = excluded.reasoning_effort,
     agent_type = excluded.agent_type, col_index = excluded.col_index, sort_index = excluded.sort_index,
     created_at = excluded.created_at, updated_at = excluded.updated_at
 `)
@@ -273,6 +294,9 @@ function runRowToApi(r) {
     job: r.job,
     jobStatus: r.job_status,
     resourceIds: parseJson(r.resource_ids, []),
+    model: r.model || '',
+    modelProvider: r.model_provider || null,
+    reasoningEffort: r.reasoning_effort || '',
     sessionId: r.session_id || null,
     agentType: r.agent_type || 'hermes',
     column: Number.isFinite(r.col_index) ? r.col_index : 0,
@@ -309,6 +333,9 @@ function saveState({ runs = [], turns = [], sessionId = null, layout = undefined
         r.job ?? '',
         r.jobStatus ?? 'queued',
         JSON.stringify(r.resourceIds ?? []),
+        r.model ?? '',
+        r.modelProvider ?? null,
+        r.reasoningEffort ?? '',
         r.agentType ?? 'hermes',
         Number.isFinite(r.column) ? r.column : 0,
         index,
