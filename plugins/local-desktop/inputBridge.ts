@@ -26,7 +26,10 @@ interface XpraWindow {
 interface XpraClient {
   id_to_window?: Record<string, XpraWindow>
   send?: (...args: unknown[]) => unknown
+  _poll_clipboard?: (event: Event) => void
+  send_clipboard_token?: (data: unknown) => void
   __agentRiderSendWrapped?: boolean
+  __agentRiderClipboardNeutralized?: boolean
 }
 
 interface LocalDesktopWindow extends Window {
@@ -40,6 +43,19 @@ interface LocalDesktopWindow extends Window {
 // Window.js and jQuery('#screen').mousedown/up/move in Client.js. We unbind
 // both explicitly so the pointer-event bridge below is the only input path.
 const XPRA_NATIVE_MOUSE_EVENTS = 'mousedown mouseup mousemove'
+
+// xpra calls _poll_clipboard(navigator.clipboard.readText()) on EVERY click and
+// keystroke, ignoring clipboard_enabled entirely. In the browser that surfaces
+// as a "Paste" permission bubble on each click (which then steals focus from
+// the canvas), and if ever granted it would leak the local clipboard into the
+// desktop despite clipboard=false. Clipboard is disabled by design, so stub it.
+function neutralizeClipboardPolling(desktopWindow: LocalDesktopWindow) {
+  const client = desktopWindow.client
+  if (!client || client.__agentRiderClipboardNeutralized) return
+  client.__agentRiderClipboardNeutralized = true
+  client._poll_clipboard = () => undefined
+  client.send_clipboard_token = () => undefined
+}
 
 function unbindXpraNativeMouseHandlers(desktopWindow: LocalDesktopWindow, canvas?: HTMLCanvasElement) {
   try {
@@ -311,6 +327,7 @@ export function installLocalDesktopInputBridge(frame: HTMLIFrameElement) {
 
   const installed = new WeakSet<HTMLCanvasElement>()
   const installAll = () => {
+    neutralizeClipboardPolling(desktopWindow)
     unbindXpraNativeMouseHandlers(desktopWindow)
     releasePasteboard(desktopWindow, desktopDocument)
     installDiagnostics(desktopWindow, desktopDocument)
