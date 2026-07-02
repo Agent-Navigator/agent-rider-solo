@@ -10,9 +10,15 @@ export DESKTOP_SESSION=gnome-flashback-metacity
 export XDG_MENU_PREFIX=gnome-
 
 pids=()
-start_component() {
+core_pids=()
+start_optional_component() {
   "$@" &
   pids+=("$!")
+}
+start_core_component() {
+  "$@" &
+  pids+=("$!")
+  core_pids+=("$!")
 }
 
 cleanup() {
@@ -22,12 +28,12 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-start_component /usr/libexec/gnome-flashback-clipboard
-start_component /usr/libexec/gnome-flashback-idle-monitor
-start_component /usr/libexec/gnome-flashback-media-keys
-start_component /usr/libexec/gnome-flashback-polkit
-start_component /usr/bin/metacity --replace
-start_component /usr/bin/gnome-panel
-start_component /usr/bin/nautilus --no-default-window
+start_optional_component /usr/libexec/gnome-flashback-clipboard
+start_optional_component /usr/libexec/gnome-flashback-idle-monitor
+start_optional_component /usr/libexec/gnome-flashback-media-keys
+start_optional_component /usr/libexec/gnome-flashback-polkit
+start_core_component /usr/bin/metacity --replace
+start_core_component /usr/bin/gnome-panel
+start_optional_component /usr/bin/nautilus --no-default-window
 
-wait -n "${pids[@]}"
+wait -n "${core_pids[@]}"
