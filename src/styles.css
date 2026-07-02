@@ -575,6 +575,9 @@ button { cursor: pointer; }
 
 .assistant-bubble-bottom {
   scroll-margin-block-end: 96px;
+  /* 1px so the IntersectionObserver that clears the "unread" dot can reliably
+     detect when the end of a reply scrolls into view. */
+  min-height: 1px;
 }
 
 .assistant-actions {
@@ -862,8 +865,8 @@ button { cursor: pointer; }
 }
 
 .composer-workspace-path {
-  flex: 1;
-  min-width: 140px;
+  flex: 1 1 120px;
+  min-width: 0;
 }
 
 .send-button {
@@ -1167,6 +1170,50 @@ button { cursor: pointer; }
   font-size: 11px;
   color: var(--muted);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.file-row-actions {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.file-row.file:hover .file-row-actions,
+.file-row.file:focus-within .file-row-actions,
+.file-row.file.active .file-row-actions {
+  opacity: 1;
+}
+
+.file-row-action {
+  flex-shrink: 0;
+  padding: 2px 8px;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 6px;
+  background: rgba(148, 163, 184, 0.08);
+  color: var(--text);
+  font-size: 11px;
+  line-height: 1.5;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.file-row-action:hover {
+  background: rgba(121, 185, 255, 0.16);
+  border-color: rgba(121, 185, 255, 0.4);
+}
+
+.file-row-action.delete {
+  color: #ffb4b4;
+  border-color: rgba(248, 113, 113, 0.32);
+  background: rgba(248, 113, 113, 0.08);
+}
+
+.file-row-action.delete:hover {
+  background: rgba(248, 113, 113, 0.18);
+  border-color: rgba(248, 113, 113, 0.5);
 }
 
 .file-browser-empty {
@@ -2136,6 +2183,29 @@ button { cursor: pointer; }
   font-weight: 650;
 }
 
+.tree-run-main {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* Red dot flagging a newly-completed, unread conversation in the tree. */
+.tree-run-unread {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--bad);
+  box-shadow: 0 0 0 3px rgba(239, 109, 109, 0.18);
+}
+
+/* Draw the eye toward unread conversations. */
+.tree-nav-run.unread .tree-run-title {
+  color: var(--text);
+  font-weight: 750;
+}
+
 .tree-run-status {
   width: 7px;
   height: 7px;
@@ -2394,6 +2464,7 @@ button { cursor: pointer; }
   background: rgba(121, 185, 255, 0.08);
 }
 
+
 .terminal-body {
   display: grid;
   grid-template-rows: minmax(220px, 340px) auto;
@@ -2479,6 +2550,9 @@ button { cursor: pointer; }
   min-height: 92px;
   transition: border-color 120ms ease, opacity 120ms ease, transform 120ms ease;
   scroll-margin-block: 96px;
+  /* Enable container queries so the composer can re-flow based on the card's
+     own width (e.g. narrow in two-column mode), not the viewport width. */
+  container-type: inline-size;
 }
 
 .conv-card.active {
@@ -2629,6 +2703,40 @@ button { cursor: pointer; }
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.06),
     0 0 0 2px rgba(121, 185, 255, 0.16);
+}
+
+/* Let the meta row wrap so that in narrow cards (e.g. two-column mode) the path
+   and Send button drop to the next line instead of overflowing off-screen. On
+   wide cards everything still fits on one row. */
+.conv-followup .composer-meta {
+  flex-wrap: wrap;
+}
+
+.conv-followup .composer-workspace-path {
+  text-align: right;
+}
+
+/* Keep Send pinned to the right on whatever row it lands. */
+.conv-followup .send-button {
+  margin-left: auto;
+}
+
+/* When the card itself is narrow, give the workspace path its own full-width
+   row below the Model/Reasoning controls so it can display more of the path. */
+@container (max-width: 680px) {
+  .conv-followup .composer-controls {
+    flex: 1 1 100%;
+  }
+
+  .conv-followup .composer-workspace-path {
+    flex-basis: 100%;
+    order: 2;
+    text-align: left;
+  }
+
+  .conv-followup .send-button {
+    order: 3;
+  }
 }
 
 .conv-followup .composer-meta span {

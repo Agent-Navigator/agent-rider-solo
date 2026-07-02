@@ -1,4 +1,4 @@
-import { type DragEvent, type FormEvent, type KeyboardEvent, type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
+import { type DragEvent, type FormEvent, type KeyboardEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import rehypeRaw from 'rehype-raw'
 import rehypeSanitize from 'rehype-sanitize'
@@ -34,6 +34,8 @@ import {
   listDir,
   readFilePreview,
   makeDir,
+  fileDownloadUrl,
+  deleteFile,
   listApps,
   setAppOrder,
   renameApp,
@@ -42,6 +44,7 @@ import {
   setPagePassword,
   logoutPagePassword,
   type FsListing,
+  type FsFileEntry,
   type FsFilePreview,
   type AgentApp,
   type AppListing,
@@ -793,6 +796,28 @@ function FileBrowser({ rootPath }: { rootPath: string }) {
   const [previewLoading, setPreviewLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [previewError, setPreviewError] = useState<string | null>(null)
+  const [pendingDelete, setPendingDelete] = useState<FsFileEntry | null>(null)
+  const [deleting, setDeleting] = useState(false)
+
+  async function confirmDelete() {
+    if (!pendingDelete) return
+    setDeleting(true)
+    setError(null)
+    const result = await deleteFile(pendingDelete.path)
+    setDeleting(false)
+    if ('error' in result) {
+      setError(result.error)
+      setPendingDelete(null)
+      return
+    }
+    // Close a preview of the file we just removed, then refresh the listing.
+    if (preview?.path === pendingDelete.path) {
+      setPreview(null)
+      setPreviewFullWindow(false)
+    }
+    setPendingDelete(null)
+    void load(path)
+  }
 
   async function load(target: string) {
     setLoading(true)
@@ -946,6 +971,30 @@ function FileBrowser({ rootPath }: { rootPath: string }) {
                   >
                     <span className="file-row-name">📄 {file.name}</span>
                     <span className="file-row-size">{formatBytes(file.size)}</span>
+                    <span className="file-row-actions">
+                      <a
+                        className="file-row-action download"
+                        href={fileDownloadUrl(file.path)}
+                        download={file.name}
+                        title={`Download ${file.name}`}
+                        onClick={(event) => event.stopPropagation()}
+                        onDragStart={(event) => event.stopPropagation()}
+                        draggable={false}
+                      >
+                        Download
+                      </a>
+                      <button
+                        type="button"
+                        className="file-row-action delete"
+                        title={`Delete ${file.name}`}
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          setPendingDelete(file)
+                        }}
+                      >
+                        Delete
+                      </button>
+                    </span>
                   </div>
                 ))}
               </>
@@ -1012,6 +1061,51 @@ function FileBrowser({ rootPath }: { rootPath: string }) {
               )}
             </div>
           ) : null}
+        </div>
+      ) : null}
+
+      {pendingDelete ? (
+        <div className="confirm-overlay" onClick={() => !deleting && setPendingDelete(null)}>
+          <div className="confirm-dialog card" onClick={(event) => event.stopPropagation()}>
+            <div className="picker-head">
+              <div>
+                <div className="eyebrow">Confirm delete</div>
+                <h3>{pendingDelete.name}</h3>
+              </div>
+              <button
+                type="button"
+                className="picker-close"
+                onClick={() => setPendingDelete(null)}
+                disabled={deleting}
+                aria-label="Close"
+              >
+                ×
+              </button>
+            </div>
+
+            <p className="confirm-copy">
+              Permanently delete this file from the workspace? This cannot be undone.
+            </p>
+
+            <div className="picker-actions confirm-actions">
+              <button
+                type="button"
+                className="picker-cancel"
+                onClick={() => setPendingDelete(null)}
+                disabled={deleting}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="send-button danger-button"
+                onClick={() => void confirmDelete()}
+                disabled={deleting}
+              >
+                {deleting ? 'Deleting…' : 'Delete'}
+              </button>
+            </div>
+          </div>
         </div>
       ) : null}
     </div>
@@ -1143,6 +1237,7 @@ function ConversationCard({
   metaCollapsed,
   active,
   isNewDone,
+  onMarkRead,
   onToggle,
   onMetaCollapsedChange,
   onSend,
@@ -1175,6 +1270,7 @@ function ConversationCard({
   metaCollapsed: boolean
   active: boolean
   isNewDone: boolean
+  onMarkRead: (runId: string) => void
   onToggle: () => void
   onMetaCollapsedChange: (collapsed: boolean) => void
   onSend: (text: string, parentTurnId?: string | null) => string | null
@@ -1248,6 +1344,22 @@ function ConversationCard({
     return () => cancelAnimationFrame(frame)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusedTurnId, askParentId])
+
+  // Strict "read": clear the unread dot only once the end of the newest reply
+  // actually scrolls into the viewport — not merely on opening/selecting the card.
+  useEffect(() => {
+    if (!isNewDone || collapsed || !focusedTurnId) return
+    const sentinel = document.getElementById(assistantBubbleBottomId(focusedTurnId))
+    if (!sentinel) return
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) onMarkRead(run.id)
+      },
+      { threshold: 0 },
+    )
+    observer.observe(sentinel)
+    return () => observer.disconnect()
+  }, [isNewDone, collapsed, focusedTurnId, run.id, onMarkRead])
 
   function hideAllTurns() {
     setCollapsedTurnIds(new Set(turns.map((turn) => turn.id)))
@@ -1752,11 +1864,13 @@ function ConversationCard({
 function ConversationTreeSidebar({
   tree,
   activeRunId,
+  unreadRunIds,
   onSelect,
   onDeleteRequest,
 }: {
   tree: ConversationTreeCategory[]
   activeRunId: string | null
+  unreadRunIds: Set<string>
   onSelect: (runId: string) => void
   onDeleteRequest: (runId: string) => void
 }) {
@@ -1838,11 +1952,16 @@ function ConversationTreeSidebar({
                                 <div key={run.id} className="tree-nav-run-row">
                                   <button
                                     type="button"
-                                    className={`tree-nav-run ${activeRunId === run.id ? 'active' : ''}`}
+                                    className={`tree-nav-run ${activeRunId === run.id ? 'active' : ''} ${unreadRunIds.has(run.id) ? 'unread' : ''}`}
                                     onClick={() => onSelect(run.id)}
                                     aria-current={activeRunId === run.id ? 'true' : undefined}
                                   >
-                                    <span className="tree-run-title">{conversationTitle(run)}</span>
+                                    <span className="tree-run-main">
+                                      {unreadRunIds.has(run.id) ? (
+                                        <span className="tree-run-unread" title="New unread result" aria-label="New unread result" />
+                                      ) : null}
+                                      <span className="tree-run-title">{conversationTitle(run)}</span>
+                                    </span>
                                     <span className={`tree-run-status ${run.jobStatus}`} aria-label={run.jobStatus} title={run.jobStatus} />
                                   </button>
                                   <button
@@ -2840,13 +2959,8 @@ export default function App() {
       else next.add(runId)
       return next
     })
-    // Expanding (or interacting with) a card clears its "new result" dot.
-    setNewDoneIds((current) => {
-      if (!current.has(runId)) return current
-      const next = new Set(current)
-      next.delete(runId)
-      return next
-    })
+    // Note: the unread dot is NOT cleared here. It clears only once the new
+    // reply actually scrolls into view (see the card's IntersectionObserver).
   }
 
   // Open a new, empty (draft) Conversation Card at the top of the stack.
@@ -3106,6 +3220,17 @@ export default function App() {
     })
   }
 
+  // Clear a conversation's unread "new result" dot. Driven by the card's
+  // IntersectionObserver once the new reply is actually visible on screen.
+  const markConversationRead = useCallback((runId: string) => {
+    setNewDoneIds((current) => {
+      if (!current.has(runId)) return current
+      const next = new Set(current)
+      next.delete(runId)
+      return next
+    })
+  }, [])
+
   function selectConversation(runId: string) {
     setActiveRunId(runId)
     // Clicking a card in the Navigator re-launches it if it was closed.
@@ -3121,12 +3246,8 @@ export default function App() {
       next.delete(runId)
       return next
     })
-    setNewDoneIds((current) => {
-      if (!current.has(runId)) return current
-      const next = new Set(current)
-      next.delete(runId)
-      return next
-    })
+    // The unread dot is not cleared on select; it clears only once the new
+    // reply scrolls into view (see the card's IntersectionObserver).
     window.requestAnimationFrame(() => {
       scrollToFocusTarget(document.getElementById(`conversation-${runId}`))
     })
@@ -3204,7 +3325,7 @@ export default function App() {
         const runId = activeRunRef.current
         if (runId) {
           setRuns((current) => current.map((item) => (item.id === runId ? { ...item, jobStatus: 'done' } : item)))
-          // Flag a "new result" dot on the card (cleared when the user opens it).
+          // Flag a "new result" dot (cleared once the reply scrolls into view).
           setNewDoneIds((current) => {
             const next = new Set(current)
             next.add(runId)
@@ -3347,6 +3468,10 @@ export default function App() {
           if (restoredMetaCollapsedRunIds) {
             setMetaCollapsedIds((current) => (current.size ? current : restoredMetaCollapsedRunIds))
           }
+          const restoredUnreadRunIds = layoutRunIdSet(layout?.unreadRunIds, restoredRunIds)
+          if (restoredUnreadRunIds) {
+            setNewDoneIds((current) => (current.size ? current : restoredUnreadRunIds))
+          }
           // Restore each conversation's Hermes session so follow-ups continue the same thread.
           for (const run of restored) {
             if (run.sessionId) sessionByRunRef.current.set(run.id, run.sessionId)
@@ -3396,11 +3521,12 @@ export default function App() {
         closedRunIds: [...closedRunIds],
         collapsedRunIds: [...collapsedIds],
         cardMetaCollapsedIds: [...metaCollapsedIds],
+        unreadRunIds: [...newDoneIds],
         panelStates,
       })
     }, 700)
     return () => clearTimeout(handle)
-  }, [runs, turns, sessionId, panelOrder, panelColumns, layoutOrder, workspaceColumns, sidebarCollapsed, closedRunIds, collapsedIds, metaCollapsedIds, panelStates, passwordStatus?.authenticated])
+  }, [runs, turns, sessionId, panelOrder, panelColumns, layoutOrder, workspaceColumns, sidebarCollapsed, closedRunIds, collapsedIds, metaCollapsedIds, newDoneIds, panelStates, passwordStatus?.authenticated])
 
   async function flushQueue() {
     if (activeTurnRef.current) return
@@ -3413,33 +3539,64 @@ export default function App() {
     const bridge = bridgeRef.current
     const ownerTurn = turnsRef.current.find((turn) =>
       turn.runId === entry.runId && turn.id !== entry.turnId && turn.status === 'running')
+    // The reconnected stream must be bound to a REAL turn so its deltas/terminal
+    // event land somewhere. Prefer a still-running earlier turn (it owns the
+    // stream); otherwise adopt the just-submitted turn itself, so the recovered
+    // output is shown and its completion flushes the queue — instead of binding a
+    // null active turn (which dropped deltas and stranded the card forever).
+    const boundTurnId = ownerTurn?.id ?? entry.turnId
 
-    queuedPromptsRef.current.push(entry)
-    setTurns((current) =>
-      current.map((turn) =>
-        turn.id === entry.turnId
-          ? { ...turn, status: 'queued', response: 'Queued until the active Hermes stream finishes...' }
-          : turn,
-      ),
-    )
+    if (ownerTurn) {
+      // An earlier turn owns the active stream; the new prompt waits behind it.
+      queuedPromptsRef.current.push(entry)
+      setTurns((current) =>
+        current.map((turn) =>
+          turn.id === entry.turnId
+            ? { ...turn, status: 'queued', response: 'Queued until the active Hermes stream finishes...' }
+            : turn,
+        ),
+      )
+    } else {
+      // Desync: server reports an active stream but no local turn is running.
+      // Adopt this turn so the recovered stream resolves it rather than deadlocking.
+      setTurns((current) =>
+        current.map((turn) =>
+          turn.id === entry.turnId
+            ? { ...turn, status: 'running', response: isThinkingPlaceholder(turn.response) ? 'Thinking…' : turn.response }
+            : turn,
+        ),
+      )
+    }
 
-    activeTurnRef.current = ownerTurn?.id ?? null
+    activeTurnRef.current = boundTurnId
     activeRunRef.current = entry.runId
     assistantBufferRef.current = ownerTurn && !isThinkingPlaceholder(ownerTurn.response) ? ownerTurn.response : ''
-    setActiveHermesTurnId(ownerTurn?.id ?? null)
+    setActiveHermesTurnId(boundTurnId)
     setActiveHermesStreamId(activeStreamId)
     setConnectionState('busy')
     setConnectionDetail('Reconnected to active Hermes stream...')
     setRuns((current) => current.map((item) => (item.id === entry.runId ? { ...item, jobStatus: 'running' } : item)))
     if (bridge?.reconnectStream(activeStreamId)) return
 
+    // Reconnect failed: resolve the bound turn to an error state and flush the
+    // queue so the card never sits stuck on a stream we can't reach.
+    const message = 'Hermes reported an active stream, but it could not be reconnected.'
+    queuedPromptsRef.current = queuedPromptsRef.current.filter((queued) => queued.turnId !== entry.turnId)
+    setTurns((current) =>
+      current.map((turn) =>
+        turn.id === boundTurnId ? { ...turn, status: 'error', response: turn.response || message } : turn,
+      ),
+    )
+    setRuns((current) => current.map((item) => (item.id === entry.runId ? { ...item, jobStatus: 'error' } : item)))
     activeTurnRef.current = null
     activeRunRef.current = null
     assistantBufferRef.current = ''
     setActiveHermesTurnId(null)
     setActiveHermesStreamId(null)
+    setError(message)
     setConnectionState('error')
-    setConnectionDetail('Hermes reported an active stream, but it could not be reconnected.')
+    setConnectionDetail(message)
+    void flushQueue()
   }
 
   async function startTurn(entry: QueuedPromptEntry) {
@@ -3636,6 +3793,7 @@ export default function App() {
       metaCollapsed={metaCollapsedIds.has(run.id)}
       active={activeRunId === run.id}
       isNewDone={newDoneIds.has(run.id)}
+      onMarkRead={markConversationRead}
       dragging={draggingKey === run.id}
       dragActive={draggingKey !== null && draggingKey !== run.id}
       onDragStartCard={() => setDraggingKey(run.id)}
@@ -3823,6 +3981,7 @@ export default function App() {
                 <ConversationTreeSidebar
                   tree={conversationTree}
                   activeRunId={activeRunId}
+                  unreadRunIds={newDoneIds}
                   onSelect={selectConversation}
                   onDeleteRequest={requestDeleteConversation}
                 />

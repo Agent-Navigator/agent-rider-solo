@@ -5,7 +5,7 @@ import { createServer } from 'node:http'
 import { spawn, spawnSync } from 'node:child_process'
 import { createHmac, pbkdf2Sync, randomBytes, timingSafeEqual } from 'node:crypto'
 import { DatabaseSync } from 'node:sqlite'
-import { mkdirSync, readdirSync, statSync, readFileSync, writeFileSync, existsSync, createReadStream, accessSync, constants } from 'node:fs'
+import { mkdirSync, readdirSync, statSync, readFileSync, writeFileSync, existsSync, createReadStream, accessSync, constants, unlinkSync } from 'node:fs'
 import { dirname, join, resolve, basename, extname, normalize } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
@@ -668,6 +668,42 @@ function readFilePreview(input) {
   return { ...base, content: buffer.toString('utf8') }
 }
 
+// Resolve a file inside the sandbox for downloading as an attachment.
+function resolveFileForDownload(input) {
+  const path = safeResolve(input)
+  if (!path) return { error: 'path outside allowed root', status: 403 }
+  let stat
+  try {
+    stat = statSync(path)
+  } catch {
+    return { error: 'file not found', status: 404 }
+  }
+  if (!stat.isFile()) return { error: 'not a file', status: 400 }
+  const ext = extname(path).toLowerCase()
+  return { path, name: basename(path), size: stat.size, mime: MIME_TYPES[ext] || 'application/octet-stream' }
+}
+
+// Delete a single file within the sandbox. Directories are refused to avoid
+// accidental recursive removal from a read-first browser.
+function deleteFile(input) {
+  const path = safeResolve(input)
+  if (!path) return { error: 'path outside allowed root', status: 403 }
+  if (path === BROWSE_ROOT) return { error: 'cannot delete the workspace root', status: 400 }
+  let stat
+  try {
+    stat = statSync(path)
+  } catch {
+    return { error: 'file not found', status: 404 }
+  }
+  if (!stat.isFile()) return { error: 'only files can be deleted', status: 400 }
+  try {
+    unlinkSync(path)
+  } catch (error) {
+    return { error: String(error?.message || error), status: 400 }
+  }
+  return { path, deleted: true }
+}
+
 // ── Agent App plugins ───────────────────────────────────────────────────────
 // Apps are self-contained static web apps living under plugins/<slug>/, built to
 // plugins/<slug>/dist/ and served same-origin at /apps/<slug>/. They are
@@ -1132,6 +1168,41 @@ const server = createServer((req, res) => {
     const query = new URL(req.url, 'http://localhost').searchParams
     const result = readFilePreview(query.get('path') || '')
     sendJson(res, result.error ? result.status : 200, result)
+    return
+  }
+
+  if (req.method === 'GET' && url === '/store/fs/download') {
+    const query = new URL(req.url, 'http://localhost').searchParams
+    const result = resolveFileForDownload(query.get('path') || '')
+    if (result.error) {
+      sendJson(res, result.status, result)
+      return
+    }
+    res.writeHead(200, {
+      'Content-Type': result.mime,
+      'Content-Length': result.size,
+      'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(result.name)}`,
+      'Cache-Control': 'no-store',
+    })
+    createReadStream(result.path).pipe(res)
+    return
+  }
+
+  if (req.method === 'POST' && url === '/store/fs/delete') {
+    let body = ''
+    req.on('data', (chunk) => {
+      body += chunk
+      if (body.length > 100_000) req.destroy()
+    })
+    req.on('end', () => {
+      try {
+        const { path } = JSON.parse(body || '{}')
+        const result = deleteFile(path)
+        sendJson(res, result.error ? result.status : 200, result)
+      } catch (error) {
+        sendJson(res, 400, { error: String(error?.message || error) })
+      }
+    })
     return
   }
 

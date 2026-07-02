@@ -24,6 +24,8 @@ export interface WorkspaceLayout {
   collapsedRunIds?: string[]
   /** Per-card context section collapsed state. */
   cardMetaCollapsedIds?: string[]
+  /** Conversations with a newly-completed, unread result (red dot). */
+  unreadRunIds?: string[]
   /** Per-panel chrome state keyed by panel id: terminal, plugin:<id>, app:<slug>. */
   panelStates?: Record<string, WorkspacePanelState>
 }
@@ -182,6 +184,26 @@ export async function makeDir(parent: string, name: string): Promise<{ path: str
     const data = (await res.json()) as { path?: string; error?: string }
     if (!res.ok || !data.path) return { error: data.error || 'Failed to create folder' }
     return { path: data.path }
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : String(error) }
+  }
+}
+
+// Same-origin URL for downloading a workspace file as an attachment.
+export function fileDownloadUrl(path: string): string {
+  return `/store/fs/download?path=${encodeURIComponent(path)}`
+}
+
+export async function deleteFile(path: string): Promise<{ ok: true } | { error: string }> {
+  try {
+    const res = await fetch('/store/fs/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path }),
+    })
+    const data = (await res.json()) as { deleted?: boolean; error?: string }
+    if (!res.ok || !data.deleted) return { error: data.error || 'Failed to delete file' }
+    return { ok: true }
   } catch (error) {
     return { error: error instanceof Error ? error.message : String(error) }
   }

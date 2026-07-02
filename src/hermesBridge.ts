@@ -261,6 +261,9 @@ export class HermesBridge {
     }
 
     source.addEventListener('token', (raw) => {
+      // Live data means the transport recovered on its own — abandon any pending
+      // recovery timer so we don't needlessly close and reopen a healthy stream.
+      this.clearStreamRecovery(streamId)
       try {
         const payload = JSON.parse((raw as MessageEvent).data) as { text?: string }
         this.emit({ type: 'message.delta', payload: { text: String(payload.text ?? '') } })
@@ -292,9 +295,14 @@ export class HermesBridge {
         const msg = String(payload.error ?? 'Hermes stream error')
         finishStream('error', msg, { type: 'message.error', payload: { error: msg } })
       } catch {
-        // EventSource emits "error" during normal reconnect attempts. Only treat a
-        // fully closed transport as suspicious, and probe Hermes before failing.
-        if (source.readyState === EventSource.CLOSED) {
+        // A transport-level "error" with no payload means the SSE dropped before an
+        // explicit stream_end/done/error event. The browser may be auto-reconnecting
+        // (CONNECTING) or have given up (CLOSED); in BOTH cases the stream is
+        // interrupted, so we must drive our own deterministic recovery — probe Hermes
+        // and replay/finish. Leaving the CONNECTING case unhandled is what strands a
+        // turn at "Thinking…" (and its follow-ups at "Queued") forever. Only an OPEN
+        // transport (e.g. a stray heartbeat parse error) is safe to ignore.
+        if (source.readyState !== EventSource.OPEN) {
           this.recoverClosedStream(source, streamId, closeSource)
         }
       }
