@@ -373,21 +373,6 @@ button { cursor: pointer; }
   scroll-margin-block: 96px;
 }
 
-.turn-children {
-  display: grid;
-  gap: 12px;
-  margin-left: 18px;
-  padding-left: 16px;
-  border-left: 1px solid rgba(148, 163, 184, 0.18);
-}
-
-.turn-node.depth-2 .turn-children,
-.turn-node.depth-3 .turn-children,
-.turn-node.depth-4 .turn-children {
-  margin-left: 12px;
-  padding-left: 12px;
-}
-
 .turn {
   display: grid;
   gap: 10px;
@@ -497,6 +482,7 @@ button { cursor: pointer; }
 
 .copy-prompt-button,
 .assistant-to-bottom-button,
+.assistant-refresh-button,
 .assistant-stop-button,
 .ask-more-button,
 .ask-more-cancel {
@@ -532,6 +518,12 @@ button { cursor: pointer; }
   white-space: nowrap;
 }
 
+.assistant-refresh-button {
+  flex-shrink: 0;
+  padding: 3px 9px;
+  white-space: nowrap;
+}
+
 .assistant-stop-button {
   flex-shrink: 0;
   padding: 3px 9px;
@@ -543,6 +535,7 @@ button { cursor: pointer; }
 
 .copy-prompt-button:hover,
 .assistant-to-bottom-button:hover,
+.assistant-refresh-button:hover,
 .assistant-stop-button:hover,
 .ask-more-button:hover,
 .ask-more-cancel:hover {

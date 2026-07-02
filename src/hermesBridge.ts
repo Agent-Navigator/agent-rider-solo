@@ -165,6 +165,15 @@ export class HermesBridge {
     return data.cancelled !== false
   }
 
+  /** Re-open an existing stream without submitting a second prompt. */
+  reconnectStream(streamId = this.activeStreamId) {
+    const cleanStreamId = String(streamId ?? '').trim()
+    if (!cleanStreamId) return false
+    this.setStatus('busy', 'Reconnecting to Hermes stream...')
+    this.openStream(cleanStreamId)
+    return true
+  }
+
   private openStream(streamId: string) {
     this.activeSource?.close()
     const source = new EventSource(`/api/chat/stream?stream_id=${encodeURIComponent(streamId)}`)

@@ -161,11 +161,6 @@ interface TurnItem {
   createdAt: string
 }
 
-interface TurnTreeNode {
-  turn: TurnItem
-  children: TurnTreeNode[]
-}
-
 interface QueuedPromptEntry {
   turnId: string
   runId: string
@@ -536,29 +531,40 @@ function conversationTitle(run: RunNode) {
   return run.task.trim() || run.project.trim() || compactText(run.prompt, 48) || 'Untitled conversation'
 }
 
-function buildTurnTree(turns: TurnItem[]) {
-  const nodes = new Map<string, TurnTreeNode>()
-  const roots: TurnTreeNode[] = []
+function buildLinearTurns(turns: TurnItem[]) {
+  const byId = new Map(turns.map((turn) => [turn.id, turn]))
+  const childrenByParent = new Map<string, TurnItem[]>()
+  const roots: TurnItem[] = []
+  const newestFirst = (a: TurnItem, b: TurnItem) => b.createdAt.localeCompare(a.createdAt)
 
   for (const turn of turns) {
-    nodes.set(turn.id, { turn, children: [] })
-  }
-
-  for (const turn of turns) {
-    const node = nodes.get(turn.id)
-    if (!node) continue
-
     const parentId = turn.parentTurnId ?? null
-    const parent = parentId ? nodes.get(parentId) : null
-    if (parent) parent.children.push(node)
-    else roots.push(node)
+    if (parentId && byId.has(parentId)) {
+      const children = childrenByParent.get(parentId) ?? []
+      children.push(turn)
+      childrenByParent.set(parentId, children)
+    } else {
+      roots.push(turn)
+    }
   }
 
-  const newestFirst = (a: TurnTreeNode, b: TurnTreeNode) => b.turn.createdAt.localeCompare(a.turn.createdAt)
-  for (const node of nodes.values()) node.children.sort(newestFirst)
+  for (const children of childrenByParent.values()) children.sort(newestFirst)
   roots.sort(newestFirst)
 
-  return roots
+  const ordered: TurnItem[] = []
+  const visited = new Set<string>()
+
+  function appendWithFollowUps(turn: TurnItem) {
+    if (visited.has(turn.id)) return
+    visited.add(turn.id)
+    for (const child of childrenByParent.get(turn.id) ?? []) appendWithFollowUps(child)
+    ordered.push(turn)
+  }
+
+  for (const root of roots) appendWithFollowUps(root)
+  for (const turn of [...turns].sort(newestFirst)) appendWithFollowUps(turn)
+
+  return ordered
 }
 
 function timeLabel(iso: string) {
@@ -1063,7 +1069,9 @@ function ConversationCard({
   onOpenPicker,
   onClose,
   stoppableTurnId,
+  refreshableTurnId,
   onStopTurn,
+  onRefreshTurn,
   dragging,
   dragActive,
   onDragStartCard,
@@ -1080,7 +1088,7 @@ function ConversationCard({
   isNewDone: boolean
   onToggle: () => void
   onMetaCollapsedChange: (collapsed: boolean) => void
-  onSend: (text: string, parentTurnId?: string | null) => void
+  onSend: (text: string, parentTurnId?: string | null) => string | null
   onTitleChange: (value: string) => void
   onCategoryChange: (value: string) => void
   onProjectChange: (value: string) => void
@@ -1088,7 +1096,9 @@ function ConversationCard({
   onOpenPicker: () => void
   onClose: () => void
   stoppableTurnId: string | null
+  refreshableTurnId: string | null
   onStopTurn: (turnId: string) => void
+  onRefreshTurn: (turnId: string) => void
   /** True while THIS card is the one being dragged. */
   dragging: boolean
   /** True while SOME other card is being dragged (enables drop targets). */
@@ -1113,16 +1123,18 @@ function ConversationCard({
   const [askDraft, setAskDraft] = useState('')
   const [copiedTurnId, setCopiedTurnId] = useState<string | null>(null)
   const [collapsedTurnIds, setCollapsedTurnIds] = useState<Set<string>>(new Set())
-  const turnTree = useMemo(() => buildTurnTree(turns), [turns])
+  const [focusTurnId, setFocusTurnId] = useState<string | null>(null)
+  const linearTurns = useMemo(() => buildLinearTurns(turns), [turns])
   const status = run.jobStatus
   const isDraft = turns.length === 0
-  const topVisibleTurnId = turnTree[0]?.turn.id ?? null
-  const topVisibleTurnRef = useRef<HTMLDivElement | null>(null)
+  const topVisibleTurnId = linearTurns[0]?.id ?? null
+  const focusedTurnId = focusTurnId && linearTurns.some((turn) => turn.id === focusTurnId) ? focusTurnId : topVisibleTurnId
+  const focusedTurnRef = useRef<HTMLDivElement | null>(null)
   const askMoreFormRef = useRef<HTMLFormElement | null>(null)
   const askMoreTextareaRef = useRef<HTMLTextAreaElement | null>(null)
 
-  // Keep the viewport anchored to the newest visible bubble in the tree.
-  // If Ask More is open, the inline form becomes the focus target instead.
+  // Keep the viewport anchored to the most relevant visible bubble.
+  // If Ask Here is open, the inline form becomes the focus target instead.
   useEffect(() => {
     if (askParentId) {
       const frame = requestAnimationFrame(() => {
@@ -1132,14 +1144,14 @@ function ConversationCard({
       return () => cancelAnimationFrame(frame)
     }
 
-    if (!topVisibleTurnId) return
-    setCollapsedTurnIds(new Set(turns.filter((turn) => turn.id !== topVisibleTurnId).map((turn) => turn.id)))
+    if (!focusedTurnId) return
+    setCollapsedTurnIds(new Set(turns.filter((turn) => turn.id !== focusedTurnId).map((turn) => turn.id)))
     const frame = requestAnimationFrame(() => {
-      scrollToFocusTarget(topVisibleTurnRef.current)
+      scrollToFocusTarget(focusedTurnRef.current)
     })
     return () => cancelAnimationFrame(frame)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [topVisibleTurnId, askParentId])
+  }, [focusedTurnId, askParentId])
 
   function hideAllTurns() {
     setCollapsedTurnIds(new Set(turns.map((turn) => turn.id)))
@@ -1163,7 +1175,8 @@ function ConversationCard({
     const text = draft.trim()
     if (!text) return
     setDraft('')
-    onSend(text)
+    const turnId = onSend(text)
+    if (turnId) setFocusTurnId(turnId)
   }
 
   function toggleTurnCollapsed(turnId: string) {
@@ -1191,7 +1204,8 @@ function ConversationCard({
     if (!text) return
     setAskDraft('')
     setAskParentId(null)
-    onSend(text, parentTurnId)
+    const turnId = onSend(text, parentTurnId)
+    if (turnId) setFocusTurnId(turnId)
   }
 
   async function copyPrompt(turn: TurnItem) {
@@ -1210,17 +1224,17 @@ function ConversationCard({
     scrollToFocusTarget(document.getElementById(assistantBubbleBottomId(turnId)))
   }
 
-  function renderTurnNode(node: TurnTreeNode, depth = 0): ReactNode {
-    const { turn, children } = node
+  function renderTurn(turn: TurnItem): ReactNode {
     const canAskMore = turn.status !== 'running' && turn.status !== 'queued'
     const canStop = turn.status === 'running' && turn.id === stoppableTurnId
+    const canRefresh = turn.status === 'running' && turn.id === refreshableTurnId
     const isTurnCollapsed = collapsedTurnIds.has(turn.id)
 
     return (
       <div
         key={turn.id}
-        ref={turn.id === topVisibleTurnId ? topVisibleTurnRef : undefined}
-        className={`turn-node depth-${Math.min(depth, 4)}`}
+        ref={turn.id === focusedTurnId ? focusedTurnRef : undefined}
+        className="turn-node"
       >
         <article className={`turn ${turn.status} ${isTurnCollapsed ? 'collapsed' : ''}`}>
           <div
@@ -1271,6 +1285,16 @@ function ConversationCard({
                       Stop
                     </button>
                   ) : null}
+                  {canRefresh ? (
+                    <button
+                      type="button"
+                      className="assistant-refresh-button"
+                      onClick={() => onRefreshTurn(turn.id)}
+                      aria-label="Refresh Hermes stream"
+                    >
+                      Refresh
+                    </button>
+                  ) : null}
                   <button
                     type="button"
                     className="assistant-to-bottom-button"
@@ -1300,7 +1324,7 @@ function ConversationCard({
                     setAskDraft('')
                   }}
                 >
-                  Ask More
+                  Ask Here
                 </button>
               </div>
               {askParentId === turn.id ? (
@@ -1337,9 +1361,6 @@ function ConversationCard({
             </div>
           ) : null}
         </article>
-        {!isTurnCollapsed && children.length ? (
-          <div className="turn-children">{children.map((child) => renderTurnNode(child, depth + 1))}</div>
-        ) : null}
       </div>
     )
   }
@@ -1566,7 +1587,7 @@ function ConversationCard({
                       Hide All
                     </button>
                   </div>
-                  {turnTree.map((node) => renderTurnNode(node))}
+                  {linearTurns.map((turn) => renderTurn(turn))}
                 </div>
               ) : null}
             </>
@@ -2541,6 +2562,8 @@ export default function App() {
   const hydratedRef = useRef(false)
   const queuedPromptsRef = useRef<QueuedPromptEntry[]>([])
   const assistantBufferRef = useRef('')
+  const [activeHermesTurnId, setActiveHermesTurnId] = useState<string | null>(null)
+  const [activeHermesStreamId, setActiveHermesStreamId] = useState<string | null>(null)
   // Each conversation (run) keeps its own Hermes session for multi-turn context.
   const sessionByRunRef = useRef<Map<string, string>>(new Map())
 
@@ -2982,6 +3005,8 @@ export default function App() {
         activeTurnRef.current = null
         activeRunRef.current = null
         assistantBufferRef.current = ''
+        setActiveHermesTurnId(null)
+        setActiveHermesStreamId(null)
         setConnectionState('ready')
         setConnectionDetail('Assistant response complete')
         void flushQueue()
@@ -3012,6 +3037,8 @@ export default function App() {
         activeTurnRef.current = null
         activeRunRef.current = null
         assistantBufferRef.current = ''
+        setActiveHermesTurnId(null)
+        setActiveHermesStreamId(null)
         void flushQueue()
       }
     })
@@ -3168,6 +3195,8 @@ export default function App() {
       setSessionId(session)
       setSessionInfoText(`Hermes session ${session}`)
       await bridge.submitPrompt(session, prompt, workspace)
+      setActiveHermesTurnId(turnId)
+      setActiveHermesStreamId(bridge.activeStreamId)
       setConnectionState('busy')
       setConnectionDetail('Hermes is running…')
       setTurns((current) => current.map((item) => (item.id === turnId ? { ...item, status: 'running', response: 'Thinking…' } : item)))
@@ -3188,6 +3217,8 @@ export default function App() {
       setConnectionDetail(message)
       activeTurnRef.current = null
       activeRunRef.current = null
+      setActiveHermesTurnId(null)
+      setActiveHermesStreamId(null)
       setTurns((current) => current.map((item) => (item.id === turnId ? { ...item, status: 'error', response: message } : item)))
       setRuns((current) => current.map((item) => (item.id === runId ? { ...item, jobStatus: 'error' } : item)))
     }
@@ -3208,6 +3239,8 @@ export default function App() {
     activeTurnRef.current = null
     activeRunRef.current = null
     assistantBufferRef.current = ''
+    setActiveHermesTurnId(null)
+    setActiveHermesStreamId(null)
     setConnectionState('ready')
     setConnectionDetail('Hermes stopped')
     void flushQueue()
@@ -3228,6 +3261,29 @@ export default function App() {
       setConnectionState('error')
       setConnectionDetail(message)
     }
+  }
+
+  function refreshHermesTurn(turnId: string) {
+    const bridge = bridgeRef.current
+    if (!bridge || turnId !== activeHermesTurnId || !activeHermesStreamId) return
+    setError(null)
+    setConnectionDetail('Reconnecting to Hermes stream...')
+    const reconnected = bridge.reconnectStream(activeHermesStreamId)
+    if (!reconnected) {
+      const message = 'Hermes stream is no longer available.'
+      setError(message)
+      setConnectionState('error')
+      setConnectionDetail(message)
+      setTurns((current) => current.map((item) => (item.id === turnId ? { ...item, status: 'error', response: item.response || message } : item)))
+      setRuns((current) => current.map((item) => (item.id === activeRunRef.current ? { ...item, jobStatus: 'error' } : item)))
+      activeTurnRef.current = null
+      activeRunRef.current = null
+      setActiveHermesTurnId(null)
+      setActiveHermesStreamId(null)
+      assistantBufferRef.current = ''
+      return
+    }
+    setConnectionState('busy')
   }
 
   // Queue a turn if Hermes is busy, otherwise start it immediately.
@@ -3263,10 +3319,10 @@ export default function App() {
   function sendInConversation(runId: string, prompt: string, parentTurnId: string | null = null) {
     if (!bridgeRef.current) {
       setError('Hermes bridge is not ready yet.')
-      return
+      return null
     }
     const run = runs.find((item) => item.id === runId)
-    if (!run) return
+    if (!run) return null
 
     setActiveRunId(runId)
     const hasTurns = turns.some((turn) => turn.runId === runId)
@@ -3291,6 +3347,7 @@ export default function App() {
     setTurns((current) => [turn, ...current])
     setError(null)
     enqueueOrStart({ turnId, runId, prompt, workspace })
+    return turnId
   }
 
   const renderRunCard = (run: RunNode) => (
@@ -3316,8 +3373,10 @@ export default function App() {
       onAgentChange={(value) => updateRunContext(run.id, { agentType: value })}
       onOpenPicker={() => setPickerRunId(run.id)}
       onClose={() => closeConversation(run.id)}
-      stoppableTurnId={bridgeRef.current?.activeStreamId ? activeTurnRef.current : null}
+      stoppableTurnId={activeHermesStreamId ? activeHermesTurnId : null}
+      refreshableTurnId={activeHermesStreamId ? activeHermesTurnId : null}
       onStopTurn={(turnId) => void stopHermesTurn(turnId)}
+      onRefreshTurn={refreshHermesTurn}
       agentTerminalState={panelStates[agentTerminalStateKey(run.id)]}
       onAgentTerminalStateChange={(patch) => updatePanelState(agentTerminalStateKey(run.id), patch)}
     />
