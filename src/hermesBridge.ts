@@ -56,6 +56,8 @@ export class HermesBridge {
   private listeners = new Set<Listener>()
   private statusListeners = new Set<StatusListener>()
   private activeSource: EventSource | null = null
+  private streamErrorAttempts = new Map<string, number>()
+  private streamReconnectTimers = new Map<string, number>()
 
   public sessionId: string | null = null
   public connectionState: HermesConnectionState = 'disconnected'
@@ -81,6 +83,7 @@ export class HermesBridge {
     this.activeSource?.close()
     this.activeSource = null
     this.activeStreamId = null
+    this.clearAllStreamRecovery()
     this.setStatus('disconnected', 'Disconnected')
   }
 
@@ -250,6 +253,13 @@ export class HermesBridge {
       }
     }
 
+    const finishStream = (state: HermesConnectionState, detail: string, event: HermesRpcEvent) => {
+      this.clearStreamRecovery(streamId)
+      closeSource()
+      this.setStatus(state, detail)
+      this.emit(event)
+    }
+
     source.addEventListener('token', (raw) => {
       try {
         const payload = JSON.parse((raw as MessageEvent).data) as { text?: string }
@@ -260,9 +270,7 @@ export class HermesBridge {
     })
 
     const finish = () => {
-      closeSource()
-      this.setStatus('ready', 'Assistant response complete')
-      this.emit({ type: 'message.complete' })
+      finishStream('ready', 'Assistant response complete', { type: 'message.complete' })
     }
 
     source.addEventListener('stream_end', finish)
@@ -275,30 +283,81 @@ export class HermesBridge {
       } catch {
         // keep the default payload
       }
-      closeSource()
-      this.setStatus('ready', 'Hermes stopped')
-      this.emit({ type: 'message.cancelled', payload })
+      finishStream('ready', 'Hermes stopped', { type: 'message.cancelled', payload })
     })
 
     source.addEventListener('error', (raw) => {
       try {
         const payload = JSON.parse((raw as MessageEvent).data) as { error?: string }
         const msg = String(payload.error ?? 'Hermes stream error')
-        closeSource()
-        this.setStatus('error', msg)
-        this.emit({ type: 'message.error', payload: { error: msg } })
+        finishStream('error', msg, { type: 'message.error', payload: { error: msg } })
       } catch {
-        // onerror fires for network/connection errors too — only act on closed state
+        // EventSource emits "error" during normal reconnect attempts. Only treat a
+        // fully closed transport as suspicious, and probe Hermes before failing.
         if (source.readyState === EventSource.CLOSED) {
-          if (this.activeSource === source) {
-            this.activeSource = null
-            this.activeStreamId = null
-          }
-          this.setStatus('error', 'Hermes stream disconnected')
-          this.emit({ type: 'message.error', payload: { error: 'Hermes stream disconnected' } })
+          this.recoverClosedStream(source, streamId, closeSource)
         }
       }
     })
+  }
+
+  private recoverClosedStream(source: EventSource, streamId: string, closeSource: () => void) {
+    if (this.activeSource !== source) return
+
+    const attempt = (this.streamErrorAttempts.get(streamId) ?? 0) + 1
+    this.streamErrorAttempts.set(streamId, attempt)
+    this.setStatus('busy', attempt === 1 ? 'Reconnecting to Hermes stream...' : 'Checking Hermes stream...')
+
+    const existingTimer = this.streamReconnectTimers.get(streamId)
+    if (existingTimer) window.clearTimeout(existingTimer)
+
+    const timer = window.setTimeout(async () => {
+      this.streamReconnectTimers.delete(streamId)
+      if (this.activeSource !== source) return
+
+      const recoverable = await this.isStreamRecoverable(streamId).catch(() => attempt < 3)
+      if (this.activeSource !== source) return
+
+      if (recoverable) {
+        this.reconnectStream(streamId)
+        return
+      }
+
+      if (attempt < 3) {
+        this.recoverClosedStream(source, streamId, closeSource)
+        return
+      }
+
+      this.clearStreamRecovery(streamId)
+      closeSource()
+      this.setStatus('error', 'Hermes stream disconnected')
+      this.emit({ type: 'message.error', payload: { error: 'Hermes stream disconnected' } })
+    }, Math.min(750 * attempt, 2500))
+
+    this.streamReconnectTimers.set(streamId, timer)
+  }
+
+  private async isStreamRecoverable(streamId: string) {
+    const res = await fetch(`/api/chat/stream/status?stream_id=${encodeURIComponent(streamId)}`, {
+      cache: 'no-store',
+      credentials: 'include',
+    })
+    if (!res.ok) return false
+    const data = (await res.json()) as { active?: unknown; replay_available?: unknown }
+    return Boolean(data.active || data.replay_available)
+  }
+
+  private clearStreamRecovery(streamId: string) {
+    const timer = this.streamReconnectTimers.get(streamId)
+    if (timer) window.clearTimeout(timer)
+    this.streamReconnectTimers.delete(streamId)
+    this.streamErrorAttempts.delete(streamId)
+  }
+
+  private clearAllStreamRecovery() {
+    for (const timer of this.streamReconnectTimers.values()) window.clearTimeout(timer)
+    this.streamReconnectTimers.clear()
+    this.streamErrorAttempts.clear()
   }
 
   private emit(event: HermesRpcEvent) {
