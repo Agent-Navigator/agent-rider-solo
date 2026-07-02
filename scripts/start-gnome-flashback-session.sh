@@ -32,6 +32,14 @@ metacity_pid=
 panel_pid=
 
 while true; do
+  # Exit (and clean up children) once our X server is gone. Without this the
+  # respawn loop survives `xpra stop` and keeps launching metacity/gnome-panel
+  # against the NEXT server started on the same display number — two competing
+  # `metacity --replace` loops then kick each other out forever.
+  if ! timeout 5 xset q >/dev/null 2>&1; then
+    exit 0
+  fi
+
   if [[ -z "${metacity_pid}" ]] || ! kill -0 "${metacity_pid}" 2>/dev/null; then
     /usr/bin/metacity --replace &
     metacity_pid="$!"
