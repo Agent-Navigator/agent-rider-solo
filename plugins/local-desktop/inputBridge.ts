@@ -25,22 +25,31 @@ interface XpraWindow {
 
 interface XpraClient {
   id_to_window?: Record<string, XpraWindow>
+  send?: (...args: unknown[]) => unknown
+  __agentRiderSendWrapped?: boolean
 }
 
 interface LocalDesktopWindow extends Window {
   client?: XpraClient
   jQuery?: (target: string | Element) => { off: (events?: string) => void }
   __agentRiderInputBridge?: boolean
+  __agentRiderDiag?: boolean
 }
 
-interface CanvasBridgeState {
-  lastMouseDownAt: number
-  lastMouseUpAt: number
-  lastMouseMoveAt: number
-  pointerButtons: Map<number, number>
-}
+// xpra wires native mouse input twice: jQuery(canvas).mousedown/up/move in
+// Window.js and jQuery('#screen').mousedown/up/move in Client.js. We unbind
+// both explicitly so the pointer-event bridge below is the only input path.
+const XPRA_NATIVE_MOUSE_EVENTS = 'mousedown mouseup mousemove'
 
-const NORMAL_MOUSE_EVENT_WINDOW_MS = 80
+function unbindXpraNativeMouseHandlers(desktopWindow: LocalDesktopWindow, canvas?: HTMLCanvasElement) {
+  try {
+    desktopWindow.jQuery?.('#screen').off(XPRA_NATIVE_MOUSE_EVENTS)
+    if (canvas) desktopWindow.jQuery?.(canvas).off(XPRA_NATIVE_MOUSE_EVENTS)
+  } catch {
+    // jQuery may not be ready yet; the document-level suppression still blocks
+    // these handlers until the next install pass unbinds them.
+  }
+}
 
 function pointerButtonToXpraWhich(button: number) {
   if (button === 0) return 1
@@ -100,6 +109,71 @@ function suppressNativeInputUi(event: Event) {
   event.stopImmediatePropagation()
 }
 
+// Block xpra's own native mouse handling (and the browser's default paste/menu
+// UI) at the document capture phase, so the pointer-event bridge is the single
+// source of truth for mouse input. This is also what lets `pointerup` fire
+// reliably (the native mousedown handling was swallowing the release). Wheel is
+// left alone so xpra keeps handling scroll natively.
+const SUPPRESSED_MOUSE_EVENTS = ['mousedown', 'mouseup', 'mousemove', 'click', 'dblclick', 'auxclick', 'contextmenu']
+
+function installNativeMouseSuppression(desktopDocument: Document) {
+  for (const type of SUPPRESSED_MOUSE_EVENTS) {
+    desktopDocument.addEventListener(type, suppressNativeInputUi, true)
+  }
+}
+
+// ── TEMPORARY diagnostic ─────────────────────────────────────────────────────
+// Shows pointer events and the actual button-action (button + down/up tally)
+// sent to xpra. Remove once the fix is confirmed. Set to false to disable.
+const DIAGNOSTIC = true
+
+function installDiagnostics(desktopWindow: LocalDesktopWindow, desktopDocument: Document) {
+  if (!DIAGNOSTIC) return
+  const lines: string[] = []
+  let overlay = desktopDocument.getElementById('agent-rider-diag') as HTMLDivElement | null
+  if (!overlay) {
+    overlay = desktopDocument.createElement('div')
+    overlay.id = 'agent-rider-diag'
+    overlay.style.cssText =
+      'position:fixed;top:8px;left:8px;z-index:2147483647;max-width:70vw;padding:8px 10px;' +
+      'background:rgba(4,10,18,0.92);color:#7be0a4;font:12px/1.4 ui-monospace,Menlo,monospace;' +
+      'border:1px solid #2b6;border-radius:8px;white-space:pre;pointer-events:none;'
+    overlay.textContent = 'diagnostic — click left then right (expect d==u)'
+    ;(desktopDocument.body || desktopDocument.documentElement).appendChild(overlay)
+  }
+  const log = (line: string) => {
+    lines.push(line)
+    while (lines.length > 14) lines.shift()
+    if (overlay) overlay.textContent = lines.join('\n')
+  }
+
+  const client = desktopWindow.client
+  if (client && typeof client.send === 'function' && !client.__agentRiderSendWrapped) {
+    const original = client.send.bind(client)
+    client.__agentRiderSendWrapped = true
+    let downs = 0
+    let ups = 0
+    client.send = (...args: unknown[]) => {
+      const packet = args[0]
+      if (Array.isArray(packet) && packet[0] === 'button-action') {
+        if (packet[3]) downs += 1
+        else ups += 1
+        log(`→ xpra button=${packet[2]} pressed=${packet[3]} [d=${downs} u=${ups}]`)
+      }
+      return original(...args)
+    }
+  }
+
+  if (desktopWindow.__agentRiderDiag) return
+  desktopWindow.__agentRiderDiag = true
+  for (const type of ['pointerdown', 'pointerup', 'pointercancel']) {
+    desktopDocument.addEventListener(type, (event) => {
+      const pe = event as PointerEvent
+      log(`${type}: button=${pe.button} which=${(pe as unknown as MouseEvent).which} type=${pe.pointerType}`)
+    }, true)
+  }
+}
+
 function releasePasteboard(desktopWindow: LocalDesktopWindow, desktopDocument: Document) {
   const pasteboard = desktopDocument.getElementById('pasteboard') as HTMLTextAreaElement | null
   if (!pasteboard) return
@@ -140,94 +214,85 @@ function installCanvasBridge(
   if (!canvas || installed.has(canvas)) return
   installed.add(canvas)
 
-  const state: CanvasBridgeState = {
-    lastMouseDownAt: 0,
-    lastMouseUpAt: 0,
-    lastMouseMoveAt: 0,
-    pointerButtons: new Map(),
+  unbindXpraNativeMouseHandlers(desktopWindow, canvas)
+
+  // We fully own input: xpra's own jQuery mouse handlers are unbound, native
+  // mouse events are blocked at the document level, and this bridge forwards
+  // exactly one synthetic press per (pointer, button) with a guaranteed matching
+  // release. Without a guaranteed release, held buttons accumulate on the X
+  // server and left+right chords get emulated as middle-click (paste).
+  const heldButtons = new Map<number, Set<number>>() // pointerId -> held xpra `which` values
+
+  const heldFor = (pointerId: number) => {
+    let held = heldButtons.get(pointerId)
+    if (!held) {
+      held = new Set()
+      heldButtons.set(pointerId, held)
+    }
+    return held
   }
 
-  const now = () => desktopWindow.performance.now()
-  const normalMouseArrived = (recordedAt: number, pointerAt: number) =>
-    recordedAt >= pointerAt && recordedAt - pointerAt <= NORMAL_MOUSE_EVENT_WINDOW_MS
+  const releaseButton = (event: PointerEvent | MouseEvent, pointerId: number, which: number) => {
+    const held = heldButtons.get(pointerId)
+    if (!held?.delete(which)) return
+    xpraWindow.on_mouseup?.(createXpraMouseEvent(event, which))
+  }
 
-  canvas.addEventListener('mousedown', () => {
-    state.lastMouseDownAt = now()
-  }, true)
-  canvas.addEventListener('mouseup', () => {
-    state.lastMouseUpAt = now()
-  }, true)
-  canvas.addEventListener('mousemove', () => {
-    state.lastMouseMoveAt = now()
-  }, true)
-  canvas.addEventListener('contextmenu', (event) => {
-    suppressNativeInputUi(event)
-  }, true)
+  const releaseAll = (event: PointerEvent | MouseEvent, pointerId: number) => {
+    const held = heldButtons.get(pointerId)
+    if (!held) return
+    for (const which of [...held]) releaseButton(event, pointerId, which)
+  }
 
   canvas.addEventListener('pointerdown', (event) => {
     suppressNativeInputUi(event)
     focusDesktopCanvas(canvas, desktopDocument)
-    if (event.button < 0 && event.pointerType !== 'touch') return
-    const pointerAt = now()
-    const which = pointerButtonToXpraWhich(event.button < 0 ? 0 : event.button)
-    const fallbackEvent = createXpraMouseEvent(event, which)
-    state.pointerButtons.set(event.pointerId, which)
-    desktopWindow.setTimeout(() => {
-      if (!normalMouseArrived(state.lastMouseDownAt, pointerAt)) {
-        xpraWindow.on_mousedown?.(fallbackEvent)
-      }
-    }, 0)
+    if (event.button < 0) return
+    const which = pointerButtonToXpraWhich(event.button)
+    // Safety net: if this button's previous release was lost, release it before
+    // pressing again so downs/ups never go out of balance.
+    releaseButton(event, event.pointerId, which)
+    heldFor(event.pointerId).add(which)
+    try {
+      canvas.setPointerCapture(event.pointerId)
+    } catch {
+      // Some pointer ids can't be captured; the release handlers below still fire.
+    }
+    xpraWindow.on_mousedown?.(createXpraMouseEvent(event, which))
   }, true)
 
   canvas.addEventListener('pointerup', (event) => {
     suppressNativeInputUi(event)
-    const pointerAt = now()
-    const which = event.button >= 0
-      ? pointerButtonToXpraWhich(event.button)
-      : state.pointerButtons.get(event.pointerId) ?? 0
-    const fallbackEvent = createXpraMouseEvent(event, which)
-    state.pointerButtons.delete(event.pointerId)
-    desktopWindow.setTimeout(() => {
-      if (!normalMouseArrived(state.lastMouseUpAt, pointerAt)) {
-        xpraWindow.on_mouseup?.(fallbackEvent)
+    if (event.button >= 0) {
+      releaseButton(event, event.pointerId, pointerButtonToXpraWhich(event.button))
+    } else {
+      releaseAll(event, event.pointerId)
+    }
+    if (!heldButtons.get(event.pointerId)?.size) {
+      try {
+        canvas.releasePointerCapture(event.pointerId)
+      } catch {
+        // Capture may already be lost; ignore.
       }
-    }, 0)
+    }
   }, true)
 
   canvas.addEventListener('pointermove', (event) => {
     suppressNativeInputUi(event)
-    const pointerAt = now()
-    const fallbackEvent = createXpraMouseEvent(event, state.pointerButtons.get(event.pointerId) ?? 0)
-    desktopWindow.setTimeout(() => {
-      if (!normalMouseArrived(state.lastMouseMoveAt, pointerAt)) {
-        xpraWindow.on_mousemove?.(fallbackEvent)
-      }
-    }, 0)
+    xpraWindow.on_mousemove?.(createXpraMouseEvent(event, 0))
   }, true)
 
+  // Any abnormal end of the interaction must still release every held button.
   canvas.addEventListener('pointercancel', (event) => {
     suppressNativeInputUi(event)
-    state.pointerButtons.delete(event.pointerId)
+    releaseAll(event, event.pointerId)
   }, true)
-
-  if (!('PointerEvent' in desktopWindow)) {
-    canvas.addEventListener('mousedown', (event) => {
-      suppressNativeInputUi(event)
-      focusDesktopCanvas(canvas, desktopDocument)
-      state.lastMouseDownAt = now()
-      xpraWindow.on_mousedown?.(createXpraMouseEvent(event, pointerButtonToXpraWhich(event.button)))
-    }, true)
-    canvas.addEventListener('mouseup', (event) => {
-      suppressNativeInputUi(event)
-      state.lastMouseUpAt = now()
-      xpraWindow.on_mouseup?.(createXpraMouseEvent(event, pointerButtonToXpraWhich(event.button)))
-    }, true)
-    canvas.addEventListener('mousemove', (event) => {
-      suppressNativeInputUi(event)
-      state.lastMouseMoveAt = now()
-      xpraWindow.on_mousemove?.(createXpraMouseEvent(event, 0))
-    }, true)
-  }
+  canvas.addEventListener('lostpointercapture', (event) => {
+    const pointerEvent = event as PointerEvent
+    // Capture is implicitly lost after every pointerup; only force-release when
+    // no physical buttons remain pressed (otherwise a held chord would be cut).
+    if (pointerEvent.buttons === 0) releaseAll(pointerEvent, pointerEvent.pointerId)
+  }, true)
 }
 
 export function installLocalDesktopInputBridge(frame: HTMLIFrameElement) {
@@ -246,13 +311,15 @@ export function installLocalDesktopInputBridge(frame: HTMLIFrameElement) {
 
   const installed = new WeakSet<HTMLCanvasElement>()
   const installAll = () => {
+    unbindXpraNativeMouseHandlers(desktopWindow)
     releasePasteboard(desktopWindow, desktopDocument)
+    installDiagnostics(desktopWindow, desktopDocument)
     for (const xpraWindow of getXpraWindows(desktopWindow)) {
       installCanvasBridge(desktopWindow, desktopDocument, xpraWindow, installed)
     }
   }
 
-  desktopDocument.addEventListener('contextmenu', suppressNativeInputUi, true)
+  installNativeMouseSuppression(desktopDocument)
   desktopDocument.addEventListener('selectstart', (event) => {
     if (event.target === desktopDocument.getElementById('pasteboard')) suppressNativeInputUi(event)
   }, true)
