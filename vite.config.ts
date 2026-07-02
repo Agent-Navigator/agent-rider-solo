@@ -72,22 +72,6 @@ const apiProxy = {
       })
     },
   },
-  // Local desktop viewer served by xpra (HTML client on 127.0.0.1:14500).
-  '/desktop': {
-    target: 'http://127.0.0.1:14500',
-    changeOrigin: true,
-    ws: true,
-    rewrite: (path: string) => path.replace(/^\/desktop/, ''),
-    configure: (proxy: {
-      on: (event: string, cb: (proxyRes: { headers: Record<string, unknown> }) => void) => void
-    }) => {
-      proxy.on('proxyRes', (proxyRes) => {
-        delete proxyRes.headers['x-frame-options']
-        delete proxyRes.headers['content-security-policy']
-        delete proxyRes.headers['content-security-policy-report-only']
-      })
-    },
-  },
   // Local desktop viewer served by KasmVNC (HTML client on 127.0.0.1:14510).
   '/kasm': {
     target: 'http://127.0.0.1:14510',
