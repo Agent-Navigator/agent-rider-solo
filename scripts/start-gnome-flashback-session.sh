@@ -8,7 +8,8 @@ fi
 export XDG_CURRENT_DESKTOP=GNOME-Flashback:GNOME
 export DESKTOP_SESSION=gnome-flashback-metacity
 export XDG_MENU_PREFIX=gnome-
-export SELKIES_UI_SCALE=${SELKIES_UI_SCALE:-2}
+export SELKIES_UI_SCALE=${SELKIES_UI_SCALE:-1}
+export SELKIES_FONT_SIZE=${SELKIES_FONT_SIZE:-16}
 
 xrdb -merge <<EOF >/dev/null 2>&1 || true
 Xft.dpi: $((96 * SELKIES_UI_SCALE))
@@ -18,6 +19,10 @@ EOF
 gsettings set org.gnome.desktop.interface scaling-factor "${SELKIES_UI_SCALE}" >/dev/null 2>&1 || true
 gsettings set org.gnome.desktop.interface text-scaling-factor 1.0 >/dev/null 2>&1 || true
 gsettings set org.gnome.desktop.interface cursor-size "$((24 * SELKIES_UI_SCALE))" >/dev/null 2>&1 || true
+gsettings set org.gnome.desktop.interface font-name "Cantarell ${SELKIES_FONT_SIZE}" >/dev/null 2>&1 || true
+gsettings set org.gnome.desktop.interface document-font-name "Cantarell ${SELKIES_FONT_SIZE}" >/dev/null 2>&1 || true
+gsettings set org.gnome.desktop.interface monospace-font-name "Monospace ${SELKIES_FONT_SIZE}" >/dev/null 2>&1 || true
+gsettings set org.gnome.desktop.wm.preferences titlebar-font "Cantarell Bold ${SELKIES_FONT_SIZE}" >/dev/null 2>&1 || true
 
 pids=()
 start_optional_component() {
