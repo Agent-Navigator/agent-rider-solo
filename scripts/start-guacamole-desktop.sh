@@ -17,15 +17,20 @@ if ! command -v Xtigervnc >/dev/null 2>&1; then
   exit 1
 fi
 
+if ! command -v tigervncpasswd >/dev/null 2>&1; then
+  echo "Missing tigervncpasswd. Install tigervnc-tools first." >&2
+  exit 1
+fi
+
 if [[ ! -s "${PLAIN_PASSWORD_FILE}" ]]; then
   echo "Missing VNC password file: ${PLAIN_PASSWORD_FILE}" >&2
-  echo "Create it with a local secret, then generate ${VNC_PASSWORD_FILE} using vncpasswd -f." >&2
+  echo "Create it with a local secret, then generate ${VNC_PASSWORD_FILE} using tigervncpasswd -f." >&2
   exit 1
 fi
 
 mkdir -p "$(dirname "${VNC_PASSWORD_FILE}")" /tmp/.X11-unix
 chmod 700 "$(dirname "${VNC_PASSWORD_FILE}")"
-vncpasswd -f <"${PLAIN_PASSWORD_FILE}" >"${VNC_PASSWORD_FILE}"
+tigervncpasswd -f <"${PLAIN_PASSWORD_FILE}" >"${VNC_PASSWORD_FILE}"
 chmod 600 "${VNC_PASSWORD_FILE}"
 
 pkill -f "Xtigervnc ${DISPLAY_VALUE} " 2>/dev/null || true
