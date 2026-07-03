@@ -278,6 +278,27 @@ export class HermesBridge {
 
     source.addEventListener('stream_end', finish)
     source.addEventListener('done', finish)
+    // Hermes emits a distinct "apperror" event (rate limits, silent provider
+    // failures, crashes, ...) for application-level failures. Per the Hermes
+    // WebUI reference client, the server does NOT follow this with its own
+    // stream_end/done — it expects the client to close the stream itself.
+    // Without a listener here the EventSource just idles on heartbeats
+    // forever, leaving the card stuck on "Hermes running…" with a dead
+    // thread. Always finish the stream; App.tsx decides whether any tokens
+    // already streamed are enough to treat the turn as complete anyway.
+    source.addEventListener('apperror', (raw) => {
+      let payload: Record<string, unknown> = {}
+      try {
+        payload = JSON.parse((raw as MessageEvent).data) as Record<string, unknown>
+      } catch {
+        // Fall through with an empty payload; the stream still needs to close.
+      }
+      const message = String(payload.message ?? 'Hermes reported an application error')
+      finishStream('error', message, {
+        type: 'message.apperror',
+        payload: { error: message, hint: payload.hint, details: payload.details },
+      })
+    })
     source.addEventListener('cancel', (raw) => {
       let payload: Record<string, unknown> = { message: 'Task stopped.' }
       try {

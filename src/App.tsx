@@ -3372,6 +3372,49 @@ export default function App() {
         setActiveHermesStreamId(null)
         void flushQueue()
       }
+
+      // Hermes closes the stream after an application-level error (rate limit,
+      // silent provider failure, crash, ...) without ever sending stream_end/done.
+      // If tokens already streamed in before it, the turn is effectively done —
+      // finish it normally instead of clobbering a good reply with an error and
+      // leaving the card stuck on "Hermes running…" forever.
+      if (event.type === 'message.apperror') {
+        const message = String(event.payload?.error ?? 'Hermes reported an application error')
+        const hint = event.payload?.hint ? String(event.payload.hint) : ''
+        const turnId = activeTurnRef.current
+        const runId = activeRunRef.current
+        const hasContent = assistantBufferRef.current.trim().length > 0
+        if (turnId) {
+          setTurns((current) =>
+            current.map((turn) =>
+              turn.id === turnId
+                ? hasContent
+                  ? { ...turn, response: assistantBufferRef.current.trim(), status: 'done' }
+                  : { ...turn, response: [message, hint].filter(Boolean).join('\n\n'), status: 'error' }
+                : turn,
+            ),
+          )
+        }
+        if (runId) {
+          setRuns((current) => current.map((item) => (item.id === runId ? { ...item, jobStatus: hasContent ? 'done' : 'error' } : item)))
+          if (hasContent) {
+            setNewDoneIds((current) => {
+              const next = new Set(current)
+              next.add(runId)
+              return next
+            })
+          }
+        }
+        if (!hasContent) setError(message)
+        activeTurnRef.current = null
+        activeRunRef.current = null
+        assistantBufferRef.current = ''
+        setActiveHermesTurnId(null)
+        setActiveHermesStreamId(null)
+        setConnectionState(hasContent ? 'ready' : 'error')
+        setConnectionDetail(hasContent ? 'Assistant response complete' : message)
+        void flushQueue()
+      }
     })
 
     void bridge.connect().catch((error) => {
