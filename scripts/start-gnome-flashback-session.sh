@@ -9,7 +9,7 @@ export XDG_CURRENT_DESKTOP=GNOME-Flashback:GNOME
 export DESKTOP_SESSION=gnome-flashback-metacity
 export XDG_MENU_PREFIX=gnome-
 export SELKIES_UI_SCALE=${SELKIES_UI_SCALE:-1}
-export SELKIES_FONT_SIZE=${SELKIES_FONT_SIZE:-16}
+export SELKIES_FONT_SIZE=${SELKIES_FONT_SIZE:-20}
 
 xrdb -merge <<EOF >/dev/null 2>&1 || true
 Xft.dpi: $((96 * SELKIES_UI_SCALE))
