@@ -1,4 +1,4 @@
-import { type KeyboardEvent, type MouseEvent, useState } from 'react'
+import { type KeyboardEvent, type MouseEvent, type PointerEvent, useState } from 'react'
 
 interface WebViewStatePatch {
   collapsed?: boolean
@@ -14,6 +14,7 @@ interface WebViewProps {
   onStateChange?: (patch: WebViewStatePatch) => void
   allow?: string
   onFrameLoad?: (frame: HTMLIFrameElement) => void
+  focusFrameOnPointerDown?: boolean
 }
 
 /**
@@ -31,6 +32,7 @@ export function WebView({
   onStateChange,
   allow = 'clipboard-write; microphone',
   onFrameLoad,
+  focusFrameOnPointerDown = false,
 }: WebViewProps) {
   const [internalCollapsed, setInternalCollapsed] = useState(false)
   const [internalFullWindow, setInternalFullWindow] = useState(false)
@@ -64,6 +66,12 @@ export function WebView({
 
   function releaseWorkspacePanelDragOnHover(event: MouseEvent<HTMLElement>) {
     if (event.buttons === 0) releaseWorkspacePanelDrag(event.currentTarget)
+  }
+
+  function focusFrameOnPointer(event: PointerEvent<HTMLIFrameElement>) {
+    if (!focusFrameOnPointerDown) return
+    releaseWorkspacePanelDrag(event.currentTarget)
+    event.currentTarget.focus()
   }
 
   return (
@@ -131,6 +139,8 @@ export function WebView({
           src={src}
           title={title}
           draggable={false}
+          tabIndex={focusFrameOnPointerDown ? 0 : undefined}
+          onPointerDown={focusFrameOnPointer}
           onMouseEnter={releaseWorkspacePanelDragOnHover}
           onFocus={(event) => releaseWorkspacePanelDrag(event.currentTarget)}
           onLoad={(event) => {

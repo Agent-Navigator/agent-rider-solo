@@ -6,7 +6,7 @@ import { WebView } from '../WebView'
 // (default http://127.0.0.1:8080).
 const LOCAL_DESKTOP_SELKIES_SRC = '/selkies/'
 const LOCAL_DESKTOP_SELKIES_ALLOW =
-  'fullscreen; pointer-lock; autoplay; clipboard-read; clipboard-write; microphone'
+  'fullscreen; pointer-lock; autoplay; clipboard-read; clipboard-write; keyboard-map; microphone'
 
 const localDesktopSelkiesPlugin: AgentRiderPlugin = {
   id: 'local-desktop-selkies',
@@ -18,6 +18,7 @@ const localDesktopSelkiesPlugin: AgentRiderPlugin = {
       src={LOCAL_DESKTOP_SELKIES_SRC}
       onClose={onClose}
       allow={LOCAL_DESKTOP_SELKIES_ALLOW}
+      focusFrameOnPointerDown
     />
   ),
 }
