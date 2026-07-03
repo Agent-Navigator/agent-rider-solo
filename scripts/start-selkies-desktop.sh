@@ -7,6 +7,7 @@ SELKIES_PORT=${SELKIES_PORT:-8080}
 SELKIES_RESOLUTION=${SELKIES_RESOLUTION:-1920x1080}
 SELKIES_ENCODER=${SELKIES_ENCODER:-x264enc}
 SELKIES_ROOT=${SELKIES_ROOT:-/opt/selkies-gstreamer}
+SELKIES_UI_SCALE=${SELKIES_UI_SCALE:-2}
 DISPLAY_VALUE=":${DISPLAY_NUMBER}"
 X_SOCKET="/tmp/.X11-unix/X${DISPLAY_NUMBER}"
 X_LOCK="/tmp/.X${DISPLAY_NUMBER}-lock"
@@ -34,9 +35,14 @@ export PIPEWIRE_RUNTIME_DIR="${RUNTIME_DIR}"
 export PULSE_RUNTIME_PATH="${RUNTIME_DIR}/pulse"
 export PULSE_SERVER="unix:${PULSE_RUNTIME_PATH}/native"
 export PIPEWIRE_LATENCY="128/48000"
+export GDK_SCALE="${SELKIES_UI_SCALE}"
+export QT_SCALE_FACTOR="${SELKIES_UI_SCALE}"
+export QT_AUTO_SCREEN_SCALE_FACTOR=0
+export XCURSOR_SIZE="$((24 * SELKIES_UI_SCALE))"
 
 Xvfb "${DISPLAY_VALUE}" \
   -screen 0 "${SELKIES_RESOLUTION}x24" \
+  -dpi "$((96 * SELKIES_UI_SCALE))" \
   +extension COMPOSITE +extension DAMAGE +extension GLX +extension RANDR \
   +extension RENDER +extension MIT-SHM +extension XFIXES +extension XTEST \
   +iglx +render -nolisten tcp -ac -noreset \
@@ -55,9 +61,6 @@ fi
 scripts_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DISPLAY="${DISPLAY_VALUE}" "${scripts_dir}/start-gnome-flashback-session.sh" &
 session_pid=$!
-
-sleep 1
-gsettings set org.gnome.desktop.interface text-scaling-factor 2.0 >/dev/null 2>&1 || true
 
 cleanup() {
   kill "${session_pid}" "${xvfb_pid}" 2>/dev/null || true
