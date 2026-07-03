@@ -9,16 +9,20 @@ export XDG_CURRENT_DESKTOP=GNOME-Flashback:GNOME
 export DESKTOP_SESSION=gnome-flashback-metacity
 export XDG_MENU_PREFIX=gnome-
 export SELKIES_UI_SCALE=${SELKIES_UI_SCALE:-1}
+export SELKIES_TEXT_SCALE=${SELKIES_TEXT_SCALE:-1.0}
 export SELKIES_FONT_SIZE=${SELKIES_FONT_SIZE:-20}
 
+xft_dpi=$(awk -v scale="${SELKIES_TEXT_SCALE}" 'BEGIN { printf "%.0f", 96 * scale }')
+cursor_size=$(awk -v scale="${SELKIES_TEXT_SCALE}" 'BEGIN { printf "%.0f", 24 * scale }')
+
 xrdb -merge <<EOF >/dev/null 2>&1 || true
-Xft.dpi: $((96 * SELKIES_UI_SCALE))
-Xcursor.size: $((24 * SELKIES_UI_SCALE))
+Xft.dpi: ${xft_dpi}
+Xcursor.size: ${cursor_size}
 EOF
 
 gsettings set org.gnome.desktop.interface scaling-factor "${SELKIES_UI_SCALE}" >/dev/null 2>&1 || true
-gsettings set org.gnome.desktop.interface text-scaling-factor 1.0 >/dev/null 2>&1 || true
-gsettings set org.gnome.desktop.interface cursor-size "$((24 * SELKIES_UI_SCALE))" >/dev/null 2>&1 || true
+gsettings set org.gnome.desktop.interface text-scaling-factor "${SELKIES_TEXT_SCALE}" >/dev/null 2>&1 || true
+gsettings set org.gnome.desktop.interface cursor-size "${cursor_size}" >/dev/null 2>&1 || true
 gsettings set org.gnome.desktop.interface font-name "Cantarell ${SELKIES_FONT_SIZE}" >/dev/null 2>&1 || true
 gsettings set org.gnome.desktop.interface document-font-name "Cantarell ${SELKIES_FONT_SIZE}" >/dev/null 2>&1 || true
 gsettings set org.gnome.desktop.interface monospace-font-name "Monospace ${SELKIES_FONT_SIZE}" >/dev/null 2>&1 || true
