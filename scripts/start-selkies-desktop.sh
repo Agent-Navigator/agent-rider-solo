@@ -56,6 +56,9 @@ scripts_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DISPLAY="${DISPLAY_VALUE}" "${scripts_dir}/start-gnome-flashback-session.sh" &
 session_pid=$!
 
+sleep 1
+gsettings set org.gnome.desktop.interface text-scaling-factor 2.0 >/dev/null 2>&1 || true
+
 cleanup() {
   kill "${session_pid}" "${xvfb_pid}" 2>/dev/null || true
 }
