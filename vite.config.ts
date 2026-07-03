@@ -59,7 +59,11 @@ function getGuacamoleConnectionName() {
 }
 
 function createGuacamoleClientIdentifier(connectionName: string) {
-  return Buffer.from(`${connectionName}\0c\0json`, 'utf8').toString('base64')
+  return Buffer.from(`${connectionName}\0c\0json`, 'utf8')
+    .toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '')
 }
 
 function getGuacamoleConnectionParameters() {
