@@ -6,6 +6,7 @@ VNC_BIND=${GUACAMOLE_VNC_BIND:-127.0.0.1}
 VNC_PORT=${GUACAMOLE_DESKTOP_PORT:-5903}
 VNC_GEOMETRY=${GUACAMOLE_VNC_GEOMETRY:-1920x1080}
 VNC_DEPTH=${GUACAMOLE_VNC_DEPTH:-24}
+GUI_FONT_SIZE=${GUACAMOLE_FONT_SIZE:-30}
 VNC_PASSWORD_FILE=${GUACAMOLE_TIGERVNC_PASSWORD_FILE:-/root/.vnc/guacamole-passwd}
 PLAIN_PASSWORD_FILE=${GUACAMOLE_VNC_PASSWORD_FILE:-/root/.guacamole-vnc-password}
 DISPLAY_VALUE=":${DISPLAY_NUMBER}"
@@ -64,6 +65,7 @@ fi
 
 scripts_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export DISPLAY="${DISPLAY_VALUE}"
+export SELKIES_FONT_SIZE="${GUI_FONT_SIZE}"
 "${scripts_dir}/start-gnome-flashback-session.sh" &
 session_pid=$!
 
