@@ -213,6 +213,14 @@ sync_plugins() {
 
 mkdir -p "$releases_dir" "$shared_data_dir" "$shared_plugins_dir" "$shared_dir/logs" "$release_dir"
 tar -xzf "$archive" -C "$release_dir"
+cat > "$release_dir/.agent-rider-release" <<EOF
+commit=${AGENT_RIDER_DEPLOY_COMMIT:-unknown}
+short_sha=${AGENT_RIDER_DEPLOY_SHORT_SHA:-unknown}
+source_ref=${AGENT_RIDER_SOURCE_REF:-unknown}
+source_git=${AGENT_RIDER_SOURCE_GIT:-unknown}
+archive=$release_name
+deployed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+EOF
 
 services_were_stopped=0
 on_error() {

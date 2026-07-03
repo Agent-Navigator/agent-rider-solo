@@ -9,7 +9,7 @@ Usage:
 
 Environment:
   SOURCE_GIT          SSH git remote for Agent Rider. Required, or pass as arg 1.
-  SOURCE_REF          Branch, tag, or commit to deploy. Default: remote HEAD.
+  SOURCE_REF          Branch, tag, or commit to deploy. Default: master.
   APP_DIR             Remote install root. Default: /opt/agent-rider
   GIT_CACHE           Local mirror cache. Default: ~/.cache/agent-rider/source.git
   WORK_DIR            Temporary update directory. Default: /tmp/agent-rider-git-update
@@ -24,7 +24,7 @@ if [[ ${1:-} == "-h" || ${1:-} == "--help" ]]; then
 fi
 
 SOURCE_GIT=${SOURCE_GIT:-${1:-}}
-SOURCE_REF=${SOURCE_REF:-HEAD}
+SOURCE_REF=${SOURCE_REF:-master}
 APP_NAME=${APP_NAME:-agent-rider}
 APP_DIR=${APP_DIR:-/opt/agent-rider}
 WORK_DIR=${WORK_DIR:-/tmp/agent-rider-git-update}
@@ -83,7 +83,13 @@ resolve_commit() {
 run_installer() {
   local installer=$1
   local archive=$2
-  local installer_env=(APP_DIR="$APP_DIR")
+  local installer_env=(
+    APP_DIR="$APP_DIR"
+    AGENT_RIDER_DEPLOY_COMMIT="$commit"
+    AGENT_RIDER_DEPLOY_SHORT_SHA="$short_sha"
+    AGENT_RIDER_SOURCE_GIT="$SOURCE_GIT"
+    AGENT_RIDER_SOURCE_REF="$SOURCE_REF"
+  )
 
   for name in APP_USER APP_GROUP WEB_PORT STORE_PORT BROWSE_ROOT HERMES_TARGET VITE_ALLOWED_HOSTS ENV_FILE; do
     if [[ -n ${!name+x} ]]; then
@@ -125,6 +131,7 @@ rm -rf "$WORK_DIR"
 mkdir -p "$WORK_DIR"
 archive="$WORK_DIR/${APP_NAME}-${stamp}-${short_sha}.tar.gz"
 
+echo "Resolved SOURCE_REF '$SOURCE_REF' to $commit."
 echo "Creating release archive from $short_sha..."
 git -C "$GIT_CACHE" archive --format=tar "$commit" | gzip -9 > "$archive"
 tar -xzf "$archive" -C "$WORK_DIR" scripts/install-remote.sh scripts/update-remote.sh

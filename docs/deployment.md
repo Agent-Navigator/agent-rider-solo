@@ -35,6 +35,7 @@ git push tailnet master --tags
 ```
 
 Remote server 只會看到 private git remote 裡已 push 的 commit。
+更新流程用 git commit 判斷，不使用 `package.json` 的 `version` 判斷是否需要更新。
 
 ## Remote install/update
 
@@ -49,10 +50,16 @@ SOURCE_GIT=root@YOUR-SOURCE-TAILNET-HOST:/srv/git/agent-rider.git SOURCE_REF=mas
 
 1. `pull-update.sh` 在 remote server 維護 `~/.cache/agent-rider/source.git` mirror。
 2. Fetch `SOURCE_GIT`。
-3. Resolve `SOURCE_REF`（branch/tag/commit，預設 remote `HEAD`）。
-4. 用 `git archive` 從該 commit 建本機 release archive。
+3. Resolve `SOURCE_REF`（branch/tag/commit，預設 `master`）。
+4. 用 `git archive` 從該最新 commit 建本機 release archive。
 5. 執行 release 裡的 `install-remote.sh` 或 `update-remote.sh`。
 6. 保留 shared data/plugins，重建 production build，切換 `/opt/agent-rider/current`。
+
+實際部署的 commit 會寫到：
+
+```bash
+cat /opt/agent-rider/current/.agent-rider-release
+```
 
 ## 固定命令
 

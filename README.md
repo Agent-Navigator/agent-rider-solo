@@ -58,6 +58,7 @@ git push tailnet master --tags
 ```
 
 如果你使用的 branch 不是 `master`，下面 remote 指令的 `SOURCE_REF` 要一起改。
+更新流程用 git commit 判斷，不使用 `package.json` 的 `version` 判斷是否需要更新。
 
 ## Remote 一行安裝/更新
 
@@ -72,7 +73,7 @@ SOURCE_GIT=root@YOUR-SOURCE-TAILNET-HOST:/srv/git/agent-rider.git SOURCE_REF=mas
 
 - 在 remote server 的 `~/.cache/agent-rider/source.git` 維護 private git mirror。
 - `git fetch` `SOURCE_GIT`。
-- 將 `SOURCE_REF` 對應 commit 打包成本機 release archive。
+- 將 `SOURCE_REF` 對應的最新 commit 打包成本機 release archive。
 - 自動選擇 `install-remote.sh` 或 `update-remote.sh`。
 - 更新前備份並保留 `/opt/agent-rider/shared/data`。
 - 更新前備份並保留 `/opt/agent-rider/shared/plugins`。
@@ -86,6 +87,7 @@ SOURCE_GIT=root@YOUR-SOURCE-TAILNET-HOST:/srv/git/agent-rider.git SOURCE_REF=mas
 ```text
 /opt/agent-rider/releases/       # 每次部署的 versioned release
 /opt/agent-rider/current         # 指向目前啟用版本的 symlink
+/opt/agent-rider/current/.agent-rider-release # 實際部署的 commit/source/ref
 /opt/agent-rider/shared/data     # SQLite 與 runtime data，更新時保留
 /opt/agent-rider/shared/plugins  # App plugins，更新時保留
 /opt/agent-rider/shared/backups  # 更新前的 data/plugins 備份
