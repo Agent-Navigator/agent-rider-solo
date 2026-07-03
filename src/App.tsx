@@ -63,7 +63,7 @@ type ChatRole = 'user' | 'assistant'
 // Which agent backend drives a conversation card. 'hermes' streams turns over
 // /api (the default); the others run an interactive TUI CLI in an embedded
 // terminal (see WebTerminal + the /store/terminal/ws `agent` param).
-type AgentType = 'hermes' | 'claude' | 'codex' | 'agy'
+type AgentType = 'hermes' | 'claude' | 'codex' | 'agy' | 'custom'
 type TuiAgentType = Exclude<AgentType, 'hermes'>
 
 interface HermesModel {
@@ -88,10 +88,11 @@ const AGENT_OPTIONS: { value: AgentType; label: string }[] = [
   { value: 'claude', label: 'claude (CLI)' },
   { value: 'codex', label: 'Codex (CLI)' },
   { value: 'agy', label: 'Agy (CLI)' },
+  { value: 'custom', label: 'Custom command' },
 ]
 
 function isTuiAgent(agent: AgentType): agent is TuiAgentType {
-  return agent === 'claude' || agent === 'codex' || agent === 'agy'
+  return agent === 'claude' || agent === 'codex' || agent === 'agy' || agent === 'custom'
 }
 
 function agentLabel(agent: AgentType) {
@@ -218,6 +219,7 @@ interface RunNode {
   reasoningEffort?: string
   sessionId?: string | null
   agentType: AgentType
+  agentCommand?: string
   /** Which card column (0 = left, 1 = right) in the two-column layout. */
   column: number
   createdAt: string
@@ -1245,6 +1247,7 @@ function ConversationCard({
   onCategoryChange,
   onProjectChange,
   onAgentChange,
+  onAgentCommandChange,
   modelCatalog,
   reasoningEfforts,
   onModelChange,
@@ -1278,6 +1281,7 @@ function ConversationCard({
   onCategoryChange: (value: string) => void
   onProjectChange: (value: string) => void
   onAgentChange: (value: AgentType) => void
+  onAgentCommandChange: (value: string) => void
   modelCatalog: HermesModelCatalog
   reasoningEfforts: string[]
   onModelChange: (model: string, modelProvider: string | null) => void
@@ -1302,6 +1306,7 @@ function ConversationCard({
 }) {
   const agentType: AgentType = run.agentType ?? 'hermes'
   const tui = isTuiAgent(agentType)
+  const customAgentCommand = (run.agentCommand ?? '').trim()
   const selectedModelValue = run.model ? modelSelectValue(run.model, run.modelProvider ?? null) : ''
   const selectedReasoningEffort = run.reasoningEffort ?? ''
   const cardRef = useRef<HTMLElement | null>(null)
@@ -1745,6 +1750,20 @@ function ConversationCard({
                 ))}
               </select>
             </div>
+            {agentType === 'custom' ? (
+              <div className="conv-meta-row">
+                <span className="tree-label">Command</span>
+                <input
+                  className="conv-input conv-agent-command"
+                  value={run.agentCommand ?? ''}
+                  onChange={(event) => onAgentCommandChange(event.target.value)}
+                  placeholder="bash command, e.g. claude --permission-mode auto"
+                  spellCheck={false}
+                  autoCapitalize="off"
+                  autoCorrect="off"
+                />
+              </div>
+            ) : null}
             <div className="conv-meta-row">
               <span className="tree-label">Workspace</span>
               <button type="button" className="conv-workspace-btn" onClick={onOpenPicker} title={run.workspacePath}>
@@ -1757,13 +1776,14 @@ function ConversationCard({
             )}
           </div>
 
-          {tui ? (
+          {tui && (agentType !== 'custom' || customAgentCommand) ? (
             <div className="conv-agent-terminal">
               <WebTerminal
                 // Re-attach (not restart) on agent/workspace change — the tmux
                 // session persists in the background, keyed by run + agent + cwd.
-                key={`${agentType}:${run.workspacePath}`}
+                key={`${agentType}:${customAgentCommand}:${run.workspacePath}`}
                 agent={agentType}
+                customCommand={agentType === 'custom' ? customAgentCommand : undefined}
                 sessionKey={run.id}
                 initialCwd={run.workspacePath}
                 eyebrow={`Agent · ${agentLabel(agentType)} · persistent`}
@@ -1774,6 +1794,10 @@ function ConversationCard({
                 fullWindow={agentTerminalState?.fullWindow}
                 onStateChange={onAgentTerminalStateChange}
               />
+            </div>
+          ) : tui ? (
+            <div className="conv-agent-command-empty">
+              Enter a bash command to launch the custom TUI agent.
             </div>
           ) : (
             <>
@@ -2282,6 +2306,7 @@ function WebTerminal({
   initialCwd,
   onClose,
   agent,
+  customCommand,
   sessionKey,
   eyebrow = 'Resource · Tools',
   title = 'Local Terminal',
@@ -2294,6 +2319,8 @@ function WebTerminal({
   onClose: () => void
   /** When set, the PTY launches this TUI agent CLI instead of a login shell. */
   agent?: TuiAgentType
+  /** Bash command used when `agent` is the custom TUI option. */
+  customCommand?: string
   /** Stable key for a persistent (tmux-backed) agent session that survives
    *  disconnects. Only meaningful together with `agent`. */
   sessionKey?: string
@@ -2369,9 +2396,10 @@ function WebTerminal({
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
     const agentParam = agent ? `&agent=${encodeURIComponent(agent)}` : ''
+    const commandParam = agent === 'custom' && customCommand ? `&command=${encodeURIComponent(customCommand)}` : ''
     const sessionParam = agent && sessionKey ? `&session=${encodeURIComponent(sessionKey)}` : ''
     const socket = new WebSocket(
-      `${protocol}//${window.location.host}/store/terminal/ws?cwd=${encodeURIComponent(initialCwd)}&cols=${terminal.cols}&rows=${terminal.rows}${agentParam}${sessionParam}`,
+      `${protocol}//${window.location.host}/store/terminal/ws?cwd=${encodeURIComponent(initialCwd)}&cols=${terminal.cols}&rows=${terminal.rows}${agentParam}${commandParam}${sessionParam}`,
     )
     socketRef.current = socket
     setConnectionState('connecting')
@@ -2414,7 +2442,7 @@ function WebTerminal({
       if (socketRef.current === socket) socketRef.current = null
       if (terminalRef.current === terminal) terminalRef.current = null
     }
-  }, [initialCwd, terminalKey, agent, sessionKey])
+  }, [initialCwd, terminalKey, agent, customCommand, sessionKey])
 
   useEffect(() => {
     if (!terminalCollapsed) window.requestAnimationFrame(() => fitRef.current())
@@ -2982,6 +3010,7 @@ export default function App() {
       reasoningEffort: '',
       sessionId: null,
       agentType: 'hermes',
+      agentCommand: '',
       column: 0,
       createdAt: new Date().toISOString(),
     }
@@ -3491,6 +3520,7 @@ export default function App() {
             model: typeof run.model === 'string' ? run.model : '',
             modelProvider: typeof run.modelProvider === 'string' ? run.modelProvider : null,
             reasoningEffort: typeof run.reasoningEffort === 'string' ? run.reasoningEffort : '',
+            agentCommand: typeof run.agentCommand === 'string' ? run.agentCommand : '',
           }))
           const restoredRunIds = new Set(restored.map((run) => run.id))
           setRuns((current) => (current.length ? current : restored))
@@ -3849,6 +3879,7 @@ export default function App() {
       onCategoryChange={(value) => updateRunContext(run.id, { category: value, categoryTags: tagsForCategory(value) })}
       onProjectChange={(value) => updateRunProject(run.id, value)}
       onAgentChange={(value) => updateRunContext(run.id, { agentType: value })}
+      onAgentCommandChange={(value) => updateRunContext(run.id, { agentCommand: value })}
       modelCatalog={modelCatalog}
       reasoningEfforts={reasoningEfforts}
       onModelChange={(model, modelProvider) => updateRunHermesModel(run.id, model, modelProvider)}

@@ -3,7 +3,7 @@
 // Uses Node's built-in node:sqlite (Node >= 22.5). No native deps to compile.
 import { createServer } from 'node:http'
 import { spawn, spawnSync } from 'node:child_process'
-import { createHmac, pbkdf2Sync, randomBytes, timingSafeEqual } from 'node:crypto'
+import { createHash, createHmac, pbkdf2Sync, randomBytes, timingSafeEqual } from 'node:crypto'
 import { DatabaseSync } from 'node:sqlite'
 import { mkdirSync, readdirSync, statSync, readFileSync, writeFileSync, existsSync, createReadStream, accessSync, constants, unlinkSync } from 'node:fs'
 import { dirname, join, resolve, basename, extname, normalize } from 'node:path'
@@ -103,6 +103,10 @@ function tmuxSessionName(sessionKey, agent) {
   return `ar_${agent}_${safe}`
 }
 
+function shortHash(value) {
+  return createHash('sha256').update(String(value)).digest('hex').slice(0, 12)
+}
+
 function tmuxSessionExists(name) {
   const result = spawnSync('tmux', ['-L', TMUX_SOCKET, 'has-session', '-t', name], { stdio: 'ignore' })
   return result.status === 0
@@ -139,6 +143,7 @@ db.exec(`
     model_provider TEXT,
     reasoning_effort TEXT,
     agent_type TEXT,
+    agent_command TEXT,
     col_index INTEGER,
     sort_index INTEGER,
     created_at TEXT,
@@ -168,9 +173,15 @@ try {
 } catch {
   // column already present
 }
-// Migration: which agent backend drives each conversation (hermes | claude | codex | agy).
+// Migration: which agent backend drives each conversation (hermes | claude | codex | agy | custom).
 try {
   db.exec('ALTER TABLE runs ADD COLUMN agent_type TEXT')
+} catch {
+  // column already present
+}
+// Migration: custom TUI agent bash command for Conversation Cards.
+try {
+  db.exec('ALTER TABLE runs ADD COLUMN agent_command TEXT')
 } catch {
   // column already present
 }
@@ -248,8 +259,8 @@ function getKv(key) {
 }
 
 const upsertRun = db.prepare(`
-  INSERT INTO runs (id, session_id, prompt, category, category_tags, project, workspace, workspace_path, task, job, job_status, resource_ids, model, model_provider, reasoning_effort, agent_type, col_index, sort_index, created_at, updated_at)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  INSERT INTO runs (id, session_id, prompt, category, category_tags, project, workspace, workspace_path, task, job, job_status, resource_ids, model, model_provider, reasoning_effort, agent_type, agent_command, col_index, sort_index, created_at, updated_at)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   ON CONFLICT(id) DO UPDATE SET
     session_id = excluded.session_id, prompt = excluded.prompt, category = excluded.category,
     category_tags = excluded.category_tags, project = excluded.project, workspace = excluded.workspace,
@@ -257,7 +268,8 @@ const upsertRun = db.prepare(`
     job_status = excluded.job_status, resource_ids = excluded.resource_ids,
     model = excluded.model, model_provider = excluded.model_provider,
     reasoning_effort = excluded.reasoning_effort,
-    agent_type = excluded.agent_type, col_index = excluded.col_index, sort_index = excluded.sort_index,
+    agent_type = excluded.agent_type, agent_command = excluded.agent_command,
+    col_index = excluded.col_index, sort_index = excluded.sort_index,
     created_at = excluded.created_at, updated_at = excluded.updated_at
 `)
 const upsertTurn = db.prepare(`
@@ -299,6 +311,7 @@ function runRowToApi(r) {
     reasoningEffort: r.reasoning_effort || '',
     sessionId: r.session_id || null,
     agentType: r.agent_type || 'hermes',
+    agentCommand: r.agent_command || '',
     column: Number.isFinite(r.col_index) ? r.col_index : 0,
     createdAt: r.created_at,
   }
@@ -337,6 +350,7 @@ function saveState({ runs = [], turns = [], sessionId = null, layout = undefined
         r.modelProvider ?? null,
         r.reasoningEffort ?? '',
         r.agentType ?? 'hermes',
+        r.agentCommand ?? '',
         Number.isFinite(r.column) ? r.column : 0,
         index,
         r.createdAt ?? nowIso(),
@@ -971,16 +985,27 @@ function attachTerminalSocket(server) {
     const { cols, rows } = parseTerminalSize(requestUrl.searchParams)
     const shell = process.env.SHELL || '/bin/bash'
 
-    // Optional `agent` param runs a TUI coding agent (allowlisted, so the param
-    // can't spawn an arbitrary command). With a `session` key the agent runs in
-    // a detached-survivable tmux session (persistent background); reconnecting
-    // re-attaches it. Without a key it runs directly and dies on disconnect.
+    // Optional `agent` param runs a TUI coding agent. Built-ins are allowlisted;
+    // agent=custom accepts a user-entered bash command from an authenticated UI.
+    // With a `session` key the agent runs in a detached-survivable tmux session
+    // (persistent background); reconnecting re-attaches it. Without a key it
+    // runs directly and dies on disconnect.
     const agentParam = requestUrl.searchParams.get('agent') || ''
     const agentCmd = Object.prototype.hasOwnProperty.call(TUI_AGENTS, agentParam) ? TUI_AGENTS[agentParam] : null
-    const agentLabel = agentCmd ? [agentCmd.label, ...agentCmd.argv].join(' ') : ''
-    const agentShellCommand = agentCmd ? shellQuote([agentCmd.file, ...agentCmd.argv]) : ''
+    const customCommand = agentParam === 'custom' ? (requestUrl.searchParams.get('command') || '').trim() : ''
+    const customCommandTooLong = customCommand.length > 2000
+    if (agentParam === 'custom' && (!customCommand || customCommandTooLong)) {
+      socket.send(customCommandTooLong
+        ? '\r\n\x1b[31mCustom agent command is too long.\x1b[0m\r\n'
+        : '\r\n\x1b[31mCustom agent command is empty.\x1b[0m\r\n')
+      socket.close(1008, 'invalid custom agent command')
+      return
+    }
+    const agentLabel = agentCmd ? [agentCmd.label, ...agentCmd.argv].join(' ') : customCommand
+    const agentShellCommand = agentCmd ? shellQuote([agentCmd.file, ...agentCmd.argv]) : customCommand
     const sessionKey = (requestUrl.searchParams.get('session') || '').trim()
-    const persistent = Boolean(agentCmd && sessionKey)
+    const hasAgentCommand = Boolean(agentCmd || customCommand)
+    const persistent = Boolean(hasAgentCommand && sessionKey)
 
     let file
     let argv
@@ -988,14 +1013,20 @@ function attachTerminalSocket(server) {
     if (persistent) {
       // `new-session -A` attaches if the session exists, else creates it running
       // the agent. -x/-y/-c apply only on create; on re-attach tmux redraws.
-      const name = tmuxSessionName(`${sessionKey}|${cwd}`, agentParam)
-      shouldInjectAgentRiderBackground = !tmuxSessionExists(name)
+      const nameKey = agentParam === 'custom'
+        ? `${sessionKey}|${cwd}|${shortHash(agentShellCommand)}`
+        : `${sessionKey}|${cwd}`
+      const name = tmuxSessionName(nameKey, agentParam)
+      shouldInjectAgentRiderBackground = Boolean(agentCmd && !tmuxSessionExists(name))
       file = 'tmux'
       argv = ['-L', TMUX_SOCKET, '-f', TMUX_CONF, 'new-session', '-A', '-s', name,
         '-x', String(cols), '-y', String(rows), '-c', cwd, '-e', `PATH=${AGENT_PATH}`, '--', agentShellCommand]
     } else if (agentCmd) {
       file = agentCmd.file
       argv = agentCmd.argv
+    } else if (customCommand) {
+      file = shell
+      argv = ['-lc', customCommand]
     } else {
       file = shell
       argv = ['-l']
@@ -1019,7 +1050,7 @@ function attachTerminalSocket(server) {
     }
 
     writeSocket(
-      agentCmd
+      hasAgentCommand
         ? `\r\n\x1b[32m${persistent ? 'Attaching' : 'Starting'} ${agentLabel} in ${cwd}…\x1b[0m\r\n`
         : `\r\n\x1b[32mConnected to Agent Rider terminal\x1b[0m\r\n`,
     )

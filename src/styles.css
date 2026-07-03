@@ -986,6 +986,21 @@ button { cursor: pointer; }
 
 .conv-agent-select option { color: #0b0f17; }
 
+.conv-agent-command {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.conv-agent-command-empty {
+  margin-top: 4px;
+  padding: 14px 16px;
+  border-radius: 10px;
+  border: 1px dashed rgba(148, 163, 184, 0.28);
+  background: rgba(8, 14, 24, 0.52);
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+
 /* TUI agent running in an embedded terminal inside the card. */
 .conv-agent-terminal {
   margin-top: 4px;
