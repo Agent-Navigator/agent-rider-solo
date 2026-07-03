@@ -8,6 +8,7 @@ node_modules/
 dist/
 !plugins/*/dist/
 !plugins/*/dist/**
+*.tsbuildinfo
 
 # Local SQLite persistence (runtime data)
 data/
