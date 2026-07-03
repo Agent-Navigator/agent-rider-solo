@@ -108,6 +108,12 @@ const apiProxy = {
       })
     },
   },
+  // Selkies' bundled client fetches TURN/ICE configuration from an absolute
+  // /turn path, even when the UI itself is mounted under /selkies/.
+  '/turn': {
+    target: selkiesTarget,
+    changeOrigin: true,
+  },
 }
 
 export default defineConfig({
