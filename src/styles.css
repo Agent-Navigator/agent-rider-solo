@@ -990,6 +990,33 @@ button { cursor: pointer; }
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 
+.conv-agent-command-editor {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.conv-agent-command-apply {
+  padding: 7px 12px;
+  border: 1px solid rgba(121, 185, 255, 0.32);
+  border-radius: 10px;
+  background: rgba(121, 185, 255, 0.12);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.conv-agent-command-apply:hover:not(:disabled) {
+  border-color: rgba(121, 185, 255, 0.56);
+  background: rgba(121, 185, 255, 0.18);
+}
+
+.conv-agent-command-apply:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
 .conv-agent-command-empty {
   margin-top: 4px;
   padding: 14px 16px;

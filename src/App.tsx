@@ -1316,6 +1316,7 @@ function ConversationCard({
   const [dragOverAfter, setDragOverAfter] = useState(false)
   const dragOverAfterRef = useRef(false)
   const [draft, setDraft] = useState('')
+  const [customCommandDraft, setCustomCommandDraft] = useState(run.agentCommand ?? '')
   const [askParentId, setAskParentId] = useState<string | null>(null)
   const [askDraft, setAskDraft] = useState('')
   const [copiedTurnId, setCopiedTurnId] = useState<string | null>(null)
@@ -1329,6 +1330,10 @@ function ConversationCard({
   const focusedTurnRef = useRef<HTMLDivElement | null>(null)
   const askMoreFormRef = useRef<HTMLFormElement | null>(null)
   const askMoreTextareaRef = useRef<HTMLTextAreaElement | null>(null)
+
+  useEffect(() => {
+    setCustomCommandDraft(run.agentCommand ?? '')
+  }, [run.id, run.agentCommand])
 
   // Keep the viewport anchored to the most relevant visible bubble.
   // If Ask Here is open, the inline form becomes the focus target instead.
@@ -1419,6 +1424,26 @@ function ConversationCard({
     setAskParentId(null)
     const turnId = onSend(text, parentTurnId)
     if (turnId) setFocusTurnId(turnId)
+  }
+
+  function commitCustomAgentCommand() {
+    const next = customCommandDraft.trim()
+    if (next === (run.agentCommand ?? '').trim()) return
+    onAgentCommandChange(next)
+  }
+
+  function handleCustomAgentCommandKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key === 'Enter') {
+      event.preventDefault()
+      commitCustomAgentCommand()
+      event.currentTarget.blur()
+      return
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      setCustomCommandDraft(run.agentCommand ?? '')
+      event.currentTarget.blur()
+    }
   }
 
   async function copyPrompt(turn: TurnItem) {
@@ -1753,15 +1778,26 @@ function ConversationCard({
             {agentType === 'custom' ? (
               <div className="conv-meta-row">
                 <span className="tree-label">Command</span>
-                <input
-                  className="conv-input conv-agent-command"
-                  value={run.agentCommand ?? ''}
-                  onChange={(event) => onAgentCommandChange(event.target.value)}
-                  placeholder="bash command, e.g. claude --permission-mode auto"
-                  spellCheck={false}
-                  autoCapitalize="off"
-                  autoCorrect="off"
-                />
+                <div className="conv-agent-command-editor">
+                  <input
+                    className="conv-input conv-agent-command"
+                    value={customCommandDraft}
+                    onChange={(event) => setCustomCommandDraft(event.target.value)}
+                    onKeyDown={handleCustomAgentCommandKeyDown}
+                    placeholder="bash command, e.g. claude --permission-mode auto"
+                    spellCheck={false}
+                    autoCapitalize="off"
+                    autoCorrect="off"
+                  />
+                  <button
+                    type="button"
+                    className="conv-agent-command-apply"
+                    disabled={customCommandDraft.trim() === (run.agentCommand ?? '').trim()}
+                    onClick={commitCustomAgentCommand}
+                  >
+                    Apply
+                  </button>
+                </div>
               </div>
             ) : null}
             <div className="conv-meta-row">
