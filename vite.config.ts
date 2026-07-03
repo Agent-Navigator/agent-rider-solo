@@ -54,6 +54,14 @@ function encryptGuacamoleJsonAuth(secretHex: string, authPayload: unknown) {
   return Buffer.concat([cipher.update(signedPayload), cipher.final()]).toString('base64')
 }
 
+function getGuacamoleConnectionName() {
+  return process.env.GUACAMOLE_CONNECTION_NAME || 'Local Desktop'
+}
+
+function createGuacamoleClientIdentifier(connectionName: string) {
+  return Buffer.from(`${connectionName}\0c\0json`, 'utf8').toString('base64')
+}
+
 function getGuacamoleConnectionParameters() {
   const protocol = process.env.GUACAMOLE_PROTOCOL || 'vnc'
   const parameters: Record<string, string> = {
@@ -87,7 +95,7 @@ function createGuacamoleAuthData() {
 
   const { protocol, parameters } = getGuacamoleConnectionParameters()
   const expires = Date.now() + Number(process.env.GUACAMOLE_AUTH_TTL_MS || 5 * 60 * 1000)
-  const connectionName = process.env.GUACAMOLE_CONNECTION_NAME || 'Local Desktop'
+  const connectionName = getGuacamoleConnectionName()
   const username = process.env.GUACAMOLE_AUTH_USERNAME || 'agent-rider'
 
   return encryptGuacamoleJsonAuth(secretKey, {
@@ -117,9 +125,10 @@ function guacamoleAutoLoginPlugin(): Plugin {
 
     try {
       const data = createGuacamoleAuthData()
+      const clientIdentifier = createGuacamoleClientIdentifier(getGuacamoleConnectionName())
       res.statusCode = 302
       res.setHeader('Cache-Control', 'no-store')
-      res.setHeader('Location', `/guacamole/?data=${encodeURIComponent(data)}`)
+      res.setHeader('Location', `/guacamole/?data=${encodeURIComponent(data)}#/client/${encodeURIComponent(clientIdentifier)}`)
       res.end()
     } catch (error) {
       res.statusCode = 503
