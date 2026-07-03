@@ -19,7 +19,6 @@ const allowedHosts = process.env.VITE_ALLOWED_HOSTS === 'all'
     : defaultAllowedHosts
 const hermesTarget = process.env.HERMES_TARGET || 'http://127.0.0.1:8789'
 const storeTarget = `http://127.0.0.1:${process.env.STORE_PORT || '5174'}`
-const selkiesTarget = process.env.SELKIES_TARGET || 'http://127.0.0.1:8080'
 const guacamoleTarget = process.env.GUACAMOLE_TARGET || 'http://127.0.0.1:8081'
 const guacamoleJsonSecretFile = process.env.GUACAMOLE_JSON_SECRET_KEY_FILE || '/root/.guacamole-json-secret'
 const guacamoleVncPasswordFile = process.env.GUACAMOLE_VNC_PASSWORD_FILE || '/root/.guacamole-vnc-password'
@@ -195,30 +194,6 @@ const apiProxy: Record<string, ProxyOptions> = {
         delete proxyRes.headers['content-security-policy-report-only']
       })
     },
-  },
-  // Local desktop viewer served by Selkies-GStreamer WebRTC.
-  // Defaults to the Selkies web server's common 8080 port, but can be pointed
-  // at another local deployment with SELKIES_TARGET.
-  '/selkies': {
-    target: selkiesTarget,
-    changeOrigin: true,
-    ws: true,
-    rewrite: (path: string) => path.replace(/^\/selkies/, ''),
-    configure: (proxy: {
-      on: (event: string, cb: (proxyRes: { headers: Record<string, unknown> }) => void) => void
-    }) => {
-      proxy.on('proxyRes', (proxyRes) => {
-        delete proxyRes.headers['x-frame-options']
-        delete proxyRes.headers['content-security-policy']
-        delete proxyRes.headers['content-security-policy-report-only']
-      })
-    },
-  },
-  // Selkies' bundled client fetches TURN/ICE configuration from an absolute
-  // /turn path, even when the UI itself is mounted under /selkies/.
-  '/turn': {
-    target: selkiesTarget,
-    changeOrigin: true,
   },
   // Apache Guacamole web application. The iframe enters through
   // /guacamole-auth/start, which redirects here with short-lived encrypted JSON

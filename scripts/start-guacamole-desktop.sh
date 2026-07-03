@@ -66,8 +66,8 @@ fi
 
 scripts_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export DISPLAY="${DISPLAY_VALUE}"
-export SELKIES_FONT_SIZE="${GUI_FONT_SIZE}"
-export SELKIES_TEXT_SCALE="${GUI_TEXT_SCALE}"
+export GUI_FONT_SIZE
+export GUI_TEXT_SCALE
 "${scripts_dir}/start-gnome-flashback-session.sh" &
 session_pid=$!
 
