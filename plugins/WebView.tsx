@@ -68,10 +68,20 @@ export function WebView({
     if (event.buttons === 0) releaseWorkspacePanelDrag(event.currentTarget)
   }
 
+  function focusFrame(frame: HTMLIFrameElement) {
+    if (!focusFrameOnPointerDown) return
+    frame.focus()
+  }
+
   function focusFrameOnPointer(event: PointerEvent<HTMLIFrameElement>) {
     if (!focusFrameOnPointerDown) return
     releaseWorkspacePanelDrag(event.currentTarget)
-    event.currentTarget.focus()
+    focusFrame(event.currentTarget)
+  }
+
+  function releaseWorkspacePanelDragAndFocusOnHover(event: MouseEvent<HTMLIFrameElement>) {
+    releaseWorkspacePanelDragOnHover(event)
+    focusFrame(event.currentTarget)
   }
 
   return (
@@ -141,7 +151,7 @@ export function WebView({
           draggable={false}
           tabIndex={focusFrameOnPointerDown ? 0 : undefined}
           onPointerDown={focusFrameOnPointer}
-          onMouseEnter={releaseWorkspacePanelDragOnHover}
+          onMouseEnter={releaseWorkspacePanelDragAndFocusOnHover}
           onFocus={(event) => releaseWorkspacePanelDrag(event.currentTarget)}
           onLoad={(event) => {
             releaseWorkspacePanelDrag(event.currentTarget)
