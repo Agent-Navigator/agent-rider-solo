@@ -2484,6 +2484,21 @@ function WebTerminal({
     if (!terminalCollapsed) window.requestAnimationFrame(() => fitRef.current())
   }, [terminalCollapsed, terminalFullWindow, terminalKey])
 
+  // Full-screen TUI agents (codex/claude/…) don't always repaint cleanly after
+  // a viewport change, so a plain refit can leave the terminal garbled when
+  // entering/leaving full window. Re-attach the tmux-backed session on those
+  // toggles to force a fresh redraw at the new size — the same thing the
+  // Refresh button does. Skipped on the initial mount and for non-agent shells.
+  const didInitFullWindowRef = useRef(false)
+  useEffect(() => {
+    if (!didInitFullWindowRef.current) {
+      didInitFullWindowRef.current = true
+      return
+    }
+    if (!agentTerminal || terminalCollapsed) return
+    setTerminalKey((current) => current + 1)
+  }, [terminalFullWindow])
+
   function setTerminalCollapsedState(updater: boolean | ((current: boolean) => boolean)) {
     const next = typeof updater === 'function' ? updater(terminalCollapsed) : updater
     if (collapsed === undefined) setInternalCollapsed(next)
