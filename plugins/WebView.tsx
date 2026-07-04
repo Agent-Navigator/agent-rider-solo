@@ -1,4 +1,12 @@
-import { type KeyboardEvent, type MouseEvent, type PointerEvent, useState } from 'react'
+import {
+  type KeyboardEvent,
+  type MouseEvent,
+  type MutableRefObject,
+  type PointerEvent,
+  useCallback,
+  useEffect,
+  useState,
+} from 'react'
 
 interface WebViewStatePatch {
   collapsed?: boolean
@@ -15,6 +23,10 @@ interface WebViewProps {
   allow?: string
   onFrameLoad?: (frame: HTMLIFrameElement) => void
   focusFrameOnPointerDown?: boolean
+  /** Runs just before the iframe is remounted (manual Reload or programmatic). */
+  onBeforeReload?: () => void
+  /** Receives an imperative reload handle so callers can remount the frame. */
+  reloadRef?: MutableRefObject<(() => void) | null>
 }
 
 /**
@@ -33,6 +45,8 @@ export function WebView({
   allow = 'clipboard-write; microphone',
   onFrameLoad,
   focusFrameOnPointerDown = false,
+  onBeforeReload,
+  reloadRef,
 }: WebViewProps) {
   const [internalCollapsed, setInternalCollapsed] = useState(false)
   const [internalFullWindow, setInternalFullWindow] = useState(false)
@@ -40,6 +54,21 @@ export function WebView({
   const isFullWindow = fullWindow ?? internalFullWindow
   // Bumping the key remounts the iframe — a clean reload of the embedded service.
   const [frameKey, setFrameKey] = useState(0)
+
+  const reload = useCallback(() => {
+    onBeforeReload?.()
+    setFrameKey((current) => current + 1)
+  }, [onBeforeReload])
+
+  // Expose an imperative reload handle so callers can remount the frame (e.g.
+  // to recover an embedded app from a disconnected state).
+  useEffect(() => {
+    if (!reloadRef) return
+    reloadRef.current = reload
+    return () => {
+      if (reloadRef.current === reload) reloadRef.current = null
+    }
+  }, [reloadRef, reload])
 
   function setCollapsedState(updater: boolean | ((current: boolean) => boolean)) {
     const next = typeof updater === 'function' ? updater(isCollapsed) : updater
@@ -122,7 +151,7 @@ export function WebView({
             className="terminal-clear"
             onClick={(event) => {
               event.stopPropagation()
-              setFrameKey((current) => current + 1)
+              reload()
             }}
           >
             Reload

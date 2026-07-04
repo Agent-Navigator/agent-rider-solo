@@ -97,7 +97,11 @@ function createGuacamoleAuthData() {
   }
 
   const { protocol, parameters } = getGuacamoleConnectionParameters()
-  const expires = Date.now() + Number(process.env.GUACAMOLE_AUTH_TTL_MS || 5 * 60 * 1000)
+  // The encrypted JSON auth blob stays in the client URL and is re-sent by the
+  // Guacamole webapp on every tunnel reconnect. A short TTL therefore makes the
+  // desktop drop with "connection not found" once it lapses (~every few
+  // minutes), so default to a full working day and keep it overridable.
+  const expires = Date.now() + Number(process.env.GUACAMOLE_AUTH_TTL_MS || 12 * 60 * 60 * 1000)
   const connectionName = getGuacamoleConnectionName()
   const username = process.env.GUACAMOLE_AUTH_USERNAME || 'agent-rider'
 
