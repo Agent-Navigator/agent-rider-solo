@@ -3893,6 +3893,16 @@ export default function App() {
     updateRunContext(runId, { reasoningEffort })
   }
 
+  function canonicalAppBuilderWorkspace(run: RunNode) {
+    const targetSlug = run.id.startsWith(APP_BUILDER_RUN_PREFIX)
+      ? run.id.slice(APP_BUILDER_RUN_PREFIX.length)
+      : pathSegment(run.task, 'untitled-app')
+    const app = appListing.apps.find((item) =>
+      item.id === targetSlug || item.label.trim().toLowerCase() === run.task.trim().toLowerCase(),
+    )
+    return app?.workspacePath ?? appBuilderWorkspacePath(appBuilderRoot, run.category, run.project, run.task, targetSlug)
+  }
+
   // ── Unified block ordering (cards + panels) ────────────────────────────────
   const isCardKey = (key: string) => key.startsWith('run-')
   const columnOf = (key: string) =>
@@ -4690,7 +4700,9 @@ export default function App() {
     const modelProvider = (run.modelProvider ?? '').trim() || null
     const reasoningEffort = (run.reasoningEffort ?? '').trim()
     const hasTurns = turns.some((turn) => turn.runId === runId)
-    let workspace = run.workspacePath
+    let workspace = run.cardKind === 'app-builder' ? canonicalAppBuilderWorkspace(run) : run.workspacePath
+    const appBuilderWorkspaceChanged = run.cardKind === 'app-builder' && workspace !== run.workspacePath
+    if (appBuilderWorkspaceChanged) sessionByRunRef.current.delete(run.id)
     if (!hasTurns && run.cardKind !== 'app-builder') {
       const fields = deriveRunFields(prompt, {
         category: run.category,
@@ -4704,7 +4716,16 @@ export default function App() {
         ),
       )
     } else {
-      setRuns((current) => current.map((item) => (item.id === runId ? { ...item, jobStatus: 'running' } : item)))
+      setRuns((current) => current.map((item) => (
+        item.id === runId
+          ? {
+            ...item,
+            workspacePath: appBuilderWorkspaceChanged ? workspace : item.workspacePath,
+            sessionId: appBuilderWorkspaceChanged ? null : item.sessionId,
+            jobStatus: 'running',
+          }
+          : item
+      )))
     }
 
     const { turn, turnId } = newTurn(runId, prompt, parentTurnId)
