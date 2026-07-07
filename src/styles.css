@@ -1107,9 +1107,15 @@ button { cursor: pointer; }
 }
 
 .file-browser.open {
-  width: min(390px, calc(100% - 12px));
+  width: min(50%, calc(100% - 12px));
   border-color: rgba(121, 185, 255, 0.28);
   background: rgba(7, 13, 23, 0.96);
+}
+
+.file-browser.open.list-only {
+  bottom: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
 }
 
 .tui-content-shell > .file-browser {
@@ -1191,6 +1197,13 @@ button { cursor: pointer; }
   overflow: auto;
 }
 
+.file-browser.open.list-only .file-browser-body {
+  min-height: 0;
+  max-height: none;
+  align-content: stretch;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
 .file-browser-bar {
   display: flex;
   align-items: center;
@@ -1235,6 +1248,15 @@ button { cursor: pointer; }
   border-radius: 8px;
   padding: 6px;
   background: rgba(5, 10, 18, 0.5);
+}
+
+.file-browser.open.list-only .file-browser-list {
+  min-height: 0;
+  max-height: none;
+}
+
+.file-browser.has-preview .file-browser-list {
+  max-height: min(240px, 34vh);
 }
 
 .file-row {

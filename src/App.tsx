@@ -1102,7 +1102,7 @@ function FileBrowser({ rootPath }: { rootPath: string }) {
   ) : null
 
   return (
-    <div className={`file-browser ${open ? 'open' : ''}`}>
+    <div className={`file-browser ${open ? 'open' : ''} ${preview ? 'has-preview' : 'list-only'}`}>
       <button type="button" className="file-browser-toggle" onClick={toggleOpen} aria-expanded={open}>
         <span className={`file-browser-caret ${open ? 'open' : ''}`} aria-hidden>▾</span>
         <span className="tree-label">Files</span>
