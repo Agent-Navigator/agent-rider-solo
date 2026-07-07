@@ -418,7 +418,7 @@ button { cursor: pointer; }
 }
 
 .bubble.user.turn-toggle:not(.collapsed) .turn-prompt-text {
-  overflow: visible;
+  overflow: hidden;
   text-overflow: clip;
   white-space: pre-wrap;
   word-break: break-word;
@@ -1033,6 +1033,11 @@ button { cursor: pointer; }
   margin-top: 4px;
 }
 
+.conv-content-shell {
+  position: relative;
+  min-width: 0;
+}
+
 .conv-agent-terminal .web-terminal {
   padding: 0;
   border: none;
@@ -1076,10 +1081,43 @@ button { cursor: pointer; }
 /* ── Per-card file browser ─────────────────────────────────────────────── */
 
 .file-browser {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 45;
+  width: 136px;
   border: 1px solid rgba(148, 163, 184, 0.16);
   border-radius: 10px;
-  background: rgba(8, 14, 24, 0.5);
-  overflow: hidden;
+  background: rgba(8, 14, 24, 0.88);
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.34);
+  backdrop-filter: blur(16px);
+  overflow: visible;
+  transition: width 140ms ease, border-color 140ms ease, background 140ms ease;
+}
+
+.file-browser.open {
+  width: min(390px, calc(100% - 12px));
+  border-color: rgba(121, 185, 255, 0.28);
+  background: rgba(7, 13, 23, 0.96);
+}
+
+.file-browser-full-window .file-browser {
+  position: fixed;
+  top: 28px;
+  right: 28px;
+  z-index: 70;
+}
+
+.file-browser-full-window .file-browser.open {
+  bottom: 28px;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  width: min(420px, calc(100vw - 56px));
+}
+
+.file-browser-full-window .file-browser.open .file-browser-body {
+  min-height: 0;
+  max-height: none;
 }
 
 .file-browser-toggle {
@@ -1132,6 +1170,8 @@ button { cursor: pointer; }
   display: grid;
   gap: 8px;
   padding: 0 10px 10px;
+  max-height: min(68vh, 720px);
+  overflow: auto;
 }
 
 .file-browser-bar {
@@ -1168,7 +1208,7 @@ button { cursor: pointer; }
 .file-browser-list {
   display: grid;
   gap: 2px;
-  max-height: 240px;
+  max-height: min(240px, 34vh);
   overflow-y: auto;
   border: 1px solid rgba(148, 163, 184, 0.12);
   border-radius: 8px;
@@ -1277,7 +1317,7 @@ button { cursor: pointer; }
 .file-preview.full-window {
   position: fixed;
   inset: 14px;
-  z-index: 60;
+  z-index: 80;
   grid-template-rows: auto minmax(0, 1fr);
   background: rgba(5, 10, 18, 0.98);
   backdrop-filter: blur(18px);
@@ -2904,6 +2944,24 @@ button { cursor: pointer; }
 
   .left-rail {
     grid-template-columns: 1fr;
+  }
+
+  .file-browser {
+    width: 118px;
+  }
+
+  .file-browser.open {
+    width: 100%;
+  }
+
+  .file-browser-full-window .file-browser {
+    top: 18px;
+    right: 18px;
+  }
+
+  .file-browser-full-window .file-browser.open {
+    bottom: 18px;
+    width: calc(100vw - 36px);
   }
 
   .main-layout.sidebar-collapsed {

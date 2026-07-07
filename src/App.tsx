@@ -1829,51 +1829,53 @@ function ConversationCard({
                 <span className="conv-workspace-action">Change…</span>
               </button>
             </div>
-            <FileBrowser rootPath={run.workspacePath} />
             </div>
             )}
           </div>
 
-          {tui && (agentType !== 'custom' || customAgentCommand) ? (
-            <div className="conv-agent-terminal">
-              <WebTerminal
-                // Re-attach (not restart) on agent/workspace change — the tmux
-                // session persists in the background, keyed by run + agent + cwd.
-                key={`${agentType}:${customAgentCommand}:${run.workspacePath}`}
-                agent={agentType}
-                customCommand={agentType === 'custom' ? customAgentCommand : undefined}
-                sessionKey={run.id}
-                initialCwd={run.workspacePath}
-                eyebrow={`Agent · ${agentLabel(agentType)} · persistent`}
-                title={`${agentType} — interactive`}
-                showClose={false}
-                onClose={() => {}}
-                collapsed={agentTerminalState?.collapsed}
-                fullWindow={agentTerminalState?.fullWindow}
-                onStateChange={onAgentTerminalStateChange}
-              />
-            </div>
-          ) : tui ? (
-            <div className="conv-agent-command-empty">
-              Enter a bash command to launch the custom TUI agent.
-            </div>
-          ) : (
-            <>
-              <form className="composer conv-followup" onSubmit={submit}>
-                <textarea
-                  value={draft}
-                  onChange={(event) => setDraft(event.target.value)}
-                  onDragOver={(event) => {
-                    if (event.dataTransfer.types.includes('application/x-agent-rider-file-path')) event.preventDefault()
-                  }}
-                  onDrop={(event) => dropFilePathIntoTextarea(event, setDraft)}
-                  placeholder={isDraft ? 'Describe the task to start this conversation…' : 'Reply in this conversation…'}
-                  rows={2}
+          <div className={`conv-content-shell ${tui && agentTerminalState?.fullWindow ? 'file-browser-full-window' : ''}`}>
+            <FileBrowser rootPath={run.workspacePath} />
+
+            {tui && (agentType !== 'custom' || customAgentCommand) ? (
+              <div className="conv-agent-terminal">
+                <WebTerminal
+                  // Re-attach (not restart) on agent/workspace change — the tmux
+                  // session persists in the background, keyed by run + agent + cwd.
+                  key={`${agentType}:${customAgentCommand}:${run.workspacePath}`}
+                  agent={agentType}
+                  customCommand={agentType === 'custom' ? customAgentCommand : undefined}
+                  sessionKey={run.id}
+                  initialCwd={run.workspacePath}
+                  eyebrow={`Agent · ${agentLabel(agentType)} · persistent`}
+                  title={`${agentType} — interactive`}
+                  showClose={false}
+                  onClose={() => {}}
+                  collapsed={agentTerminalState?.collapsed}
+                  fullWindow={agentTerminalState?.fullWindow}
+                  onStateChange={onAgentTerminalStateChange}
                 />
-                <div className="composer-meta">
-                  <div className="composer-controls" aria-label="Hermes options">
-                    <label className="composer-control">
-                      <span>Model</span>
+              </div>
+            ) : tui ? (
+              <div className="conv-agent-command-empty">
+                Enter a bash command to launch the custom TUI agent.
+              </div>
+            ) : (
+              <>
+                <form className="composer conv-followup" onSubmit={submit}>
+                  <textarea
+                    value={draft}
+                    onChange={(event) => setDraft(event.target.value)}
+                    onDragOver={(event) => {
+                      if (event.dataTransfer.types.includes('application/x-agent-rider-file-path')) event.preventDefault()
+                    }}
+                    onDrop={(event) => dropFilePathIntoTextarea(event, setDraft)}
+                    placeholder={isDraft ? 'Describe the task to start this conversation…' : 'Reply in this conversation…'}
+                    rows={2}
+                  />
+                  <div className="composer-meta">
+                    <div className="composer-controls" aria-label="Hermes options">
+                      <label className="composer-control">
+                        <span>Model</span>
                       <select
                         value={selectedModelValue}
                         onChange={(event) => {
@@ -1937,6 +1939,7 @@ function ConversationCard({
               ) : null}
             </>
           )}
+          </div>
         </div>
       ) : null}
     </article>
