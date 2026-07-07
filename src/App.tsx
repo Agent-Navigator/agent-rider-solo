@@ -303,6 +303,45 @@ const DEFAULT_REASONING_EFFORTS = ['minimal', 'low', 'medium', 'high', 'xhigh']
 const EMPTY_MODEL_CATALOG: HermesModelCatalog = { groups: [], defaultModel: '', activeProvider: null }
 const APP_BUILDER_PANEL_ID = 'app-builder'
 const APP_BUILDER_RUN_ID = 'run-app-builder'
+// Per-app App Builder instances: every built app opens through its own builder
+// panel/run pair so each app keeps its own conversation and chat/app-view mode.
+const APP_BUILDER_PANEL_PREFIX = 'app-builder:'
+const APP_BUILDER_RUN_PREFIX = 'run-app-builder:'
+
+function appBuilderPanelIdFor(appSlug: string) {
+  return `${APP_BUILDER_PANEL_PREFIX}${appSlug}`
+}
+
+function appBuilderRunIdFor(appSlug: string) {
+  return `${APP_BUILDER_RUN_PREFIX}${appSlug}`
+}
+
+function isAppBuilderPanelId(panelId: string) {
+  return panelId === APP_BUILDER_PANEL_ID || panelId.startsWith(APP_BUILDER_PANEL_PREFIX)
+}
+
+// cardKind is not a persisted run column, so builder runs are recognized by id.
+function isAppBuilderRunId(runId: string) {
+  return runId === APP_BUILDER_RUN_ID || runId.startsWith(APP_BUILDER_RUN_PREFIX)
+}
+
+function appSlugForBuilderPanel(panelId: string) {
+  return panelId.startsWith(APP_BUILDER_PANEL_PREFIX) ? panelId.slice(APP_BUILDER_PANEL_PREFIX.length) : null
+}
+
+function appBuilderPanelIdForRun(runId: string) {
+  return runId.startsWith(APP_BUILDER_RUN_PREFIX) ? appBuilderPanelIdFor(runId.slice(APP_BUILDER_RUN_PREFIX.length)) : APP_BUILDER_PANEL_ID
+}
+
+function appBuilderRunIdForPanel(panelId: string) {
+  const slug = appSlugForBuilderPanel(panelId)
+  return slug ? appBuilderRunIdFor(slug) : APP_BUILDER_RUN_ID
+}
+
+// Legacy `app:<slug>` WebView panels are superseded by per-app builder panels.
+function migrateLegacyAppPanelId(panelId: string) {
+  return panelId.startsWith('app:') ? appBuilderPanelIdFor(panelId.slice('app:'.length)) : panelId
+}
 
 hljs.registerLanguage('bash', bash)
 hljs.registerLanguage('c', c)
@@ -486,7 +525,12 @@ function normalizePanelStates(value: unknown): Record<string, WorkspacePanelStat
     const state: WorkspacePanelState = {}
     if (typeof source.collapsed === 'boolean') state.collapsed = source.collapsed
     if (typeof source.fullWindow === 'boolean') state.fullWindow = source.fullWindow
-    if (Object.keys(state).length) states[key] = state
+    if (source.builderMode === 'chat' || source.builderMode === 'app') state.builderMode = source.builderMode
+    if (typeof source.contextCollapsed === 'boolean') state.contextCollapsed = source.contextCollapsed
+    const migratedKey = migrateLegacyAppPanelId(key)
+    // A legacy app panel was showing the app itself, so its builder starts on App View.
+    if (migratedKey !== key && !state.builderMode) state.builderMode = 'app'
+    if (Object.keys(state).length) states[migratedKey] = state
   }
   return states
 }
@@ -2226,6 +2270,7 @@ function AppBuilderPanel({
   run,
   apps,
   appWarnings,
+  targetAppId,
   chatContent,
   onTitleChange,
   onCategoryChange,
@@ -2235,11 +2280,17 @@ function AppBuilderPanel({
   onClose,
   collapsed,
   fullWindow,
+  mode,
+  onModeChange,
+  contextCollapsed,
+  onContextCollapsedChange,
   onStateChange,
 }: {
   run: RunNode
   apps: AgentApp[]
   appWarnings: AppWarning[]
+  /** When set, this builder instance edits an existing app (Resources → App entry). */
+  targetAppId?: string
   chatContent: ReactNode
   onTitleChange: (value: string) => void
   onCategoryChange: (value: string) => void
@@ -2249,17 +2300,26 @@ function AppBuilderPanel({
   onClose: () => void
   collapsed?: boolean
   fullWindow?: boolean
+  mode?: AppBuilderMode
+  onModeChange?: (mode: AppBuilderMode) => void
+  contextCollapsed?: boolean
+  onContextCollapsedChange?: (collapsed: boolean) => void
   onStateChange?: (patch: WorkspacePanelState) => void
 }) {
   const [internalCollapsed, setInternalCollapsed] = useState(false)
   const [internalFullWindow, setInternalFullWindow] = useState(false)
-  const [mode, setMode] = useState<AppBuilderMode>('chat')
+  const [internalMode, setInternalMode] = useState<AppBuilderMode>('chat')
+  const [internalContextCollapsed, setInternalContextCollapsed] = useState(false)
   const [customCommandDraft, setCustomCommandDraft] = useState(run.agentCommand ?? '')
   const isCollapsed = collapsed ?? internalCollapsed
   const isFullWindow = fullWindow ?? internalFullWindow
+  const activeMode = mode ?? internalMode
+  const isContextCollapsed = contextCollapsed ?? internalContextCollapsed
   const appTitle = run.task.trim() || 'Untitled app'
   const appSlug = pathSegment(appTitle, 'untitled-app')
-  const appAtWork = apps.find((app) => app.id === appSlug || app.label.trim().toLowerCase() === appTitle.toLowerCase()) ?? apps.find((app) => app.hasDist) ?? apps[0] ?? null
+  const appAtWork = targetAppId
+    ? apps.find((app) => app.id === targetAppId) ?? null
+    : apps.find((app) => app.id === appSlug || app.label.trim().toLowerCase() === appTitle.toLowerCase()) ?? apps.find((app) => app.hasDist) ?? apps[0] ?? null
 
   useEffect(() => {
     setCustomCommandDraft(run.agentCommand ?? '')
@@ -2275,6 +2335,16 @@ function AppBuilderPanel({
     const next = typeof updater === 'function' ? updater(isFullWindow) : updater
     if (fullWindow === undefined) setInternalFullWindow(next)
     onStateChange?.({ fullWindow: next })
+  }
+
+  function setModeState(next: AppBuilderMode) {
+    if (mode === undefined) setInternalMode(next)
+    onModeChange?.(next)
+  }
+
+  function setContextCollapsedState(next: boolean) {
+    if (contextCollapsed === undefined) setInternalContextCollapsed(next)
+    onContextCollapsedChange?.(next)
   }
 
   function toggleFromKey(event: KeyboardEvent<HTMLDivElement>) {
@@ -2358,7 +2428,22 @@ function AppBuilderPanel({
 
       {!isCollapsed ? (
         <div className="conv-card-body app-builder-body">
-          <div className="conv-meta app-builder-context">
+          <div className={`conv-meta app-builder-context ${isContextCollapsed ? 'collapsed' : ''}`}>
+            <button
+              type="button"
+              className="conv-meta-toggle"
+              aria-expanded={!isContextCollapsed}
+              onClick={() => setContextCollapsedState(!isContextCollapsed)}
+            >
+              <span className={`conv-meta-caret ${isContextCollapsed ? '' : 'open'}`} aria-hidden>▾</span>
+              <span className="conv-meta-toggle-label">Context</span>
+              {isContextCollapsed ? (
+                <span className="conv-meta-summary">
+                  {[run.category, run.project, agentLabel(run.agentType)].filter(Boolean).join(' · ') || 'Category · Project · Agent'}
+                </span>
+              ) : null}
+            </button>
+            {isContextCollapsed ? null : (
             <div className="conv-meta-fields">
               <div className="conv-meta-row">
                 <span className="tree-label">Category</span>
@@ -2421,30 +2506,31 @@ function AppBuilderPanel({
                 </div>
               ) : null}
             </div>
+            )}
           </div>
 
           <div className="app-builder-tabs" role="tablist" aria-label="App Builder view">
             <button
               type="button"
               role="tab"
-              aria-selected={mode === 'chat'}
-              className={mode === 'chat' ? 'active' : ''}
-              onClick={() => setMode('chat')}
+              aria-selected={activeMode === 'chat'}
+              className={activeMode === 'chat' ? 'active' : ''}
+              onClick={() => setModeState('chat')}
             >
               Chat Window
             </button>
             <button
               type="button"
               role="tab"
-              aria-selected={mode === 'app'}
-              className={mode === 'app' ? 'active' : ''}
-              onClick={() => setMode('app')}
+              aria-selected={activeMode === 'app'}
+              className={activeMode === 'app' ? 'active' : ''}
+              onClick={() => setModeState('app')}
             >
               App View
             </button>
           </div>
 
-          {mode === 'chat' ? (
+          {activeMode === 'chat' ? (
             <div className="app-builder-chat" role="tabpanel">
               {chatContent}
             </div>
@@ -2453,6 +2539,15 @@ function AppBuilderPanel({
               <div className="app-builder-viewbar">
                 <strong>{appAtWork?.label ?? 'App at work'}</strong>
                 <span>{appAtWork?.hasDist ? 'Ready' : appAtWork ? 'Waiting for build' : 'No app yet'}</span>
+                <button
+                  type="button"
+                  className="terminal-icon-button app-builder-view-expand"
+                  title={isFullWindow ? 'Exit full window' : 'Expand to full window'}
+                  aria-label={isFullWindow ? 'Exit full window' : 'Expand to full window'}
+                  onClick={() => setFullWindowState((current) => !current)}
+                >
+                  {isFullWindow ? '↙' : '⛶'}
+                </button>
               </div>
               {appAtWork?.hasDist ? (
                 <iframe className="app-builder-frame" title={appAtWork.label} src={appAtWork.entry} />
@@ -2486,6 +2581,7 @@ function ResourceSidebar({
   apps,
   appWarnings,
   appBuilderOpen,
+  appBuilderTitle,
   onLaunchAppBuilder,
   openAppSlugs,
   onLaunchApp,
@@ -2499,6 +2595,7 @@ function ResourceSidebar({
   apps: AgentApp[]
   appWarnings: AppWarning[]
   appBuilderOpen: boolean
+  appBuilderTitle: string
   onLaunchAppBuilder: () => void
   openAppSlugs: Set<string>
   onLaunchApp: (slug: string) => void
@@ -2586,7 +2683,7 @@ function ResourceSidebar({
                 onClick={onLaunchAppBuilder}
                 title={appBuilderOpen ? 'App Builder is open' : 'Launch App Builder'}
               >
-                <span className="tree-run-title">App Builder</span>
+                <span className="tree-run-title">{appBuilderTitle}</span>
                 <LaunchIcon open={appBuilderOpen} />
               </button>
               {apps.length ? (
@@ -2685,8 +2782,7 @@ function AppTool({
           type="button"
           className={`tree-nav-run resource-tool app-tool-launch ${open ? 'active' : ''}`}
           onClick={onLaunch}
-          disabled={!app.hasDist}
-          title={app.hasDist ? (open ? `${app.label} is open` : `Launch ${app.label}`) : `${app.label} is not built yet`}
+          title={open ? `${app.label} is open in App Builder` : `Open ${app.label} in App Builder`}
         >
           <span className="tree-run-title">{app.label}</span>
           {app.hasDist ? <LaunchIcon open={open} /> : <span className="resource-tool-action">⏳</span>}
@@ -3386,7 +3482,13 @@ export default function App() {
     [panelOrder],
   )
   const openAppSlugs = useMemo(
-    () => new Set(panelOrder.filter((p) => p.startsWith('app:')).map((p) => p.slice('app:'.length))),
+    () =>
+      new Set(
+        panelOrder
+          .map(migrateLegacyAppPanelId)
+          .filter((p) => p.startsWith(APP_BUILDER_PANEL_PREFIX))
+          .map((p) => p.slice(APP_BUILDER_PANEL_PREFIX.length)),
+      ),
     [panelOrder],
   )
 
@@ -3403,15 +3505,24 @@ export default function App() {
   }
   const launchPlugin = (pluginId: string) => openPanel(`plugin:${pluginId}`)
   const closePlugin = (pluginId: string) => closePanel(`plugin:${pluginId}`)
-  const launchApp = (slug: string) => openPanel(`app:${slug}`)
-  const closeApp = (slug: string) => closePanel(`app:${slug}`)
+  // Opening a built app goes through its own App Builder instance so viewing
+  // and maintaining apps share a single editor entry point.
+  const launchApp = (slug: string) => {
+    const app = appListing.apps.find((item) => item.id === slug)
+    setRuns((current) =>
+      current.some((run) => run.id === appBuilderRunIdFor(slug))
+        ? current
+        : [makeAppBuilderRun({ id: slug, label: app?.label ?? slug }), ...current],
+    )
+    openPanel(appBuilderPanelIdFor(slug))
+  }
 
-  function makeAppBuilderRun(): RunNode {
+  function makeAppBuilderRun(app?: { id: string; label: string }): RunNode {
     const category = 'Product Delivery'
     const project = 'Agent Rider App'
-    const task = 'Build an App'
+    const task = app ? app.label : 'Build an App'
     return {
-      id: APP_BUILDER_RUN_ID,
+      id: app ? appBuilderRunIdFor(app.id) : APP_BUILDER_RUN_ID,
       prompt: '',
       category,
       categoryTags: tagsForCategory(category),
@@ -3445,58 +3556,79 @@ export default function App() {
     openPanel(APP_BUILDER_PANEL_ID)
   }
 
+  // Every open App Builder panel needs a backing run. Per-app builders wait for
+  // the app listing so the run's title matches the app's label.
   useEffect(() => {
-    if (!appBuilderOpen) return
-    setRuns((current) => (current.some((run) => run.id === APP_BUILDER_RUN_ID) ? current : [makeAppBuilderRun(), ...current]))
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [appBuilderOpen, workspaceRoot])
-
-  useEffect(() => {
-    if (!appBuilderOpen) return
-    const run = runs.find((item) => item.id === APP_BUILDER_RUN_ID)
-    if (!run) return
-    const nextWorkspace = appBuilderWorkspacePath(workspaceRoot, run.category, run.project, run.task)
-    if (appFolderConflict && appFolderConflict.targetPath !== nextWorkspace) setAppFolderConflict(null)
-    if (run.workspacePath === nextWorkspace) {
-      void ensureWorkspacePath(workspaceRoot, nextWorkspace).catch(() => {})
-      return
-    }
-    if (appFolderConflict?.sourcePath === run.workspacePath && appFolderConflict.targetPath === nextWorkspace) return
-
-    let cancelled = false
-    void (async () => {
-      const sourceListing = await listDir(run.workspacePath)
-      if (cancelled) return
-      if (!sourceListing) {
-        await ensureWorkspacePath(workspaceRoot, nextWorkspace)
-        if (cancelled) return
-        sessionByRunRef.current.delete(run.id)
-        updateRunContext(run.id, { workspacePath: nextWorkspace, sessionId: null })
-        return
+    const builderPanels = panelOrder.filter(isAppBuilderPanelId)
+    if (!builderPanels.length) return
+    setRuns((current) => {
+      const additions: RunNode[] = []
+      for (const panelId of builderPanels) {
+        const runId = appBuilderRunIdForPanel(panelId)
+        if (current.some((run) => run.id === runId) || additions.some((run) => run.id === runId)) continue
+        const slug = appSlugForBuilderPanel(panelId)
+        if (!slug) {
+          additions.push(makeAppBuilderRun())
+          continue
+        }
+        const app = appListing.apps.find((item) => item.id === slug)
+        if (app) additions.push(makeAppBuilderRun({ id: slug, label: app.label }))
       }
+      return additions.length ? [...additions, ...current] : current
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [panelOrder, workspaceRoot, appListing.apps])
 
-      const result = await moveDir(run.workspacePath, nextWorkspace)
-      if (cancelled) return
-      if ('error' in result) {
-        if (result.conflict) {
-          setAppFolderConflict({
-            sourcePath: run.workspacePath,
-            targetPath: nextWorkspace,
-            error: result.error,
-          })
+  useEffect(() => {
+    const openBuilderRuns = runs.filter(
+      (run) => isAppBuilderRunId(run.id) && panelOrder.includes(appBuilderPanelIdForRun(run.id)),
+    )
+    if (!openBuilderRuns.length) return
+    let cancelled = false
+    for (const run of openBuilderRuns) {
+      const nextWorkspace = appBuilderWorkspacePath(workspaceRoot, run.category, run.project, run.task)
+      const runConflict = appFolderConflict?.sourcePath === run.workspacePath ? appFolderConflict : null
+      if (runConflict && runConflict.targetPath !== nextWorkspace) setAppFolderConflict(null)
+      if (run.workspacePath === nextWorkspace) {
+        void ensureWorkspacePath(workspaceRoot, nextWorkspace).catch(() => {})
+        continue
+      }
+      if (runConflict && runConflict.targetPath === nextWorkspace) continue
+
+      void (async () => {
+        const sourceListing = await listDir(run.workspacePath)
+        if (cancelled) return
+        if (!sourceListing) {
+          await ensureWorkspacePath(workspaceRoot, nextWorkspace)
+          if (cancelled) return
+          sessionByRunRef.current.delete(run.id)
+          updateRunContext(run.id, { workspacePath: nextWorkspace, sessionId: null })
           return
         }
-        setError(result.error)
-        return
-      }
-      setAppFolderConflict(null)
-      sessionByRunRef.current.delete(run.id)
-      updateRunContext(run.id, { workspacePath: result.path, sessionId: null })
-    })().catch((error) => setError(error instanceof Error ? error.message : String(error)))
+
+        const result = await moveDir(run.workspacePath, nextWorkspace)
+        if (cancelled) return
+        if ('error' in result) {
+          if (result.conflict) {
+            setAppFolderConflict({
+              sourcePath: run.workspacePath,
+              targetPath: nextWorkspace,
+              error: result.error,
+            })
+            return
+          }
+          setError(result.error)
+          return
+        }
+        setAppFolderConflict(null)
+        sessionByRunRef.current.delete(run.id)
+        updateRunContext(run.id, { workspacePath: result.path, sessionId: null })
+      })().catch((error) => setError(error instanceof Error ? error.message : String(error)))
+    }
     return () => {
       cancelled = true
     }
-  }, [appBuilderOpen, runs, workspaceRoot, appFolderConflict])
+  }, [panelOrder, runs, workspaceRoot, appFolderConflict])
 
   function setPanelColumn(panelId: string, column: number) {
     setPanelColumns((current) => ({ ...current, [panelId]: column }))
@@ -3508,6 +3640,8 @@ export default function App() {
       const normalized: WorkspacePanelState = {}
       if (typeof nextState.collapsed === 'boolean') normalized.collapsed = nextState.collapsed
       if (typeof nextState.fullWindow === 'boolean') normalized.fullWindow = nextState.fullWindow
+      if (nextState.builderMode === 'chat' || nextState.builderMode === 'app') normalized.builderMode = nextState.builderMode
+      if (typeof nextState.contextCollapsed === 'boolean') normalized.contextCollapsed = nextState.contextCollapsed
       return { ...current, [panelId]: normalized }
     })
   }
@@ -4073,7 +4207,7 @@ export default function App() {
             modelProvider: typeof run.modelProvider === 'string' ? run.modelProvider : null,
             reasoningEffort: typeof run.reasoningEffort === 'string' ? run.reasoningEffort : '',
             agentCommand: typeof run.agentCommand === 'string' ? run.agentCommand : '',
-            cardKind: run.id === APP_BUILDER_RUN_ID ? 'app-builder' : run.cardKind ?? 'conversation',
+            cardKind: isAppBuilderRunId(run.id) ? 'app-builder' : run.cardKind ?? 'conversation',
           }))
           const restoredRunIds = new Set(restored.map((run) => run.id))
           setRuns((current) => (current.length ? current : restored))
@@ -4108,13 +4242,18 @@ export default function App() {
         // order, and the column count.
         if (layout) {
           if (Array.isArray(layout.panelOrder)) {
-            setPanelOrder((current) => (current.length ? current : (layout.panelOrder as string[])))
+            const migratedOrder = [...new Set((layout.panelOrder as string[]).map(migrateLegacyAppPanelId))]
+            setPanelOrder((current) => (current.length ? current : migratedOrder))
           }
           if (layout.panelColumns && typeof layout.panelColumns === 'object') {
-            setPanelColumns((current) => (Object.keys(current).length ? current : (layout.panelColumns as Record<string, number>)))
+            const migratedColumns = Object.fromEntries(
+              Object.entries(layout.panelColumns as Record<string, number>).map(([key, column]) => [migrateLegacyAppPanelId(key), column]),
+            )
+            setPanelColumns((current) => (Object.keys(current).length ? current : migratedColumns))
           }
           if (Array.isArray(layout.layoutOrder)) {
-            setLayoutOrder((current) => (current.length ? current : (layout.layoutOrder as string[])))
+            const migratedLayout = [...new Set((layout.layoutOrder as string[]).map(migrateLegacyAppPanelId))]
+            setLayoutOrder((current) => (current.length ? current : migratedLayout))
           }
           if (layout.workspaceColumns === 1 || layout.workspaceColumns === 2) {
             setWorkspaceColumns(layout.workspaceColumns)
@@ -4463,8 +4602,7 @@ export default function App() {
     />
   )
 
-  const renderAppBuilderChat = () => {
-    const run = runs.find((item) => item.id === APP_BUILDER_RUN_ID) ?? makeAppBuilderRun()
+  const renderAppBuilderChat = (run: RunNode, panelId: string) => {
     return (
       <ConversationCard
         key={run.id}
@@ -4496,7 +4634,7 @@ export default function App() {
         onModelChange={(model, modelProvider) => updateRunHermesModel(run.id, model, modelProvider)}
         onReasoningEffortChange={(reasoningEffort) => updateRunReasoningEffort(run.id, reasoningEffort)}
         onOpenPicker={() => setPickerRunId(run.id)}
-        onClose={() => closePanel(APP_BUILDER_PANEL_ID)}
+        onClose={() => closePanel(panelId)}
         onDeleteTurn={(turnId) => deleteConversationTurn(run.id, turnId)}
         stoppableTurnId={activeHermesStreamId ? activeHermesTurnId : null}
         refreshableTurnId={activeHermesStreamId ? activeHermesTurnId : null}
@@ -4522,24 +4660,34 @@ export default function App() {
           onStateChange={(patch) => updatePanelState(panelId, patch)}
         />
       )
-    } else if (panelId === APP_BUILDER_PANEL_ID) {
-      content = (
-        <AppBuilderPanel
-          run={runs.find((item) => item.id === APP_BUILDER_RUN_ID) ?? makeAppBuilderRun()}
-          apps={appListing.apps}
-          appWarnings={appListing.warnings}
-          chatContent={renderAppBuilderChat()}
-          onTitleChange={(value) => updateRunContext(APP_BUILDER_RUN_ID, { task: value })}
-          onCategoryChange={(value) => updateRunContext(APP_BUILDER_RUN_ID, { category: value, categoryTags: tagsForCategory(value) })}
-          onProjectChange={(value) => updateRunProject(APP_BUILDER_RUN_ID, value)}
-          onAgentChange={(value) => updateRunContext(APP_BUILDER_RUN_ID, { agentType: value })}
-          onAgentCommandChange={(value) => updateRunContext(APP_BUILDER_RUN_ID, { agentCommand: value })}
-          onClose={() => closePanel(panelId)}
-          collapsed={panelStates[panelId]?.collapsed}
-          fullWindow={panelStates[panelId]?.fullWindow}
-          onStateChange={(patch) => updatePanelState(panelId, patch)}
-        />
-      )
+    } else if (isAppBuilderPanelId(panelId)) {
+      const runId = appBuilderRunIdForPanel(panelId)
+      const targetAppSlug = appSlugForBuilderPanel(panelId)
+      const run = runs.find((item) => item.id === runId) ?? (targetAppSlug ? null : makeAppBuilderRun())
+      if (run) {
+        content = (
+          <AppBuilderPanel
+            run={run}
+            apps={appListing.apps}
+            appWarnings={appListing.warnings}
+            targetAppId={targetAppSlug ?? undefined}
+            chatContent={renderAppBuilderChat(run, panelId)}
+            onTitleChange={(value) => updateRunContext(runId, { task: value })}
+            onCategoryChange={(value) => updateRunContext(runId, { category: value, categoryTags: tagsForCategory(value) })}
+            onProjectChange={(value) => updateRunProject(runId, value)}
+            onAgentChange={(value) => updateRunContext(runId, { agentType: value })}
+            onAgentCommandChange={(value) => updateRunContext(runId, { agentCommand: value })}
+            onClose={() => closePanel(panelId)}
+            collapsed={panelStates[panelId]?.collapsed}
+            fullWindow={panelStates[panelId]?.fullWindow}
+            mode={panelStates[panelId]?.builderMode ?? (targetAppSlug ? 'app' : 'chat')}
+            onModeChange={(nextMode) => updatePanelState(panelId, { builderMode: nextMode })}
+            contextCollapsed={panelStates[panelId]?.contextCollapsed ?? Boolean(targetAppSlug)}
+            onContextCollapsedChange={(nextCollapsed) => updatePanelState(panelId, { contextCollapsed: nextCollapsed })}
+            onStateChange={(patch) => updatePanelState(panelId, patch)}
+          />
+        )
+      }
     } else if (panelId.startsWith('plugin:')) {
       const plugin = plugins.find((p) => p.id === panelId.slice('plugin:'.length))
       if (plugin) {
@@ -4739,6 +4887,7 @@ export default function App() {
                   apps={appListing.apps}
                   appWarnings={appListing.warnings}
                   appBuilderOpen={appBuilderOpen}
+                  appBuilderTitle={runs.find((run) => run.id === APP_BUILDER_RUN_ID)?.task.trim() || 'App Builder'}
                   onLaunchAppBuilder={launchAppBuilder}
                   openAppSlugs={openAppSlugs}
                   onLaunchApp={launchApp}

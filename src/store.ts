@@ -7,6 +7,10 @@
 export interface WorkspacePanelState {
   collapsed?: boolean
   fullWindow?: boolean
+  /** App Builder panels: which tab (Chat Window / App View) the user last used. */
+  builderMode?: 'chat' | 'app'
+  /** App Builder panels: whether the Context (Category/Project/Agent) block is folded. */
+  contextCollapsed?: boolean
 }
 
 export interface WorkspaceLayout {

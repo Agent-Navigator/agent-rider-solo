@@ -2829,8 +2829,14 @@ button { cursor: pointer; }
   margin-bottom: 0;
 }
 
-.app-builder-context .conv-meta-fields {
-  margin-top: 0;
+.app-builder-context.collapsed {
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+
+.app-builder-viewbar .app-builder-view-expand {
+  margin-left: auto;
+  flex-shrink: 0;
 }
 
 .app-builder-tabs {
