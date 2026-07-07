@@ -3509,6 +3509,10 @@ export default function App() {
   const queuedPromptsRef = useRef<QueuedPromptEntry[]>([])
   const assistantBufferRef = useRef('')
   const turnsRef = useRef<TurnItem[]>([])
+  const runsRef = useRef<RunNode[]>([])
+  // Pending debounced App Builder workspace-folder moves, keyed by run id —
+  // avoids moving the folder on every keystroke while the title is being typed.
+  const workspaceMoveTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
   const [activeHermesTurnId, setActiveHermesTurnId] = useState<string | null>(null)
   const [activeHermesStreamId, setActiveHermesStreamId] = useState<string | null>(null)
   // Each conversation (run) keeps its own Hermes session for multi-turn context.
@@ -3566,6 +3570,10 @@ export default function App() {
   useEffect(() => {
     turnsRef.current = turns
   }, [turns])
+
+  useEffect(() => {
+    runsRef.current = runs
+  }, [runs])
 
   const terminalOpen = panelOrder.includes('terminal')
   const appBuilderOpen = panelOrder.includes(APP_BUILDER_PANEL_ID)
@@ -3671,56 +3679,91 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [panelOrder, workspaceRoot, appListing.apps])
 
+  // Moves an App Builder run's workspace folder to match its current
+  // category/project/title. Reads the run fresh from runsRef at call time
+  // (not from a closure) since this fires after a debounce delay.
+  async function moveAppBuilderWorkspace(runId: string) {
+    const run = runsRef.current.find((item) => item.id === runId)
+    if (!run) return
+    const nextWorkspace = appBuilderWorkspacePath(workspaceRoot, run.category, run.project, run.task)
+    if (run.workspacePath === nextWorkspace) {
+      void ensureWorkspacePath(workspaceRoot, nextWorkspace).catch(() => {})
+      return
+    }
+
+    const sourceListing = await listDir(run.workspacePath)
+    if (!sourceListing) {
+      await ensureWorkspacePath(workspaceRoot, nextWorkspace)
+      sessionByRunRef.current.delete(run.id)
+      updateRunContext(run.id, { workspacePath: nextWorkspace, sessionId: null })
+      return
+    }
+
+    const result = await moveDir(run.workspacePath, nextWorkspace)
+    if ('error' in result) {
+      if (result.conflict) {
+        setAppFolderConflict({
+          sourcePath: run.workspacePath,
+          targetPath: nextWorkspace,
+          error: result.error,
+        })
+        return
+      }
+      setError(result.error)
+      return
+    }
+    setAppFolderConflict(null)
+    sessionByRunRef.current.delete(run.id)
+    updateRunContext(run.id, { workspacePath: result.path, sessionId: null })
+  }
+
+  // Debounce the folder move so it settles once after the user stops typing
+  // the title/category/project, instead of moving the folder on every
+  // keystroke (each keystroke would otherwise create+move a new folder).
   useEffect(() => {
+    const timers = workspaceMoveTimersRef.current
     const openBuilderRuns = runs.filter(
       (run) => isAppBuilderRunId(run.id) && panelOrder.includes(appBuilderPanelIdForRun(run.id)),
     )
-    if (!openBuilderRuns.length) return
-    let cancelled = false
+    const openRunIds = new Set(openBuilderRuns.map((run) => run.id))
+    for (const [runId, timer] of timers) {
+      if (!openRunIds.has(runId)) {
+        clearTimeout(timer)
+        timers.delete(runId)
+      }
+    }
     for (const run of openBuilderRuns) {
       const nextWorkspace = appBuilderWorkspacePath(workspaceRoot, run.category, run.project, run.task)
       const runConflict = appFolderConflict?.sourcePath === run.workspacePath ? appFolderConflict : null
       if (runConflict && runConflict.targetPath !== nextWorkspace) setAppFolderConflict(null)
+      const existing = timers.get(run.id)
+      if (existing) clearTimeout(existing)
       if (run.workspacePath === nextWorkspace) {
+        timers.delete(run.id)
         void ensureWorkspacePath(workspaceRoot, nextWorkspace).catch(() => {})
         continue
       }
       if (runConflict && runConflict.targetPath === nextWorkspace) continue
-
-      void (async () => {
-        const sourceListing = await listDir(run.workspacePath)
-        if (cancelled) return
-        if (!sourceListing) {
-          await ensureWorkspacePath(workspaceRoot, nextWorkspace)
-          if (cancelled) return
-          sessionByRunRef.current.delete(run.id)
-          updateRunContext(run.id, { workspacePath: nextWorkspace, sessionId: null })
-          return
-        }
-
-        const result = await moveDir(run.workspacePath, nextWorkspace)
-        if (cancelled) return
-        if ('error' in result) {
-          if (result.conflict) {
-            setAppFolderConflict({
-              sourcePath: run.workspacePath,
-              targetPath: nextWorkspace,
-              error: result.error,
-            })
-            return
-          }
-          setError(result.error)
-          return
-        }
-        setAppFolderConflict(null)
-        sessionByRunRef.current.delete(run.id)
-        updateRunContext(run.id, { workspacePath: result.path, sessionId: null })
-      })().catch((error) => setError(error instanceof Error ? error.message : String(error)))
+      timers.set(
+        run.id,
+        setTimeout(() => {
+          timers.delete(run.id)
+          void moveAppBuilderWorkspace(run.id).catch((error) =>
+            setError(error instanceof Error ? error.message : String(error)),
+          )
+        }, 1200),
+      )
     }
-    return () => {
-      cancelled = true
-    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [panelOrder, runs, workspaceRoot, appFolderConflict])
+
+  useEffect(() => {
+    const timers = workspaceMoveTimersRef.current
+    return () => {
+      for (const timer of timers.values()) clearTimeout(timer)
+      timers.clear()
+    }
+  }, [])
 
   function setPanelColumn(panelId: string, column: number) {
     setPanelColumns((current) => ({ ...current, [panelId]: column }))
