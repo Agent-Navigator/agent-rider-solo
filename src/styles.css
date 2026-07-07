@@ -1133,7 +1133,7 @@ button { cursor: pointer; }
   bottom: 28px;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  width: min(420px, calc(100vw - 56px));
+  width: min(50vw, calc(100vw - 56px));
 }
 
 .file-browser-full-window .file-browser.open .file-browser-body {
