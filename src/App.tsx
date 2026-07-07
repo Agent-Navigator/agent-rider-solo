@@ -496,8 +496,12 @@ function compactText(value: string, max = 96) {
 
 async function copyToClipboard(value: string) {
   if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(value)
-    return
+    try {
+      await navigator.clipboard.writeText(value)
+      return
+    } catch {
+      // Fall through to the DOM copy path when clipboard permission is denied.
+    }
   }
 
   const textarea = document.createElement('textarea')
@@ -1822,6 +1826,7 @@ function ConversationCard({
                 customCommand={agentType === 'custom' ? customAgentCommand : undefined}
                 sessionKey={run.id}
                 initialCwd={run.workspacePath}
+                autoCopySelection
                 eyebrow={`Agent · ${agentLabel(agentType)} · persistent`}
                 title={`${agentType} — interactive`}
                 showClose={false}
@@ -2344,6 +2349,7 @@ function WebTerminal({
   agent,
   customCommand,
   sessionKey,
+  autoCopySelection = false,
   eyebrow = 'Resource · Tools',
   title = 'Local Terminal',
   showClose = true,
@@ -2360,6 +2366,7 @@ function WebTerminal({
   /** Stable key for a persistent (tmux-backed) agent session that survives
    *  disconnects. Only meaningful together with `agent`. */
   sessionKey?: string
+  autoCopySelection?: boolean
   eyebrow?: string
   title?: string
   showClose?: boolean
@@ -2414,6 +2421,21 @@ function WebTerminal({
       void copyToClipboard(terminal.getSelection()).catch(() => {})
       return false
     })
+
+    let lastCopiedSelection = ''
+    let selectionCopyTimer: number | undefined
+    const selectionDisposable = autoCopySelection
+      ? terminal.onSelectionChange(() => {
+          if (selectionCopyTimer !== undefined) window.clearTimeout(selectionCopyTimer)
+          selectionCopyTimer = window.setTimeout(() => {
+            if (!terminal.hasSelection()) return
+            const selection = terminal.getSelection()
+            if (!selection || selection === lastCopiedSelection) return
+            lastCopiedSelection = selection
+            void copyToClipboard(selection).catch(() => {})
+          }, 80)
+        })
+      : null
     terminalRef.current = terminal
 
     const fit = () => {
@@ -2472,13 +2494,15 @@ function WebTerminal({
     return () => {
       resizeObserver.disconnect()
       window.removeEventListener('resize', fit)
+      if (selectionCopyTimer !== undefined) window.clearTimeout(selectionCopyTimer)
+      selectionDisposable?.dispose()
       inputDisposable.dispose()
       socket.close()
       terminal.dispose()
       if (socketRef.current === socket) socketRef.current = null
       if (terminalRef.current === terminal) terminalRef.current = null
     }
-  }, [initialCwd, terminalKey, agent, customCommand, sessionKey])
+  }, [initialCwd, terminalKey, agent, customCommand, sessionKey, autoCopySelection])
 
   useEffect(() => {
     if (!terminalCollapsed) window.requestAnimationFrame(() => fitRef.current())
