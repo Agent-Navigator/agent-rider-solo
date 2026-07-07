@@ -1251,6 +1251,40 @@ button { cursor: pointer; }
 }
 
 .file-row-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.file-row-icon {
+  flex: 0 0 auto;
+  display: inline-grid;
+  place-items: center;
+  width: 34px;
+  height: 20px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 5px;
+  background: rgba(148, 163, 184, 0.08);
+  color: #cfe4ff;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.file-row-icon.dir {
+  border-color: rgba(121, 185, 255, 0.3);
+  background: rgba(121, 185, 255, 0.12);
+  color: #d6ecff;
+}
+
+.file-row-icon.file {
+  color: #dbe7f5;
+}
+
+.file-row-label {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;

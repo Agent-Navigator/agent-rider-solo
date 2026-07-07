@@ -753,6 +753,23 @@ function fileExtension(name: string) {
   return index > 0 ? name.slice(index).toLowerCase() : ''
 }
 
+function fileTypeIcon(name: string) {
+  const lowerName = name.toLowerCase()
+  const ext = fileExtension(lowerName)
+  if (['.png', '.jpg', '.jpeg', '.gif', '.webp', '.avif', '.svg', '.bmp', '.ico'].includes(ext)) return 'IMG'
+  if (['.mp4', '.mov', '.webm', '.mkv', '.avi', '.m4v'].includes(ext)) return 'VID'
+  if (['.mp3', '.wav', '.ogg', '.flac', '.m4a', '.aac'].includes(ext)) return 'AUD'
+  if (['.zip', '.tar', '.gz', '.tgz', '.bz2', '.xz', '.7z', '.rar'].includes(ext)) return 'ZIP'
+  if (['.pdf'].includes(ext)) return 'PDF'
+  if (['.md', '.markdown', '.mdx'].includes(ext)) return 'MD'
+  if (['.html', '.htm'].includes(ext)) return 'HTML'
+  if (['.json', '.jsonl', '.yaml', '.yml', '.toml', '.xml', '.csv'].includes(ext)) return 'DATA'
+  if (['.lock', '.conf', '.config', '.ini'].includes(ext) || ['.gitignore', '.dockerignore', '.npmrc'].includes(lowerName) || lowerName.startsWith('.env')) return 'CFG'
+  if (languageForFile(lowerName)) return 'CODE'
+  if (['.txt', '.log', '.text'].includes(ext)) return 'TXT'
+  return 'FILE'
+}
+
 function languageForFile(path: string) {
   const name = fileNameFromPath(path)
   return CODE_LANGUAGE_BY_NAME[name] ?? CODE_LANGUAGE_BY_EXT[fileExtension(name)] ?? null
@@ -1026,7 +1043,10 @@ function FileBrowser({ rootPath }: { rootPath: string }) {
                       void load(dir.path)
                     }}
                   >
-                    <span className="file-row-name">📁 {dir.name}</span>
+                    <span className="file-row-name">
+                      <span className="file-row-icon dir" aria-hidden>DIR</span>
+                      <span className="file-row-label">{dir.name}</span>
+                    </span>
                   </div>
                 ))}
                 {(listing.files ?? []).map((file) => (
@@ -1050,7 +1070,10 @@ function FileBrowser({ rootPath }: { rootPath: string }) {
                       void openFile(file.path)
                     }}
                   >
-                    <span className="file-row-name">📄 {file.name}</span>
+                    <span className="file-row-name">
+                      <span className="file-row-icon file" aria-hidden>{fileTypeIcon(file.name)}</span>
+                      <span className="file-row-label">{file.name}</span>
+                    </span>
                     <span className="file-row-size">{formatBytes(file.size)}</span>
                     <span className="file-row-actions">
                       <a
