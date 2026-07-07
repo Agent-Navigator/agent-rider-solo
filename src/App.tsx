@@ -496,8 +496,12 @@ function compactText(value: string, max = 96) {
 
 async function copyToClipboard(value: string) {
   if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(value)
-    return
+    try {
+      await navigator.clipboard.writeText(value)
+      return
+    } catch {
+      // Fall through to the DOM copy path when clipboard permission is denied.
+    }
   }
 
   const textarea = document.createElement('textarea')
