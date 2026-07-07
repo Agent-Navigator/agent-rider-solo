@@ -28,7 +28,7 @@ import typescript from 'highlight.js/lib/languages/typescript'
 import xml from 'highlight.js/lib/languages/xml'
 import yaml from 'highlight.js/lib/languages/yaml'
 import '@xterm/xterm/css/xterm.css'
-import { HermesActiveStreamError, HermesBridge, type HermesConnectionState } from './hermesBridge'
+import { HermesActiveStreamError, HermesBridge, type HermesConnectionState, type PromptContext } from './hermesBridge'
 import {
   loadPersistedState,
   persistState,
@@ -67,13 +67,7 @@ type ChatRole = 'user' | 'assistant'
 type AgentType = 'hermes' | 'claude' | 'codex' | 'agy' | 'custom'
 type TuiAgentType = Exclude<AgentType, 'hermes'>
 type AppBuilderMode = 'chat' | 'app'
-
-interface AppBuilderMessage {
-  id: string
-  role: ChatRole
-  text: string
-  createdAt: string
-}
+type RunCardKind = 'conversation' | 'app-builder'
 
 interface HermesModel {
   id: string
@@ -229,6 +223,7 @@ interface RunNode {
   sessionId?: string | null
   agentType: AgentType
   agentCommand?: string
+  cardKind?: RunCardKind
   /** Which card column (0 = left, 1 = right) in the two-column layout. */
   column: number
   createdAt: string
@@ -262,6 +257,7 @@ interface QueuedPromptEntry {
   model?: string
   modelProvider?: string | null
   reasoningEffort?: string
+  promptContext?: PromptContext
 }
 
 interface CategoryRule {
@@ -298,6 +294,7 @@ const AGENT_TERMINAL_STATE_PREFIX = 'agent-terminal:'
 const DEFAULT_REASONING_EFFORTS = ['minimal', 'low', 'medium', 'high', 'xhigh']
 const EMPTY_MODEL_CATALOG: HermesModelCatalog = { groups: [], defaultModel: '', activeProvider: null }
 const APP_BUILDER_PANEL_ID = 'app-builder'
+const APP_BUILDER_RUN_ID = 'run-app-builder'
 
 hljs.registerLanguage('bash', bash)
 hljs.registerLanguage('c', c)
@@ -1294,6 +1291,7 @@ function ConversationCard({
   collapsed,
   metaCollapsed,
   active,
+  embedded = false,
   isNewDone,
   onMarkRead,
   onToggle,
@@ -1328,6 +1326,7 @@ function ConversationCard({
   collapsed: boolean
   metaCollapsed: boolean
   active: boolean
+  embedded?: boolean
   isNewDone: boolean
   onMarkRead: (runId: string) => void
   onToggle: () => void
@@ -1679,8 +1678,9 @@ function ConversationCard({
     <article
       id={`conversation-${run.id}`}
       ref={cardRef}
-      className={`conv-card ${collapsed ? 'collapsed' : ''} ${active ? 'active' : ''} ${dragging ? 'dragging' : ''} ${dragOver ? (dragOverAfter ? 'drag-over after' : 'drag-over') : ''}`}
+      className={`conv-card ${embedded ? 'embedded' : ''} ${collapsed ? 'collapsed' : ''} ${active ? 'active' : ''} ${dragging ? 'dragging' : ''} ${dragOver ? (dragOverAfter ? 'drag-over after' : 'drag-over') : ''}`}
       onMouseDown={(event) => {
+        if (embedded) return
         // Toggle draggable synchronously on the element so the browser's
         // drag-vs-select decision for THIS press is correct: off over inputs
         // (so they stay selectable), on everywhere else.
@@ -1691,9 +1691,14 @@ function ConversationCard({
         if (canDrag) resetDraggableAfterPointerSettles(cardRef.current)
       }}
       onMouseUp={() => {
+        if (embedded) return
         if (cardRef.current) cardRef.current.draggable = false
       }}
       onDragStart={(event) => {
+        if (embedded) {
+          event.preventDefault()
+          return
+        }
         const target = event.target as HTMLElement
         if (target.closest(DRAG_EXCLUDE)) {
           event.preventDefault()
@@ -1703,11 +1708,13 @@ function ConversationCard({
         onDragStartCard()
       }}
       onDragEnd={() => {
+        if (embedded) return
         if (cardRef.current) cardRef.current.draggable = false
         setDragOver(false)
         onDragEndCard()
       }}
       onDragOver={(event) => {
+        if (embedded) return
         if (!dragActive) return
         event.preventDefault()
         const rect = event.currentTarget.getBoundingClientRect()
@@ -1717,11 +1724,13 @@ function ConversationCard({
         if (after !== dragOverAfter) setDragOverAfter(after)
       }}
       onDragLeave={(event) => {
+        if (embedded) return
         // Ignore leaves into child elements.
         if (event.currentTarget.contains(event.relatedTarget as Node)) return
         setDragOver(false)
       }}
       onDrop={(event) => {
+        if (embedded) return
         if (!dragActive) return
         event.preventDefault()
         event.stopPropagation()
@@ -2167,6 +2176,7 @@ function useAgentApps(enabled: boolean): {
 function AppBuilderPanel({
   apps,
   appWarnings,
+  chatContent,
   onClose,
   collapsed,
   fullWindow,
@@ -2174,6 +2184,7 @@ function AppBuilderPanel({
 }: {
   apps: AgentApp[]
   appWarnings: AppWarning[]
+  chatContent: ReactNode
   onClose: () => void
   collapsed?: boolean
   fullWindow?: boolean
@@ -2182,29 +2193,9 @@ function AppBuilderPanel({
   const [internalCollapsed, setInternalCollapsed] = useState(false)
   const [internalFullWindow, setInternalFullWindow] = useState(false)
   const [mode, setMode] = useState<AppBuilderMode>('chat')
-  const [draft, setDraft] = useState('')
-  const [selectedAppId, setSelectedAppId] = useState('')
-  const [messages, setMessages] = useState<AppBuilderMessage[]>(() => [
-    {
-      id: makeId('builder-msg'),
-      role: 'assistant',
-      text: 'Describe the app you want to build. Include the audience, key screens, data sources, and what should appear under Resources -> App.',
-      createdAt: new Date().toISOString(),
-    },
-  ])
   const isCollapsed = collapsed ?? internalCollapsed
   const isFullWindow = fullWindow ?? internalFullWindow
-  const selectedApp = apps.find((app) => app.id === selectedAppId) ?? apps.find((app) => app.hasDist) ?? apps[0] ?? null
-
-  useEffect(() => {
-    if (!apps.length) {
-      if (selectedAppId) setSelectedAppId('')
-      return
-    }
-    if (!selectedAppId || !apps.some((app) => app.id === selectedAppId)) {
-      setSelectedAppId((apps.find((app) => app.hasDist) ?? apps[0]).id)
-    }
-  }, [apps, selectedAppId])
+  const appAtWork = apps.find((app) => app.hasDist) ?? apps[0] ?? null
 
   function setCollapsedState(updater: boolean | ((current: boolean) => boolean)) {
     const next = typeof updater === 'function' ? updater(isCollapsed) : updater
@@ -2222,24 +2213,6 @@ function AppBuilderPanel({
     if (event.key !== 'Enter' && event.key !== ' ') return
     event.preventDefault()
     setCollapsedState((current) => !current)
-  }
-
-  function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    const text = draft.trim()
-    if (!text) return
-    const now = new Date().toISOString()
-    setDraft('')
-    setMessages((current) => [
-      ...current,
-      { id: makeId('builder-msg'), role: 'user', text, createdAt: now },
-      {
-        id: makeId('builder-msg'),
-        role: 'assistant',
-        text: 'Builder request captured. Use an agent to create a static app under plugins/<slug>/ with manifest.json and dist/index.html; it will appear here automatically after the app scan refreshes.',
-        createdAt: now,
-      },
-    ])
   }
 
   return (
@@ -2313,54 +2286,19 @@ function AppBuilderPanel({
 
           {mode === 'chat' ? (
             <div className="app-builder-chat" role="tabpanel">
-              <div className="conversation-feed app-builder-feed">
-                {messages.map((message) => (
-                  <article key={message.id} className={`bubble ${message.role}`}>
-                    <div className="role">{message.role === 'user' ? 'You' : 'App Builder'}</div>
-                    <div className="md-body">
-                      <p>{message.text}</p>
-                    </div>
-                  </article>
-                ))}
-              </div>
-              <form className="composer conv-followup app-builder-composer" onSubmit={submit}>
-                <textarea
-                  value={draft}
-                  onChange={(event) => setDraft(event.target.value)}
-                  placeholder="Describe the app, screens, data, and desired Resources -> App name..."
-                  rows={4}
-                />
-                <div className="composer-meta">
-                  <span className="composer-workspace-path">Creates an Agent Rider App plugin under plugins/&lt;slug&gt;/</span>
-                  <button type="submit" className="send-button">Send</button>
-                </div>
-              </form>
+              {chatContent}
             </div>
           ) : (
             <div className="app-builder-view" role="tabpanel">
               <div className="app-builder-viewbar">
-                <select
-                  value={selectedApp?.id ?? ''}
-                  onChange={(event) => setSelectedAppId(event.target.value)}
-                  aria-label="Preview app"
-                >
-                  {apps.length ? (
-                    apps.map((app) => (
-                      <option key={app.id} value={app.id}>
-                        {app.label}
-                      </option>
-                    ))
-                  ) : (
-                    <option value="">No apps yet</option>
-                  )}
-                </select>
-                <span>{selectedApp?.hasDist ? 'Ready' : selectedApp ? 'Waiting for build' : 'No app selected'}</span>
+                <strong>{appAtWork?.label ?? 'App at work'}</strong>
+                <span>{appAtWork?.hasDist ? 'Ready' : appAtWork ? 'Waiting for build' : 'No app yet'}</span>
               </div>
-              {selectedApp?.hasDist ? (
-                <iframe className="app-builder-frame" title={selectedApp.label} src={selectedApp.entry} />
+              {appAtWork?.hasDist ? (
+                <iframe className="app-builder-frame" title={appAtWork.label} src={appAtWork.entry} />
               ) : (
                 <div className="conv-empty">
-                  {selectedApp ? `${selectedApp.label} needs a dist/index.html build before preview.` : 'Built apps will appear here after the Resources App scan refreshes.'}
+                  {appAtWork ? `${appAtWork.label} needs a dist/index.html build before preview.` : 'The app being built will appear here after the Resources App scan refreshes.'}
                 </div>
               )}
               {appWarnings.length ? (
@@ -3298,9 +3236,50 @@ export default function App() {
   }
   const launchPlugin = (pluginId: string) => openPanel(`plugin:${pluginId}`)
   const closePlugin = (pluginId: string) => closePanel(`plugin:${pluginId}`)
-  const launchAppBuilder = () => openPanel(APP_BUILDER_PANEL_ID)
   const launchApp = (slug: string) => openPanel(`app:${slug}`)
   const closeApp = (slug: string) => closePanel(`app:${slug}`)
+
+  function makeAppBuilderRun(): RunNode {
+    return {
+      id: APP_BUILDER_RUN_ID,
+      prompt: '',
+      category: 'Product Delivery',
+      categoryTags: tagsForCategory('Product Delivery'),
+      project: 'Agent Rider App',
+      workspace: '',
+      workspacePath: workspaceRoot,
+      task: 'Build an App',
+      job: 'App Builder',
+      jobStatus: 'queued',
+      resourceIds: [],
+      model: '',
+      modelProvider: null,
+      reasoningEffort: '',
+      sessionId: null,
+      agentType: 'hermes',
+      agentCommand: '',
+      cardKind: 'app-builder',
+      column: 0,
+      createdAt: new Date().toISOString(),
+    }
+  }
+
+  function launchAppBuilder() {
+    setRuns((current) => (current.some((run) => run.id === APP_BUILDER_RUN_ID) ? current : [makeAppBuilderRun(), ...current]))
+    setClosedRunIds((current) => {
+      if (!current.has(APP_BUILDER_RUN_ID)) return current
+      const next = new Set(current)
+      next.delete(APP_BUILDER_RUN_ID)
+      return next
+    })
+    openPanel(APP_BUILDER_PANEL_ID)
+  }
+
+  useEffect(() => {
+    if (!appBuilderOpen) return
+    setRuns((current) => (current.some((run) => run.id === APP_BUILDER_RUN_ID) ? current : [makeAppBuilderRun(), ...current]))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appBuilderOpen, workspaceRoot])
 
   function setPanelColumn(panelId: string, column: number) {
     setPanelColumns((current) => ({ ...current, [panelId]: column }))
@@ -3325,9 +3304,9 @@ export default function App() {
     })
   }
 
-  const hasContent = runs.length > 0 || panelOrder.length > 0
+  const hasContent = runs.some((run) => run.cardKind !== 'app-builder') || panelOrder.length > 0
   // Cards hidden via their close button drop out of the stack but stay in the tree.
-  const visibleRuns = useMemo(() => runs.filter((run) => !closedRunIds.has(run.id)), [runs, closedRunIds])
+  const visibleRuns = useMemo(() => runs.filter((run) => run.cardKind !== 'app-builder' && !closedRunIds.has(run.id)), [runs, closedRunIds])
   const hasLegacyDefaultWorkspace = useMemo(
     () => runs.some((run) => run.workspacePath === DEFAULT_WORKSPACE_CWD),
     [runs],
@@ -3365,6 +3344,7 @@ export default function App() {
       sessionId: null,
       agentType: 'hermes',
       agentCommand: '',
+      cardKind: 'conversation',
       column: 0,
       createdAt: new Date().toISOString(),
     }
@@ -3482,6 +3462,7 @@ export default function App() {
     const categoryMap = new Map<string, Map<string, RunNode[]>>()
 
     for (const run of runs) {
+      if (run.cardKind === 'app-builder') continue
       const category = run.category.trim() || 'Uncategorized'
       const project = run.project.trim() || 'No project'
       let projectMap = categoryMap.get(category)
@@ -3875,6 +3856,7 @@ export default function App() {
             modelProvider: typeof run.modelProvider === 'string' ? run.modelProvider : null,
             reasoningEffort: typeof run.reasoningEffort === 'string' ? run.reasoningEffort : '',
             agentCommand: typeof run.agentCommand === 'string' ? run.agentCommand : '',
+            cardKind: run.id === APP_BUILDER_RUN_ID ? 'app-builder' : run.cardKind ?? 'conversation',
           }))
           const restoredRunIds = new Set(restored.map((run) => run.id))
           setRuns((current) => (current.length ? current : restored))
@@ -4030,7 +4012,7 @@ export default function App() {
     const bridge = bridgeRef.current
     if (!bridge) return
 
-    const { turnId, runId, prompt, workspace, model, modelProvider, reasoningEffort } = entry
+    const { turnId, runId, prompt, workspace, model, modelProvider, reasoningEffort, promptContext } = entry
 
     activeTurnRef.current = turnId
     activeRunRef.current = runId
@@ -4045,7 +4027,7 @@ export default function App() {
       }
       setSessionId(session)
       setSessionInfoText(`Hermes session ${session}`)
-      const promptOptions = { model, modelProvider }
+      const promptOptions = { model, modelProvider, promptContext }
       if (reasoningEffort?.trim()) await bridge.setReasoningEffort(reasoningEffort, promptOptions)
       await bridge.submitPrompt(session, prompt, workspace, promptOptions)
       setActiveHermesTurnId(turnId)
@@ -4188,7 +4170,7 @@ export default function App() {
     const reasoningEffort = (run.reasoningEffort ?? '').trim()
     const hasTurns = turns.some((turn) => turn.runId === runId)
     let workspace = run.workspacePath
-    if (!hasTurns) {
+    if (!hasTurns && run.cardKind !== 'app-builder') {
       const fields = deriveRunFields(prompt, {
         category: run.category,
         project: run.project,
@@ -4207,7 +4189,16 @@ export default function App() {
     const { turn, turnId } = newTurn(runId, prompt, parentTurnId)
     setTurns((current) => [turn, ...current])
     setError(null)
-    enqueueOrStart({ turnId, runId, prompt, workspace, model, modelProvider, reasoningEffort })
+    enqueueOrStart({
+      turnId,
+      runId,
+      prompt,
+      workspace,
+      model,
+      modelProvider,
+      reasoningEffort,
+      promptContext: run.cardKind === 'app-builder' ? 'app-builder' : 'agent-rider',
+    })
     return turnId
   }
 
@@ -4250,6 +4241,49 @@ export default function App() {
     />
   )
 
+  const renderAppBuilderChat = () => {
+    const run = runs.find((item) => item.id === APP_BUILDER_RUN_ID) ?? makeAppBuilderRun()
+    return (
+      <ConversationCard
+        key={run.id}
+        run={run}
+        turns={turnsByRun.get(run.id) ?? []}
+        collapsed={false}
+        metaCollapsed={metaCollapsedIds.has(run.id)}
+        active={activeRunId === run.id}
+        embedded
+        isNewDone={newDoneIds.has(run.id)}
+        onMarkRead={markConversationRead}
+        dragging={false}
+        dragActive={false}
+        onDragStartCard={() => {}}
+        onDragEndCard={() => {}}
+        onDropOnCard={() => {}}
+        onToggle={() => {}}
+        onMetaCollapsedChange={(collapsed) => setMetaCollapsed(run.id, collapsed)}
+        onSend={(text, parentTurnId) => sendInConversation(run.id, text, parentTurnId ?? null)}
+        onTitleChange={(value) => updateRunContext(run.id, { task: value })}
+        onCategoryChange={(value) => updateRunContext(run.id, { category: value, categoryTags: tagsForCategory(value) })}
+        onProjectChange={(value) => updateRunProject(run.id, value)}
+        onAgentChange={(value) => updateRunContext(run.id, { agentType: value })}
+        onAgentCommandChange={(value) => updateRunContext(run.id, { agentCommand: value })}
+        modelCatalog={modelCatalog}
+        reasoningEfforts={reasoningEfforts}
+        onModelChange={(model, modelProvider) => updateRunHermesModel(run.id, model, modelProvider)}
+        onReasoningEffortChange={(reasoningEffort) => updateRunReasoningEffort(run.id, reasoningEffort)}
+        onOpenPicker={() => setPickerRunId(run.id)}
+        onClose={() => closePanel(APP_BUILDER_PANEL_ID)}
+        onDeleteTurn={(turnId) => deleteConversationTurn(run.id, turnId)}
+        stoppableTurnId={activeHermesStreamId ? activeHermesTurnId : null}
+        refreshableTurnId={activeHermesStreamId ? activeHermesTurnId : null}
+        onStopTurn={(turnId) => void stopHermesTurn(turnId)}
+        onRefreshTurn={refreshHermesTurn}
+        agentTerminalState={panelStates[agentTerminalStateKey(run.id)]}
+        onAgentTerminalStateChange={(patch) => updatePanelState(agentTerminalStateKey(run.id), patch)}
+      />
+    )
+  }
+
   // Resolve a panel id to its content + draggable wrapper (null if the
   // referenced plugin/app no longer exists).
   const renderPanelBlock = (panelId: string) => {
@@ -4269,6 +4303,7 @@ export default function App() {
         <AppBuilderPanel
           apps={appListing.apps}
           appWarnings={appListing.warnings}
+          chatContent={renderAppBuilderChat()}
           onClose={() => closePanel(panelId)}
           collapsed={panelStates[panelId]?.collapsed}
           fullWindow={panelStates[panelId]?.fullWindow}

@@ -1,4 +1,4 @@
-import agentRiderBackground from '../agent-rider-background.md?raw'
+import appPluginGuide from '../plugins/AGENTS.md?raw'
 
 export type HermesConnectionState = 'disconnected' | 'connecting' | 'ready' | 'busy' | 'error'
 
@@ -21,7 +21,10 @@ export interface CreateSessionOptions {
 export interface SubmitPromptOptions {
   model?: string
   modelProvider?: string | null
+  promptContext?: PromptContext
 }
+
+export type PromptContext = 'agent-rider' | 'app-builder'
 
 export class HermesActiveStreamError extends Error {
   constructor(
@@ -34,17 +37,32 @@ export class HermesActiveStreamError extends Error {
 }
 
 const DEFAULT_CWD = '/root/agent-work/DEV/agent-rider'
-const AGENT_RIDER_BACKGROUND = agentRiderBackground.trim()
+const AGENT_RIDER_INTERFACE_CONTEXT = [
+  'You are working inside Agent Rider, a web interface with Conversation Cards, Resources, Apps, a File Browser, and embedded TUI terminals.',
+  'Use the current workspace path supplied by the interface. Mention Agent Rider UI details only when relevant to the user request.',
+].join('\n')
+const APP_PLUGIN_GUIDE = appPluginGuide.trim()
 
 function errMsg(error: unknown) {
   return error instanceof Error ? error.message : String(error)
 }
 
-function withAgentRiderBackground(message: string) {
+function withPromptContext(message: string, context: PromptContext = 'agent-rider') {
+  const contextBlocks = [
+    '<agent-rider-interface-context>',
+    AGENT_RIDER_INTERFACE_CONTEXT,
+    '</agent-rider-interface-context>',
+  ]
+  if (context === 'app-builder') {
+    contextBlocks.push(
+      '',
+      '<agent-rider-app-plugin-guide>',
+      APP_PLUGIN_GUIDE,
+      '</agent-rider-app-plugin-guide>',
+    )
+  }
   return [
-    '<agent-rider-background>',
-    AGENT_RIDER_BACKGROUND,
-    '</agent-rider-background>',
+    ...contextBlocks,
     '',
     '<user-message>',
     message,
@@ -154,7 +172,7 @@ export class HermesBridge {
     const cleanProvider = options.modelProvider?.trim()
     const body: Record<string, unknown> = {
       session_id: sessionId,
-      message: withAgentRiderBackground(text),
+      message: withPromptContext(text, options.promptContext ?? 'agent-rider'),
       workspace: cwd,
     }
     if (cleanModel) {

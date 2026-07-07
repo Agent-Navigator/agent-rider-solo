@@ -2716,8 +2716,9 @@ button { cursor: pointer; }
   height: 100%;
 }
 
-.app-builder-card.full-window .app-builder-feed {
-  max-height: none;
+.app-builder-card.full-window .app-builder-chat > .conv-card {
+  height: 100%;
+  grid-template-rows: auto minmax(0, 1fr);
 }
 
 .app-builder-card.full-window .app-builder-frame {
@@ -2826,19 +2827,11 @@ button { cursor: pointer; }
 }
 
 .app-builder-chat {
-  display: grid;
-  grid-template-rows: minmax(0, 1fr) auto;
-  gap: 12px;
   min-height: 460px;
 }
 
-.app-builder-feed {
-  max-height: 440px;
-  overflow: auto;
-}
-
-.app-builder-composer {
-  margin-top: 0;
+.conv-card.embedded {
+  box-shadow: none;
 }
 
 .app-builder-view {
@@ -2854,16 +2847,13 @@ button { cursor: pointer; }
   gap: 10px;
 }
 
-.app-builder-viewbar select {
-  flex: 1;
+.app-builder-viewbar strong {
   min-width: 0;
-  border: 1px solid rgba(148, 163, 184, 0.22);
-  border-radius: 10px;
-  padding: 8px 10px;
-  background: rgba(8, 14, 24, 0.78);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--text);
   font-size: 13px;
-  outline: none;
 }
 
 .app-builder-viewbar span {
