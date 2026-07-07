@@ -2237,9 +2237,12 @@ button { cursor: pointer; }
 
 .build-app-button {
   width: 100%;
-  justify-content: center;
-  margin-bottom: 4px;
-  border-radius: 999px;
+  margin-bottom: 0;
+  border-radius: 8px;
+}
+
+.resource-app-tree {
+  margin-top: 2px;
 }
 
 .app-tool {

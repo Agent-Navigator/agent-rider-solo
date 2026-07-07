@@ -2727,6 +2727,16 @@ function ResourceSidebar({
 
   const pluginTools = groups.get('Tools') ?? []
   const extraGroups = [...groups.entries()].filter(([group]) => group !== 'Tools')
+  const appGroups = useMemo(() => {
+    const byGroup = new Map<string, AgentApp[]>()
+    for (const app of apps) {
+      const group = app.group.trim() || 'Built Apps'
+      const groupApps = byGroup.get(group) ?? []
+      groupApps.push(app)
+      byGroup.set(group, groupApps)
+    }
+    return [...byGroup.entries()].sort(([a], [b]) => a.localeCompare(b))
+  }, [apps])
 
   return (
     <nav className="resource-sidebar sidebar-panel card" aria-label="Resource view">
@@ -2780,39 +2790,54 @@ function ResourceSidebar({
 
           <section className="tree-nav-category">
             <h3>App</h3>
+            <div className="tree-nav-project resource-app-tree">
+              <div className="tree-nav-label">Build</div>
+              <div className="tree-nav-runs">
+                <button
+                  type="button"
+                  className="tree-nav-run resource-tool build-app-button"
+                  onClick={onLaunchAppBuilder}
+                  title="Start a new App Builder conversation"
+                >
+                  <span className="tree-run-title">Build an App</span>
+                  <LaunchIcon open={appBuilderOpen} />
+                </button>
+                <button
+                  type="button"
+                  className={`tree-nav-run resource-tool ${appBuilderOpen ? 'active' : ''}`}
+                  onClick={onLaunchAppBuilder}
+                  title={appBuilderOpen ? 'App Builder is open' : 'Launch App Builder'}
+                >
+                  <span className="tree-run-title">{appBuilderTitle}</span>
+                  <LaunchIcon open={appBuilderOpen} />
+                </button>
+              </div>
+            </div>
+            {appGroups.map(([group, groupApps]) => (
+              <div key={group} className="tree-nav-project resource-app-tree">
+                <div className="tree-nav-label">{group}</div>
+                <div className="tree-nav-runs">
+                  {groupApps.map((app) => {
+                    const index = apps.findIndex((item) => item.id === app.id)
+                    return (
+                      <AppTool
+                        key={app.id}
+                        app={app}
+                        open={openAppSlugs.has(app.id)}
+                        canMoveUp={index > 0}
+                        canMoveDown={index >= 0 && index < apps.length - 1}
+                        onLaunch={() => onLaunchApp(app.id)}
+                        onMove={(delta) => {
+                          if (index >= 0) onReorderApps(reorderSlugs(apps, index, delta))
+                        }}
+                        onRename={(label) => onRenameApp(app.id, label)}
+                      />
+                    )
+                  })}
+                </div>
+              </div>
+            ))}
             <div className="tree-nav-runs">
-              <button
-                type="button"
-                className="send-button new-conversation-btn build-app-button"
-                onClick={onLaunchAppBuilder}
-              >
-                Build an App
-              </button>
-              <button
-                type="button"
-                className={`tree-nav-run resource-tool ${appBuilderOpen ? 'active' : ''}`}
-                onClick={onLaunchAppBuilder}
-                title={appBuilderOpen ? 'App Builder is open' : 'Launch App Builder'}
-              >
-                <span className="tree-run-title">{appBuilderTitle}</span>
-                <LaunchIcon open={appBuilderOpen} />
-              </button>
-              {apps.length ? (
-                apps.map((app, index) => (
-                  <AppTool
-                    key={app.id}
-                    app={app}
-                    open={openAppSlugs.has(app.id)}
-                    canMoveUp={index > 0}
-                    canMoveDown={index < apps.length - 1}
-                    onLaunch={() => onLaunchApp(app.id)}
-                    onMove={(delta) => onReorderApps(reorderSlugs(apps, index, delta))}
-                    onRename={(label) => onRenameApp(app.id, label)}
-                  />
-                ))
-              ) : (
-                <div className="tree-empty">No apps yet — ask an agent to build one.</div>
-              )}
               {appWarnings.map((warning, index) => (
                 <div key={`warn-${index}`} className="app-warning" role="alert">
                   ⚠ {warning.id ?? warning.dir ?? 'plugin'}: {warning.error}
