@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CRM5 Mission Engine Monitor</title>
+  <style>
+    :root{
+      color-scheme: dark;
+      --bg:#070b13;--panel:#0d1422;--panel2:#101a2c;--line:#23324d;--text:#e6edf7;--muted:#8fa3bd;
+      --good:#2dd4bf;--warn:#fbbf24;--bad:#fb7185;--blue:#60a5fa;--purple:#a78bfa;--chip:#17233a;
+      --shadow:0 20px 70px rgba(0,0,0,.35);
+    }
+    *{box-sizing:border-box}
+    body{margin:0;background:radial-gradient(circle at 20% 0%,rgba(37,99,235,.22),transparent 32%),radial-gradient(circle at 85% 10%,rgba(20,184,166,.15),transparent 28%),var(--bg);color:var(--text);font:14px/1.45 ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+    .wrap{max-width:1500px;margin:0 auto;padding:22px}
+    header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:18px}
+    h1{font-size:28px;line-height:1.1;margin:0 0 8px;font-weight:800;letter-spacing:-.04em}
+    .sub{color:var(--muted);max-width:820px}
+    .toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
+    button{border:1px solid #315079;background:linear-gradient(180deg,#1e3a5f,#132338);color:var(--text);border-radius:12px;padding:10px 14px;font-weight:700;cursor:pointer;box-shadow:0 8px 24px rgba(0,0,0,.22)}
+    button:hover{filter:brightness(1.14)}button:disabled{opacity:.55;cursor:wait}
+    select,input{border:1px solid var(--line);background:#0b1220;color:var(--text);border-radius:10px;padding:9px 11px;outline:none}
+    .pill{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--line);background:rgba(13,20,34,.72);border-radius:999px;padding:8px 11px;color:var(--muted);white-space:nowrap}
+    .dot{width:9px;height:9px;border-radius:50%;background:var(--muted);box-shadow:0 0 20px currentColor}.dot.good{background:var(--good);color:var(--good)}.dot.warn{background:var(--warn);color:var(--warn)}.dot.bad{background:var(--bad);color:var(--bad)}.dot.busy{background:var(--blue);color:var(--blue);animation:pulse 1s infinite alternate}@keyframes pulse{from{opacity:.45}to{opacity:1}}
+    .grid{display:grid;grid-template-columns:repeat(12,1fr);gap:14px}.card{grid-column:span 12;background:linear-gradient(180deg,rgba(16,26,44,.95),rgba(10,16,28,.95));border:1px solid var(--line);border-radius:20px;padding:16px;box-shadow:var(--shadow);overflow:hidden}.span3{grid-column:span 3}.span4{grid-column:span 4}.span5{grid-column:span 5}.span6{grid-column:span 6}.span7{grid-column:span 7}.span8{grid-column:span 8}
+    .kpi{min-height:128px;position:relative}.kpi .label{color:var(--muted);font-size:13px;margin-bottom:8px}.kpi .value{font-size:34px;font-weight:850;letter-spacing:-.04em}.kpi .hint{color:var(--muted);font-size:12px;margin-top:8px}.kpi.good{border-color:rgba(45,212,191,.45)}.kpi.warn{border-color:rgba(251,191,36,.55)}.kpi.bad{border-color:rgba(251,113,133,.55)}
+    .section-title{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}.section-title h2{font-size:16px;margin:0}.section-title small{color:var(--muted)}
+    .bars{display:grid;gap:8px}.bar{display:grid;grid-template-columns:minmax(110px,170px) 1fr 70px;align-items:center;gap:10px}.bar .name{color:var(--muted);overflow:hidden;text-overflow:ellipsis}.track{height:12px;background:#0a1020;border:1px solid #1a2943;border-radius:999px;overflow:hidden}.fill{height:100%;min-width:2px;border-radius:999px;background:linear-gradient(90deg,var(--blue),var(--good))}.bar.bad .fill{background:linear-gradient(90deg,var(--bad),#f97316)}
+    .table-wrap{overflow:auto;border:1px solid var(--line);border-radius:14px;max-height:430px}table{width:100%;border-collapse:separate;border-spacing:0;min-width:860px}th,td{padding:10px 11px;border-bottom:1px solid rgba(35,50,77,.72);text-align:left;vertical-align:top}th{position:sticky;top:0;background:#111b2d;color:#bcd0e8;font-size:12px;text-transform:uppercase;letter-spacing:.04em;z-index:1}tr:hover td{background:rgba(96,165,250,.06)}td.mono,code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}.status{display:inline-flex;align-items:center;border-radius:999px;padding:3px 8px;font-weight:700;font-size:12px;background:var(--chip);border:1px solid var(--line)}.status.success{color:var(--good);border-color:rgba(45,212,191,.35)}.status.running{color:var(--blue);border-color:rgba(96,165,250,.4)}.status.fail,.status.error{color:var(--bad);border-color:rgba(251,113,133,.4)}
+    .muted{color:var(--muted)}.nowrap{white-space:nowrap}.log{max-width:680px;white-space:normal;color:#cbd5e1}.empty{color:var(--muted);padding:18px;border:1px dashed var(--line);border-radius:14px;text-align:center}.error{border-color:rgba(251,113,133,.5);background:rgba(127,29,29,.18);color:#fecdd3}.okbox{border-color:rgba(45,212,191,.45);background:rgba(20,83,75,.18)}
+    details{border:1px solid var(--line);border-radius:14px;padding:10px 12px;background:#0a1020}summary{cursor:pointer;color:#cfe0f5;font-weight:700}pre{white-space:pre-wrap;word-break:break-word;max-height:380px;overflow:auto;color:#b6c7df}
+    @media (max-width:1100px){.span3,.span4,.span5,.span6,.span7,.span8{grid-column:span 12}header{display:block}.toolbar{justify-content:flex-start;margin-top:14px}.kpi{min-height:auto}}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div>
+        <h1>CRM5 Mission Engine Monitor</h1>
+        <div class="sub">即時讀取 CRM5 ClickHouse <code>MISSION_ENGINE</code> 的 <code>MISSION_JOB_HISTORY</code>、<code>JOB_SEMAPHORE</code>、<code>JOB_EXEC_LOG</code>。所有查詢為只讀 SELECT，透過 Agent Rider same-origin <code>/store/terminal/run</code> 執行本機 helper。</div>
+      </div>
+      <div class="toolbar">
+        <span class="pill"><span id="stateDot" class="dot busy"></span><span id="stateText">尚未載入</span></span>
+        <span class="pill">自動刷新 <select id="interval"><option value="0">關閉</option><option value="15">15s</option><option value="30" selected>30s</option><option value="60">60s</option></select></span>
+        <button id="refreshBtn">Refresh now</button>
+      </div>
+    </header>
+
+    <div id="message" class="card empty">載入中…</div>
+
+    <main id="main" class="grid" style="display:none">
+      <section class="card span3 kpi" id="overallCard"><div class="label">整體狀態</div><div class="value" id="overallValue">—</div><div class="hint" id="overallHint">—</div></section>
+      <section class="card span3 kpi"><div class="label">Running jobs</div><div class="value" id="runningJobs">—</div><div class="hint" id="staleJobs">stale: —</div></section>
+      <section class="card span3 kpi"><div class="label">Runs / 30m</div><div class="value" id="runs30m">—</div><div class="hint" id="fail30m">failures: —</div></section>
+      <section class="card span3 kpi"><div class="label">Active job definitions</div><div class="value" id="activeDefs">—</div><div class="hint" id="latestEnd">latest end: —</div></section>
+
+      <section class="card span5">
+        <div class="section-title"><h2>30 分鐘結果分布</h2><small id="metaLine">—</small></div>
+        <div id="buckets30" class="bars"></div>
+      </section>
+      <section class="card span7">
+        <div class="section-title"><h2>Semaphore / current runtime state</h2><input id="semFilter" placeholder="filter mission/job/status…" /></div>
+        <div id="semTable"></div>
+      </section>
+
+      <section class="card span6">
+        <div class="section-title"><h2>最近 24h 非 success</h2><small id="failureCount">—</small></div>
+        <div id="failTable"></div>
+      </section>
+      <section class="card span6">
+        <div class="section-title"><h2>最近 1h 最耗時任務</h2><small>依 duration desc</small></div>
+        <div id="slowTable"></div>
+      </section>
+
+      <section class="card span8">
+        <div class="section-title"><h2>最近執行紀錄</h2><small>latest 40</small></div>
+        <div id="recentTable"></div>
+      </section>
+      <section class="card span4">
+        <div class="section-title"><h2>資料來源 / tables</h2><small id="elapsed">—</small></div>
+        <div id="sourceBox" class="muted"></div>
+        <div style="height:12px"></div>
+        <div id="tableStats"></div>
+      </section>
+
+      <section class="card">
+        <details>
+          <summary>Raw JSON / debug output</summary>
+          <pre id="rawJson"></pre>
+        </details>
+      </section>
+    </main>
+  </div>
+
+<script>
+const APP_CWD = '/root/agent-work/DEV/agent-rider/plugins/crm5-monitor';
+const COMMAND = 'python3 scripts/mission_engine_status.py';
+let latestData = null;
+let timer = null;
+
+const $ = (id) => document.getElementById(id);
+const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const n = (v) => Number(v || 0).toLocaleString('en-US');
+const duration = (sec) => {
+  sec = Number(sec || 0);
+  if (!Number.isFinite(sec)) return '—';
+  if (sec < 60) return `${sec}s`;
+  const m = Math.floor(sec / 60), s = sec % 60;
+  if (m < 60) return `${m}m ${s}s`;
+  const h = Math.floor(m / 60), mm = m % 60;
+  return `${h}h ${mm}m`;
+};
+function statusClass(v){
+  const s = String(v || '').toLowerCase();
+  if (s === 'success') return 'success';
+  if (s === 'running') return 'running';
+  if (s.includes('fail') || s.includes('error') || s !== '') return 'fail';
+  return '';
+}
+function setState(kind, text){
+  const dot = $('stateDot');
+  dot.className = `dot ${kind}`;
+  $('stateText').textContent = text;
+}
+function showMessage(html, cls='empty'){
+  $('message').className = `card ${cls}`;
+  $('message').innerHTML = html;
+  $('message').style.display = '';
+  $('main').style.display = 'none';
+}
+function showMain(){ $('message').style.display = 'none'; $('main').style.display = 'grid'; }
+
+async function refresh(){
+  const btn = $('refreshBtn');
+  btn.disabled = true;
+  setState('busy', 'Refreshing…');
+  try{
+    const res = await fetch('/store/terminal/run', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({cwd: APP_CWD, command: COMMAND}),
+    });
+    if (!res.ok) throw new Error(`/store/terminal/run HTTP ${res.status}`);
+    const run = await res.json();
+    let payload;
+    try { payload = JSON.parse((run.output || '').trim()); }
+    catch (err) { throw new Error(`Helper did not return JSON. exit=${run.exitCode}; output=${(run.output || '').slice(0, 800)}`); }
+    if (!payload.ok) throw new Error(payload.error || 'status probe failed');
+    latestData = payload;
+    render(payload, run);
+  } catch (err) {
+    setState('bad', 'Load failed');
+    showMessage(`<b>無法載入 CRM5 Mission Engine status</b><br><br><span class="muted">${esc(err.message || err)}</span><br><br><span class="muted">若是認證問題，請確認本機有 <code>ch-crm5</code> in <code>db_connection.yaml</code>，或設定 <code>CRM5_CH_URL</code>/<code>CRM5_CH_USER</code>/<code>CRM5_CH_PASSWORD</code> 給 Agent Rider store process。</span>`, 'error');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function render(data, run){
+  showMain();
+  const k = data.kpis || {};
+  const running = Number(k.running_jobs || 0), stale = Number(k.stale_running_jobs || 0), fail30 = Number(k.failures_30m || 0), fail24 = Number(k.failures_24h || 0);
+  let overall = 'HEALTHY', kind = 'good', hint = '30 分鐘內未見 failure / stale running';
+  if (stale > 0 || fail30 > 0) { overall = 'ATTENTION'; kind = 'bad'; hint = `${fail30} failures / 30m, ${stale} stale running`; }
+  else if (fail24 > 0) { overall = 'WATCH'; kind = 'warn'; hint = `${fail24} failures / 24h，但最近 30m 正常`; }
+  setState(kind, `${overall} · ${data.meta?.now_taipei || '—'} TPE`);
+  const card = $('overallCard'); card.className = `card span3 kpi ${kind}`;
+  $('overallValue').textContent = overall;
+  $('overallHint').textContent = hint;
+  $('runningJobs').textContent = n(running);
+  $('staleJobs').textContent = `stale >5m: ${n(stale)}`;
+  $('runs30m').textContent = n(k.runs_30m);
+  $('fail30m').textContent = `failures: ${n(fail30)} · 24h: ${n(fail24)}`;
+  $('activeDefs').textContent = n(k.active_job_defs);
+  $('latestEnd').textContent = `latest end: ${k.latest_end_time_taipei || '—'} TPE`;
+  $('metaLine').textContent = `${data.database} · CH ${data.meta?.clickhouse_version || '—'} · server TZ ${data.meta?.server_timezone || '—'}`;
+  $('elapsed').textContent = `${n(data.elapsedMs)} ms`;
+  $('sourceBox').innerHTML = `<div>Host: <code>${esc(data.source?.host)}:${esc(data.source?.port)}</code></div><div>User: <code>${esc(data.source?.user)}</code></div><div>Config: <code>${esc(data.source?.configPath || 'env')}</code></div><div>Generated: <code>${esc(data.meta?.now_taipei || data.generatedAt)}</code> TPE</div>`;
+  renderBars('buckets30', data.resultBuckets30m || []);
+  renderSem(data.semaphore || []);
+  renderTableStats(data.tableStats || []);
+  $('failureCount').textContent = `${(data.recentFailures || []).length} rows`;
+  $('failTable').innerHTML = table(data.recentFailures || [], ['mission_code','job_code','result_code','start_taipei','duration_sec','exec_log_snip'], {duration_sec: durationCell, result_code: statusCell, exec_log_snip: logCell});
+  $('slowTable').innerHTML = table(data.longestRecent || [], ['mission_code','job_code','result_code','start_taipei','duration_sec'], {duration_sec: durationCell, result_code: statusCell});
+  $('recentTable').innerHTML = table(data.recentRuns || [], ['mission_code','job_code','result_code','start_taipei','end_taipei','duration_sec'], {duration_sec: durationCell, result_code: statusCell});
+  $('rawJson').textContent = JSON.stringify({terminal: {exitCode: run?.exitCode, timedOut: run?.timedOut}, data}, null, 2);
+}
+function renderBars(id, rows){
+  if (!rows.length) { $(id).innerHTML = '<div class="empty">最近 30 分鐘沒有 execution rows</div>'; return; }
+  const max = Math.max(...rows.map(r => Number(r.runs || 0)), 1);
+  $(id).innerHTML = rows.map(r => {
+    const bad = String(r.result_code).toLowerCase() !== 'success';
+    return `<div class="bar ${bad ? 'bad' : ''}"><div class="name"><span class="status ${statusClass(r.result_code)}">${esc(r.result_code)}</span></div><div class="track"><div class="fill" style="width:${Math.max(2, Number(r.runs || 0) / max * 100)}%"></div></div><div class="mono nowrap">${n(r.runs)}</div></div>`;
+  }).join('');
+}
+function renderSem(rows){
+  const q = ($('semFilter').value || '').trim().toLowerCase();
+  const filtered = q ? rows.filter(r => Object.values(r).join(' ').toLowerCase().includes(q)) : rows;
+  $('semTable').innerHTML = table(filtered, ['mission_code','job_code','status','start_taipei','heartbeat_taipei','heartbeat_age_sec','running_age_sec','process_id'], {status: statusCell, heartbeat_age_sec: durationCell, running_age_sec: durationCell});
+}
+function renderTableStats(rows){
+  $('tableStats').innerHTML = table(rows, ['table_name','engine','total_rows','total_bytes'], {total_rows: (v)=>`<td class="mono nowrap">${n(v)}</td>`, total_bytes: (v)=>`<td class="mono nowrap">${n(v)}</td>`});
+}
+function statusCell(v){ return `<td><span class="status ${statusClass(v)}">${esc(v || '—')}</span></td>`; }
+function durationCell(v){ return `<td class="mono nowrap">${duration(v)}</td>`; }
+function logCell(v){ return `<td class="log">${esc(v || '')}</td>`; }
+function table(rows, cols, renderers={}){
+  if (!rows.length) return '<div class="empty">No rows</div>';
+  const head = cols.map(c => `<th>${esc(c)}</th>`).join('');
+  const body = rows.map(r => `<tr>${cols.map(c => renderers[c] ? renderers[c](r[c], r) : `<td class="${String(c).includes('time') || String(c).includes('age') || String(c).includes('duration') ? 'mono nowrap' : ''}">${esc(r[c] ?? '')}</td>`).join('')}</tr>`).join('');
+  return `<div class="table-wrap"><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
+}
+function resetTimer(){
+  if (timer) clearInterval(timer);
+  const sec = Number($('interval').value || 0);
+  if (sec > 0) timer = setInterval(refresh, sec * 1000);
+}
+$('refreshBtn').addEventListener('click', refresh);
+$('interval').addEventListener('change', resetTimer);
+$('semFilter').addEventListener('input', () => latestData && renderSem(latestData.semaphore || []));
+resetTimer();
+refresh();
+</script>
+</body>
+</html>

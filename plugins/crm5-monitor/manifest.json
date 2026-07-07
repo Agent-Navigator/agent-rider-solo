@@ -1,0 +1,9 @@
+{
+  "id": "crm5-monitor",
+  "label": "CRM5 Mission Engine Monitor",
+  "group": "App",
+  "kind": "static",
+  "description": "Live read-only status dashboard for CRM5 ClickHouse Mission Engine.",
+  "dataScopes": ["store"],
+  "version": 1
+}
