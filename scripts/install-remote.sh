@@ -13,6 +13,7 @@ Environment:
   WEB_PORT            Public Vite preview port. Default: 5173
   STORE_PORT          Local store backend port. Default: 5174
   BROWSE_ROOT         File browser root. Default: APP_USER home
+  AGENT_RIDER_APPS_DIR Local Agent Apps root. Default: APP_DIR/shared/plugins
   HERMES_TARGET       Hermes proxy target. Default: http://127.0.0.1:8789
   VITE_ALLOWED_HOSTS  Comma-separated hosts, or "all". Default: all
 USAGE
@@ -60,6 +61,7 @@ existing_web_host=$(read_env_value WEB_HOST || true)
 existing_web_port=$(read_env_value WEB_PORT || true)
 existing_store_port=$(read_env_value STORE_PORT || true)
 existing_browse_root=$(read_env_value BROWSE_ROOT || true)
+existing_apps_dir=$(read_env_value AGENT_RIDER_APPS_DIR || true)
 existing_hermes_target=$(read_env_value HERMES_TARGET || true)
 existing_allowed_hosts=$(read_env_value VITE_ALLOWED_HOSTS || true)
 WEB_HOST=${WEB_HOST:-${existing_web_host:-127.0.0.1}}
@@ -155,6 +157,7 @@ releases_dir="$APP_DIR/releases"
 shared_dir="$APP_DIR/shared"
 shared_data_dir="$shared_dir/data"
 shared_plugins_dir="$shared_dir/plugins"
+AGENT_RIDER_APPS_DIR=${AGENT_RIDER_APPS_DIR:-${existing_apps_dir:-$shared_plugins_dir}}
 release_dir="$releases_dir/$release_name"
 if [[ -e "$release_dir" ]]; then
   release_dir="$releases_dir/${release_name}-$(date -u +%Y%m%dT%H%M%SZ)"
@@ -200,11 +203,7 @@ sync_plugins() {
     if [[ "$name" == _* ]]; then
       replace_shared_path "$src" "$dest"
     elif [[ -f "$src/manifest.json" ]]; then
-      if [[ ! -e "$dest" ]]; then
-        cp -a "$src" "$dest"
-      else
-        echo "Preserving local App plugin: plugins/$name"
-      fi
+      echo "Skipping source Agent App: plugins/$name (local apps live in AGENT_RIDER_APPS_DIR)"
     else
       replace_shared_path "$src" "$dest"
     fi
@@ -249,6 +248,7 @@ cat > "$ENV_FILE" <<EOF
 APP_DIR=$APP_DIR
 HOME=$app_home
 BROWSE_ROOT=$BROWSE_ROOT
+AGENT_RIDER_APPS_DIR=$AGENT_RIDER_APPS_DIR
 WEB_HOST=$WEB_HOST
 STORE_PORT=$STORE_PORT
 WEB_PORT=$WEB_PORT
@@ -302,6 +302,6 @@ trap - ERR
 echo "Agent Rider deployed to $release_dir"
 echo "Current symlink: $APP_DIR/current"
 echo "Preserved data: $shared_data_dir"
-echo "Preserved App plugins: $shared_plugins_dir"
+echo "Preserved Local Agent Apps: $shared_plugins_dir"
 echo "Web UI: http://<server>:$WEB_PORT"
 echo "Check status: systemctl status agent-rider-web agent-rider-store"

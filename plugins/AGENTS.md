@@ -1,6 +1,6 @@
 # AGENTS.md — Building an Agent Rider App
 
-This file is the **single source of truth** for how to build an "App" plugin for
+This file is the **single source of truth** for how to build an "App" for
 Agent Rider. If a user asks you to "develop a … dashboard / tool / app", follow
 this document exactly.
 
@@ -11,33 +11,46 @@ discovered at runtime by scanning manifests.
 
 ## Golden rules
 
-1. **One folder per app**: `plugins/<slug>/`. The `<slug>` is **kebab-case and
-   globally unique** (`^[a-z0-9][a-z0-9-]*$`). If your slug collides with an
-   existing app the platform refuses to list either — pick another.
-2. **Static only**: the app is built to `plugins/<slug>/dist/` and served at
+1. **Apps are runtime data, not Agent Rider source code.** Build only inside the
+   App Builder workspace shown in `<agent-rider-app-workspace>` or under
+   `AGENT_RIDER_APPS_DIR/<slug>/`. Do **not** create app folders inside the
+   Agent Rider source repo.
+2. **One folder per app**: `AGENT_RIDER_APPS_DIR/<slug>/`. The `<slug>` is
+   **kebab-case and globally unique** (`^[a-z0-9][a-z0-9-]*$`). If your slug
+   collides with an existing app the platform refuses to list either — pick
+   another.
+3. **Static only**: the app is built to `<app-workspace>/dist/` and served at
    `/apps/<slug>/`. Use **relative asset paths** (or `<base href="./">`) so it
    works under that sub-path. Absolute paths like `/assets/...` will 404.
-3. **Data access is limited to same-origin `/api` and `/store`**. Do NOT hit
+4. **Data access is limited to same-origin `/api` and `/store`**. Do NOT hit
    external URLs, and do NOT add or modify backend endpoints (you may not edit
    `server/store.mjs` or `vite.config.ts`). If the data you need isn't already
    exposed there, say so — it's a platform change, not an app change.
-4. **No secrets** in app code.
-5. **No rebuild/restart of the main app.** You only build the app's own `dist/`.
+5. **No secrets** in app code.
+6. **No Agent Rider git commit for app work.** The repo-root AGENTS.md commit
+   rule applies to Agent Rider code changes only. App Builder work is
+   independent local development. If the app itself needs version control, run
+   `git init` inside that app workspace only; never stage or commit it in the
+   Agent Rider repo.
+7. **No rebuild/restart of the main app.** You only build the app's own `dist/`.
    Agent Rider auto-rescans every few seconds and the app appears by itself —
    do NOT run `npm run build` / restart the main Agent Rider app for an app
    change. (This overrides the repo-root AGENTS.md "restart after every edit"
    rule, which applies only to the main app.)
-6. **Commit** your work (the repo-root AGENTS.md commit rule still applies).
 
 ## Directory layout
 
 ```
-plugins/<slug>/
+AGENT_RIDER_APPS_DIR/<slug>/
   manifest.json     # required — how the app is registered
   app/              # your source (any stack, or omit if you hand-write dist/)
   dist/             # the built static output served at /apps/<slug>/
     index.html      # required entry; the app is "ready" once this exists
 ```
+
+When App Builder provides an exact app workspace path, that path is already the
+`AGENT_RIDER_APPS_DIR/<slug>/` folder. Put `manifest.json` and `dist/` directly
+there; do not create another nested `plugins/<slug>/` folder.
 
 ## manifest.json
 
@@ -58,26 +71,26 @@ plugins/<slug>/
 ## Available data (same-origin)
 
 - `GET /store/state` → `{ runs, turns }` (conversation data)
-- `GET /store/apps` → installed apps
+- `GET /store/apps` → installed apps plus `appsRoot`
 - `GET /store/fs/list?path=…` → browse files under the allowed root
 - `/api/*` → the Hermes agent runtime
 Use only what you declare in `dataScopes`.
 
 ## Workflow
 
-1. Copy the scaffold: `cp -r plugins/_template plugins/<slug>` and rename.
-2. Edit `manifest.json` (set a unique `id`/`label`) and build your UI.
+1. `cd` to the exact App Builder workspace path.
+2. Create or update `manifest.json` (set a unique `id`/`label`) and build your UI.
 3. Produce `dist/index.html` (+ assets, **relative paths**). For the no-build
    path you can author files directly in `dist/`. For a framework, configure its
    base to `./` and build into `dist/`.
 4. Verify locally: `dist/index.html` exists; open `/apps/<slug>/` returns it.
-5. `git commit`. Agent Rider auto-rescans — the app shows up under
-   **[Resource] → [App]**. No restart.
+5. Stop. Do not commit Agent Rider; the app is local runtime data and Agent Rider
+   auto-rescans it.
 
 ## Validation checklist before you call it done
 
-- [ ] `plugins/<slug>/manifest.json` is valid JSON with a unique kebab-case `id`.
-- [ ] `plugins/<slug>/dist/index.html` exists.
+- [ ] `<app-workspace>/manifest.json` is valid JSON with a unique kebab-case `id`.
+- [ ] `<app-workspace>/dist/index.html` exists.
 - [ ] All asset references are relative (no leading `/`).
 - [ ] App only calls `/api` and/or `/store`; no external hosts; no backend edits.
-- [ ] Committed.
+- [ ] No files were staged or committed in the Agent Rider repo.

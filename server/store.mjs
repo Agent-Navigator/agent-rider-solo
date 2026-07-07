@@ -39,6 +39,16 @@ function firstReadableDirectory(paths) {
 const CONFIGURED_BROWSE_ROOT = resolve(process.env.BROWSE_ROOT || REQUESTED_HOME_CWD)
 const BROWSE_ROOT = firstReadableDirectory([CONFIGURED_BROWSE_ROOT, REQUESTED_HOME_CWD, process.cwd()]) || CONFIGURED_BROWSE_ROOT
 const DEFAULT_CWD = canReadDirectory(REQUESTED_HOME_CWD) ? REQUESTED_HOME_CWD : BROWSE_ROOT
+const APPS_DIR = resolve(
+  process.env.AGENT_RIDER_APPS_DIR
+  || process.env.AGENT_RIDER_PLUGINS_DIR
+  || (process.env.APP_DIR ? join(process.env.APP_DIR, 'shared', 'plugins') : join(BROWSE_ROOT, '.agent-rider', 'apps')),
+)
+try {
+  mkdirSync(APPS_DIR, { recursive: true })
+} catch {
+  // Best-effort: scanApps() will surface an empty list if the root is unreadable.
+}
 const AGENT_PATH = [
   join(DEFAULT_CWD, '.local', 'bin'),
   '/usr/local/bin',
@@ -223,8 +233,8 @@ try {
   // column already present
 }
 
-// Persisted display order for Agent App plugins (existence comes from the
-// manifests under plugins/; this table only records the user's preferred order).
+// Persisted display order for Agent Apps (existence comes from manifests under
+// the local apps dir; this table only records the user's preferred order).
 db.exec(`
   CREATE TABLE IF NOT EXISTS app_order (
     slug TEXT PRIMARY KEY,
@@ -759,15 +769,14 @@ function deleteFile(input) {
   return { path, deleted: true }
 }
 
-// ── Agent App plugins ───────────────────────────────────────────────────────
-// Apps are self-contained static web apps living under plugins/<slug>/, built to
-// plugins/<slug>/dist/ and served same-origin at /apps/<slug>/. They are
-// discovered at runtime (no rebuild of the main app) by scanning manifests.
-const PLUGINS_DIR = join(__dirname, '..', 'plugins')
+// ── Local Agent Apps ─────────────────────────────────────────────────────────
+// Apps are runtime data, not Agent Rider source code. They live under
+// AGENT_RIDER_APPS_DIR/<slug>/ (default: BROWSE_ROOT/.agent-rider/apps), build to
+// <slug>/dist/, and are served same-origin at /apps/<slug>/.
 const SLUG_RE = /^[a-z0-9][a-z0-9-]*$/
 
 function readManifest(dir) {
-  const manifestPath = join(PLUGINS_DIR, dir, 'manifest.json')
+  const manifestPath = join(APPS_DIR, dir, 'manifest.json')
   if (!existsSync(manifestPath)) return null
   try {
     const raw = JSON.parse(readFileSync(manifestPath, 'utf8'))
@@ -782,11 +791,11 @@ function readManifest(dir) {
 function scanApps() {
   let dirs = []
   try {
-    dirs = readdirSync(PLUGINS_DIR, { withFileTypes: true })
+    dirs = readdirSync(APPS_DIR, { withFileTypes: true })
       .filter((entry) => entry.isDirectory() && !entry.name.startsWith('_') && !entry.name.startsWith('.'))
       .map((entry) => entry.name)
   } catch {
-    return { apps: [], warnings: [], hash: '0' }
+    return { apps: [], warnings: [], hash: '0', appsRoot: APPS_DIR }
   }
 
   const warnings = []
@@ -807,10 +816,11 @@ function scanApps() {
       continue
     }
     seenIds.set(id, [...(seenIds.get(id) ?? []), dir])
-    const distDir = join(PLUGINS_DIR, dir, 'dist')
+    const distDir = join(APPS_DIR, dir, 'dist')
     candidates.push({
       id,
       dir,
+      workspacePath: join(APPS_DIR, dir),
       label: labelMap.get(id) ?? String(manifest.label ?? id),
       group: String(manifest.group ?? 'App'),
       kind: manifest.kind === 'embedded' ? 'embedded' : 'static',
@@ -846,7 +856,7 @@ function scanApps() {
   })
   let hash = 0
   for (let i = 0; i < hashSource.length; i += 1) hash = (hash * 31 + hashSource.charCodeAt(i)) | 0
-  return { apps: active, warnings, hash: String(hash) }
+  return { apps: active, warnings, hash: String(hash), appsRoot: APPS_DIR }
 }
 
 function setAppOrder(slugs) {
@@ -892,7 +902,7 @@ const MIME_TYPES = {
   '.map': 'application/json; charset=utf-8',
 }
 
-// Serves a built Agent App's static files from plugins/<slug>/dist/.
+// Serves a built Agent App's static files from AGENT_RIDER_APPS_DIR/<slug>/dist/.
 // SPA-friendly: requests without a file extension fall back to index.html.
 function serveAppStatic(req, res, urlPath) {
   const rest = urlPath.slice('/apps/'.length)
@@ -901,7 +911,7 @@ function serveAppStatic(req, res, urlPath) {
     sendJson(res, 404, { error: 'not found' })
     return
   }
-  const distDir = join(PLUGINS_DIR, slug, 'dist')
+  const distDir = join(APPS_DIR, slug, 'dist')
   let relative = decodeURIComponent(rest.slice(slug.length)) || '/'
   if (relative.endsWith('/')) relative += 'index.html'
   // Resolve and confirm the target stays within the app's dist directory.

@@ -306,6 +306,7 @@ const DEFAULT_CWD = '/root/agent-work/DEV/agent-rider'
 // Default workspace folder for new Conversation Cards (~/).
 const DEFAULT_WORKSPACE_CWD = '/root'
 const DEFAULT_TERMINAL_CWD = '/root'
+const DEFAULT_APP_BUILDER_ROOT = '/root/.agent-rider/apps'
 const DEFAULT_TITLE = 'Agent Rider'
 const AGENT_TERMINAL_STATE_PREFIX = 'agent-terminal:'
 const DEFAULT_REASONING_EFFORTS = ['minimal', 'low', 'medium', 'high', 'xhigh']
@@ -830,15 +831,14 @@ function pathSegment(value: string, fallback: string) {
   return clean || fallback
 }
 
-function appBuilderWorkspacePath(workspaceRoot: string, category: string, project: string, title: string) {
+function appBuilderFallbackRoot(workspaceRoot: string) {
   const root = workspaceRoot.replace(/\/+$/, '')
-  return [
-    root,
-    'plugins',
-    pathSegment(category, 'uncategorized'),
-    pathSegment(project, 'agent-rider-app'),
-    pathSegment(title, 'untitled-app'),
-  ].join('/')
+  return root === DEFAULT_WORKSPACE_CWD ? DEFAULT_APP_BUILDER_ROOT : `${root}/.agent-rider/apps`
+}
+
+function appBuilderWorkspacePath(appsRoot: string, _category: string, _project: string, title: string, appId?: string | null) {
+  const root = appsRoot.replace(/\/+$/, '')
+  return [root, pathSegment(appId || title, 'untitled-app')].join('/')
 }
 
 async function ensureWorkspacePath(rootPath: string, targetPath: string) {
@@ -3566,6 +3566,7 @@ export default function App() {
   const [panelStates, setPanelStates] = useState<Record<string, WorkspacePanelState>>({})
   // Runtime Agent Apps (auto-discovered from the store backend).
   const { listing: appListing, reorder: reorderApps, rename: renameAppLabel } = useAgentApps(Boolean(passwordStatus?.authenticated))
+  const appBuilderRoot = appListing.appsRoot || appBuilderFallbackRoot(workspaceRoot)
 
   useEffect(() => {
     turnsRef.current = turns
@@ -3612,12 +3613,12 @@ export default function App() {
     setRuns((current) =>
       current.some((run) => run.id === appBuilderRunIdFor(slug))
         ? current
-        : [makeAppBuilderRun({ id: slug, label: app?.label ?? slug }), ...current],
+        : [makeAppBuilderRun({ id: slug, label: app?.label ?? slug, workspacePath: app?.workspacePath }), ...current],
     )
     openPanel(appBuilderPanelIdFor(slug))
   }
 
-  function makeAppBuilderRun(app?: { id: string; label: string }): RunNode {
+  function makeAppBuilderRun(app?: { id: string; label: string; workspacePath?: string }): RunNode {
     const category = 'Product Delivery'
     const project = 'Agent Rider App'
     const task = app ? app.label : 'Build an App'
@@ -3628,7 +3629,7 @@ export default function App() {
       categoryTags: tagsForCategory(category),
       project,
       workspace: '',
-      workspacePath: appBuilderWorkspacePath(workspaceRoot, category, project, task),
+      workspacePath: app?.workspacePath ?? appBuilderWorkspacePath(appBuilderRoot, category, project, task, app?.id),
       task,
       job: 'App Builder',
       jobStatus: 'queued',
@@ -3672,12 +3673,12 @@ export default function App() {
           continue
         }
         const app = appListing.apps.find((item) => item.id === slug)
-        if (app) additions.push(makeAppBuilderRun({ id: slug, label: app.label }))
+        if (app) additions.push(makeAppBuilderRun({ id: slug, label: app.label, workspacePath: app.workspacePath }))
       }
       return additions.length ? [...additions, ...current] : current
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [panelOrder, workspaceRoot, appListing.apps])
+  }, [panelOrder, appBuilderRoot, appListing.apps])
 
   // Moves an App Builder run's workspace folder to match its current
   // category/project/title. Reads the run fresh from runsRef at call time
@@ -3685,15 +3686,16 @@ export default function App() {
   async function moveAppBuilderWorkspace(runId: string) {
     const run = runsRef.current.find((item) => item.id === runId)
     if (!run) return
-    const nextWorkspace = appBuilderWorkspacePath(workspaceRoot, run.category, run.project, run.task)
+    const targetAppSlug = run.id.startsWith(APP_BUILDER_RUN_PREFIX) ? run.id.slice(APP_BUILDER_RUN_PREFIX.length) : null
+    const nextWorkspace = appBuilderWorkspacePath(appBuilderRoot, run.category, run.project, run.task, targetAppSlug)
     if (run.workspacePath === nextWorkspace) {
-      void ensureWorkspacePath(workspaceRoot, nextWorkspace).catch(() => {})
+      void ensureWorkspacePath(appBuilderRoot, nextWorkspace).catch(() => {})
       return
     }
 
     const sourceListing = await listDir(run.workspacePath)
     if (!sourceListing) {
-      await ensureWorkspacePath(workspaceRoot, nextWorkspace)
+      await ensureWorkspacePath(appBuilderRoot, nextWorkspace)
       sessionByRunRef.current.delete(run.id)
       updateRunContext(run.id, { workspacePath: nextWorkspace, sessionId: null })
       return
@@ -3733,14 +3735,15 @@ export default function App() {
       }
     }
     for (const run of openBuilderRuns) {
-      const nextWorkspace = appBuilderWorkspacePath(workspaceRoot, run.category, run.project, run.task)
+      const targetAppSlug = run.id.startsWith(APP_BUILDER_RUN_PREFIX) ? run.id.slice(APP_BUILDER_RUN_PREFIX.length) : null
+      const nextWorkspace = appBuilderWorkspacePath(appBuilderRoot, run.category, run.project, run.task, targetAppSlug)
       const runConflict = appFolderConflict?.sourcePath === run.workspacePath ? appFolderConflict : null
       if (runConflict && runConflict.targetPath !== nextWorkspace) setAppFolderConflict(null)
       const existing = timers.get(run.id)
       if (existing) clearTimeout(existing)
       if (run.workspacePath === nextWorkspace) {
         timers.delete(run.id)
-        void ensureWorkspacePath(workspaceRoot, nextWorkspace).catch(() => {})
+        void ensureWorkspacePath(appBuilderRoot, nextWorkspace).catch(() => {})
         continue
       }
       if (runConflict && runConflict.targetPath === nextWorkspace) continue
@@ -3755,7 +3758,7 @@ export default function App() {
       )
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [panelOrder, runs, workspaceRoot, appFolderConflict])
+  }, [panelOrder, runs, appBuilderRoot, appFolderConflict])
 
   useEffect(() => {
     const timers = workspaceMoveTimersRef.current

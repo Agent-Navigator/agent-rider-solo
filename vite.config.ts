@@ -188,7 +188,7 @@ const apiProxy: Record<string, ProxyOptions> = {
     changeOrigin: true,
     ws: true,
   },
-  // Same-origin static mount for built Agent Apps (plugins/<slug>/dist/),
+  // Same-origin static mount for built Agent Apps (AGENT_RIDER_APPS_DIR/<slug>/dist/),
   // served by the store backend at /apps/<slug>/ so they need no external URL.
   '/apps': {
     target: storeTarget,

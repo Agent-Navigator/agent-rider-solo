@@ -30,12 +30,12 @@ npm run build
 更新時只替換程式 release，保留本地狀態：
 
 - `/opt/agent-rider/shared/data`：SQLite 聊天紀錄、Conversation Card 狀態、版面設定、App 排序/改名等 store 資料。
-- `/opt/agent-rider/shared/plugins`：本地 Agent App plugins，包括 `manifest.json`、`dist/`、以及 app source。
+- `/opt/agent-rider/shared/plugins`：本地 Agent Apps，包括 `manifest.json`、`dist/`、以及 app source；這是 runtime data，不屬於 Agent Rider source repo。
 - `/etc/default/agent-rider`：既有 `WEB_PORT`、`STORE_PORT`、`BROWSE_ROOT`、`HERMES_TARGET`、`VITE_ALLOWED_HOSTS` 會沿用；命令列環境變數可覆蓋。
 - 遠端 preview 預設只監聽 `127.0.0.1`，讓 `tailscale serve` 代理到本機而不是搶同一個 5173 介面。
 - `/opt/agent-rider/shared/backups/<timestamp>`：每次更新前會備份 data/plugins。
 
-Release 只更新程式碼、Node dependencies、production build、systemd unit，以及第一方 build-time plugins。若 git release 內有新的 App plugin 且 remote 尚未有同名資料夾，會初次帶入；既有同名 App plugin 不會覆蓋。
+Release 只更新程式碼、Node dependencies、production build、systemd unit，以及第一方 build-time plugins。git release 內若誤帶本地 App folder（含 `manifest.json`）不會同步到 remote；App Builder 產物只保留在 `AGENT_RIDER_APPS_DIR`。
 
 ## Source Git Remote
 
@@ -77,6 +77,7 @@ SOURCE_GIT=root@YOUR-SOURCE-TAILNET-HOST:/srv/git/agent-rider.git SOURCE_REF=mas
 - 自動選擇 `install-remote.sh` 或 `update-remote.sh`。
 - 更新前備份並保留 `/opt/agent-rider/shared/data`。
 - 更新前備份並保留 `/opt/agent-rider/shared/plugins`。
+- 設定 `AGENT_RIDER_APPS_DIR=/opt/agent-rider/shared/plugins`，讓 App Builder 與 `/apps/<slug>/` 使用獨立的本地 App 目錄。
 - 沿用 `/etc/default/agent-rider` 既有設定。
 - 解壓成新的 versioned release，執行 `npm ci` 與 `npm run build`。
 - 將 `/opt/agent-rider/current` 指向新版本。
@@ -89,7 +90,7 @@ SOURCE_GIT=root@YOUR-SOURCE-TAILNET-HOST:/srv/git/agent-rider.git SOURCE_REF=mas
 /opt/agent-rider/current         # 指向目前啟用版本的 symlink
 /opt/agent-rider/current/.agent-rider-release # 實際部署的 commit/source/ref
 /opt/agent-rider/shared/data     # SQLite 與 runtime data，更新時保留
-/opt/agent-rider/shared/plugins  # App plugins，更新時保留
+/opt/agent-rider/shared/plugins  # Local Agent Apps，更新時保留
 /opt/agent-rider/shared/backups  # 更新前的 data/plugins 備份
 ```
 

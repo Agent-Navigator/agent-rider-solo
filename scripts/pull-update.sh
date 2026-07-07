@@ -91,7 +91,7 @@ run_installer() {
     AGENT_RIDER_SOURCE_REF="$SOURCE_REF"
   )
 
-  for name in APP_USER APP_GROUP WEB_PORT STORE_PORT BROWSE_ROOT HERMES_TARGET VITE_ALLOWED_HOSTS ENV_FILE; do
+  for name in APP_USER APP_GROUP WEB_PORT STORE_PORT BROWSE_ROOT AGENT_RIDER_APPS_DIR HERMES_TARGET VITE_ALLOWED_HOSTS ENV_FILE; do
     if [[ -n ${!name+x} ]]; then
       installer_env+=("$name=${!name}")
     fi

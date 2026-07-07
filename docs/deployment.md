@@ -9,7 +9,7 @@ repo，從指定 commit 建立本機 release，然後套用。
 更新只替換程式 release；以下內容保留：
 
 - `/opt/agent-rider/shared/data`：聊天紀錄、Conversation Card、版面狀態、App 排序/改名等 store 資料。
-- `/opt/agent-rider/shared/plugins`：本地 Agent App plugins。
+- `/opt/agent-rider/shared/plugins`：本地 Agent Apps；這是 runtime data，不屬於 Agent Rider source repo。
 - `/opt/agent-rider/shared/backups/<timestamp>`：每次更新前的 data/plugins 備份。
 - `/etc/default/agent-rider`：既有 port、browse root、Hermes target、allowed hosts 會沿用；環境變數可覆蓋。
 - 遠端 preview 預設只監聽 `127.0.0.1`，避免和 `tailscale serve` 在同一個介面搶 `5173`。
@@ -53,7 +53,7 @@ SOURCE_GIT=root@YOUR-SOURCE-TAILNET-HOST:/srv/git/agent-rider.git SOURCE_REF=mas
 3. Resolve `SOURCE_REF`（branch/tag/commit，預設 `master`）。
 4. 用 `git archive` 從該最新 commit 建本機 release archive。
 5. 執行 release 裡的 `install-remote.sh` 或 `update-remote.sh`。
-6. 保留 shared data/plugins，重建 production build，切換 `/opt/agent-rider/current`。
+6. 保留 shared data/plugins，設定 `AGENT_RIDER_APPS_DIR` 指向 shared plugins，重建 production build，切換 `/opt/agent-rider/current`。
 
 實際部署的 commit 會寫到：
 
@@ -125,6 +125,7 @@ WEB_PORT=5173
 WEB_HOST=127.0.0.1
 STORE_PORT=5174
 BROWSE_ROOT=/root
+AGENT_RIDER_APPS_DIR=/opt/agent-rider/shared/plugins
 HERMES_TARGET=http://127.0.0.1:8789
 VITE_ALLOWED_HOSTS=all
 ```

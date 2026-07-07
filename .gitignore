@@ -2,13 +2,19 @@
 node_modules/
 
 # Build output — the main app's dist/ is a build artifact and stays out of git.
-# Agent App plugins are the exception: each plugins/<slug>/dist/ IS committed so
-# the app persists without a rebuild (see plugins/AGENTS.md). Re-include the
-# plugin dist dir first, then its contents.
+# App Builder output is runtime data under AGENT_RIDER_APPS_DIR, not source.
 dist/
-!plugins/*/dist/
-!plugins/*/dist/**
 *.tsbuildinfo
+
+# Guardrail: local Agent Apps must not be staged under the Agent Rider source
+# repo. The scaffold template remains tracked as platform documentation.
+plugins/*/manifest.json
+plugins/*/app/
+plugins/*/dist/
+plugins/*/scripts/
+!plugins/_template/manifest.json
+!plugins/_template/dist/
+!plugins/_template/dist/**
 
 # Local SQLite persistence (runtime data)
 data/

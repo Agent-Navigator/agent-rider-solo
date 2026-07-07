@@ -237,10 +237,11 @@ export async function deleteFile(path: string): Promise<{ ok: true } | { error: 
   }
 }
 
-// ── Agent App plugins ────────────────────────────────────────────────────────
+// ── Local Agent Apps ─────────────────────────────────────────────────────────
 
 export interface AgentApp {
   id: string
+  workspacePath?: string
   label: string
   group: string
   kind: 'static' | 'embedded'
@@ -262,6 +263,7 @@ export interface AppListing {
   apps: AgentApp[]
   warnings: AppWarning[]
   hash: string
+  appsRoot?: string
 }
 
 const EMPTY_APP_LISTING: AppListing = { apps: [], warnings: [], hash: '0' }
@@ -272,6 +274,7 @@ function normalizeAppListing(data: Partial<AppListing> | null): AppListing {
     apps: Array.isArray(data.apps) ? (data.apps as AgentApp[]) : [],
     warnings: Array.isArray(data.warnings) ? (data.warnings as AppWarning[]) : [],
     hash: typeof data.hash === 'string' ? data.hash : '0',
+    appsRoot: typeof data.appsRoot === 'string' ? data.appsRoot : undefined,
   }
 }
 
