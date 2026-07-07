@@ -718,19 +718,67 @@ function readFilePreview(input) {
     return { error: 'file not found', status: 404 }
   }
   if (!stat.isFile()) return { error: 'not a file', status: 400 }
-  if (stat.size > FILE_PREVIEW_MAX_BYTES) return { error: 'file too large to preview', status: 413 }
 
   const kind = previewKind(path)
   if (!kind) return { error: 'unsupported file type', status: 415 }
+  if (kind !== 'html' && stat.size > FILE_PREVIEW_MAX_BYTES) return { error: 'file too large to preview', status: 413 }
 
   const ext = extname(path).toLowerCase()
   const mime = MIME_TYPES[ext] || (kind === 'image' ? 'application/octet-stream' : 'text/plain; charset=utf-8')
-  const buffer = readFileSync(path)
   const base = { name: basename(path), path, size: stat.size, kind, mime }
+  if (kind === 'html') {
+    return { ...base, viewUrl: workspaceFileViewUrl(path) }
+  }
+  const buffer = readFileSync(path)
   if (kind === 'image') {
     return { ...base, dataUrl: `data:${mime};base64,${buffer.toString('base64')}` }
   }
   return { ...base, content: buffer.toString('utf8') }
+}
+
+function workspaceFileViewUrl(path) {
+  const relativePath = path === BROWSE_ROOT ? '' : path.slice(BROWSE_ROOT.length + 1)
+  const encoded = relativePath.split('/').map((part) => encodeURIComponent(part)).join('/')
+  return `/store/fs/view/${encoded}`
+}
+
+// Serve a workspace file inline so HTML previews behave like a real browser page:
+// scripts can run, and relative JS/CSS/image/font dependencies resolve next to
+// the opened HTML file instead of relative to the Agent Rider app shell.
+function serveWorkspaceFileInline(req, res, urlPath) {
+  const prefix = '/store/fs/view/'
+  let relativePath
+  try {
+    relativePath = decodeURIComponent(urlPath.slice(prefix.length))
+  } catch {
+    sendJson(res, 400, { error: 'invalid file path' })
+    return
+  }
+  let target = safeResolve(join(BROWSE_ROOT, relativePath))
+  if (!target) {
+    sendJson(res, 403, { error: 'path outside allowed root' })
+    return
+  }
+  if (existsSync(target) && statSync(target).isDirectory()) target = join(target, 'index.html')
+  let stat
+  try {
+    stat = statSync(target)
+  } catch {
+    sendJson(res, 404, { error: 'file not found' })
+    return
+  }
+  if (!stat.isFile()) {
+    sendJson(res, 400, { error: 'not a file' })
+    return
+  }
+  const mime = MIME_TYPES[extname(target).toLowerCase()] || 'application/octet-stream'
+  res.writeHead(200, {
+    'Content-Type': mime,
+    'Content-Length': stat.size,
+    'Cache-Control': 'no-store',
+    'X-Content-Type-Options': 'nosniff',
+  })
+  createReadStream(target).pipe(res)
 }
 
 // Resolve a file inside the sandbox for downloading as an attachment.
@@ -889,9 +937,12 @@ function setAppLabel(slug, label) {
 
 const MIME_TYPES = {
   '.html': 'text/html; charset=utf-8',
+  '.htm': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
   '.mjs': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
+  '.csv': 'text/csv; charset=utf-8',
+  '.txt': 'text/plain; charset=utf-8',
   '.json': 'application/json; charset=utf-8',
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
@@ -903,6 +954,9 @@ const MIME_TYPES = {
   '.woff': 'font/woff',
   '.woff2': 'font/woff2',
   '.ttf': 'font/ttf',
+  '.otf': 'font/otf',
+  '.eot': 'application/vnd.ms-fontobject',
+  '.wasm': 'application/wasm',
   '.map': 'application/json; charset=utf-8',
 }
 
@@ -1258,6 +1312,11 @@ const server = createServer((req, res) => {
     const query = new URL(req.url, 'http://localhost').searchParams
     const result = readFilePreview(query.get('path') || '')
     sendJson(res, result.error ? result.status : 200, result)
+    return
+  }
+
+  if (req.method === 'GET' && url.startsWith('/store/fs/view/')) {
+    serveWorkspaceFileInline(req, res, url)
     return
   }
 

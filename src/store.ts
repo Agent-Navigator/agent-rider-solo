@@ -154,6 +154,7 @@ export interface FsFilePreview {
   mime: string
   content?: string
   dataUrl?: string
+  viewUrl?: string
 }
 
 export async function listDir(path?: string): Promise<FsListing | null> {

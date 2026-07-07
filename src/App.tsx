@@ -1082,8 +1082,10 @@ function FileBrowser({ rootPath }: { rootPath: string }) {
         <iframe
           className="file-preview-html"
           title={preview.name}
-          sandbox=""
-          srcDoc={preview.content ?? ''}
+          sandbox="allow-scripts allow-forms allow-popups allow-downloads allow-modals"
+          referrerPolicy="no-referrer"
+          src={preview.viewUrl}
+          srcDoc={preview.viewUrl ? undefined : preview.content ?? ''}
         />
       ) : preview.kind === 'markdown' ? (
         <div className="file-preview-markdown md-body">
