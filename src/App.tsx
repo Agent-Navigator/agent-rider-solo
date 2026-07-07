@@ -511,6 +511,24 @@ async function copyToClipboard(value: string) {
   document.body.removeChild(textarea)
 }
 
+function decodeBase64Text(value: string) {
+  try {
+    const binary = atob(value)
+    const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0))
+    return new TextDecoder().decode(bytes)
+  } catch {
+    return null
+  }
+}
+
+function parseOsc52Clipboard(data: string) {
+  const separator = data.indexOf(';')
+  if (separator === -1) return null
+  const payload = data.slice(separator + 1)
+  if (!payload || payload === '?') return null
+  return decodeBase64Text(payload)
+}
+
 function titleCase(words: string[]) {
   if (!words.length) return ''
   return words.map((word) => `${word.charAt(0).toUpperCase()}${word.slice(1)}`).join(' ')
@@ -2414,6 +2432,11 @@ function WebTerminal({
       void copyToClipboard(terminal.getSelection()).catch(() => {})
       return false
     })
+    const osc52Disposable = terminal.parser.registerOscHandler(52, (data) => {
+      const value = parseOsc52Clipboard(data)
+      if (value === null) return false
+      return copyToClipboard(value).then(() => true).catch(() => false)
+    })
     terminalRef.current = terminal
 
     const fit = () => {
@@ -2472,6 +2495,7 @@ function WebTerminal({
     return () => {
       resizeObserver.disconnect()
       window.removeEventListener('resize', fit)
+      osc52Disposable.dispose()
       inputDisposable.dispose()
       socket.close()
       terminal.dispose()
