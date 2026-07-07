@@ -496,12 +496,8 @@ function compactText(value: string, max = 96) {
 
 async function copyToClipboard(value: string) {
   if (navigator.clipboard?.writeText) {
-    try {
-      await navigator.clipboard.writeText(value)
-      return
-    } catch {
-      // Fall through to the DOM copy path when clipboard permission is denied.
-    }
+    await navigator.clipboard.writeText(value)
+    return
   }
 
   const textarea = document.createElement('textarea')
@@ -513,34 +509,6 @@ async function copyToClipboard(value: string) {
   textarea.select()
   document.execCommand('copy')
   document.body.removeChild(textarea)
-}
-
-function copyTextViaCopyEvent(value: string) {
-  let copied = false
-  const handleCopy = (event: ClipboardEvent) => {
-    if (!event.clipboardData) return
-    event.clipboardData.setData('text/plain', value)
-    event.preventDefault()
-    event.stopImmediatePropagation()
-    copied = true
-  }
-
-  document.addEventListener('copy', handleCopy, true)
-  try {
-    return document.execCommand('copy') && copied
-  } finally {
-    document.removeEventListener('copy', handleCopy, true)
-  }
-}
-
-async function writeClipboardText(value: string) {
-  if (!navigator.clipboard?.writeText) return false
-  try {
-    await navigator.clipboard.writeText(value)
-    return true
-  } catch {
-    return false
-  }
 }
 
 function titleCase(words: string[]) {
@@ -1854,7 +1822,6 @@ function ConversationCard({
                 customCommand={agentType === 'custom' ? customAgentCommand : undefined}
                 sessionKey={run.id}
                 initialCwd={run.workspacePath}
-                autoCopySelection
                 eyebrow={`Agent · ${agentLabel(agentType)} · persistent`}
                 title={`${agentType} — interactive`}
                 showClose={false}
@@ -2377,7 +2344,6 @@ function WebTerminal({
   agent,
   customCommand,
   sessionKey,
-  autoCopySelection = false,
   eyebrow = 'Resource · Tools',
   title = 'Local Terminal',
   showClose = true,
@@ -2394,7 +2360,6 @@ function WebTerminal({
   /** Stable key for a persistent (tmux-backed) agent session that survives
    *  disconnects. Only meaningful together with `agent`. */
   sessionKey?: string
-  autoCopySelection?: boolean
   eyebrow?: string
   title?: string
   showClose?: boolean
@@ -2449,32 +2414,6 @@ function WebTerminal({
       void copyToClipboard(terminal.getSelection()).catch(() => {})
       return false
     })
-
-    let lastObservedSelection = ''
-    let lastCopiedSelection = ''
-    const copyTerminalSelection = () => {
-      const selection = terminal.hasSelection() ? terminal.getSelection() : lastObservedSelection
-      if (!selection || selection === lastCopiedSelection) return
-      lastObservedSelection = selection
-      if (copyTextViaCopyEvent(selection)) {
-        lastCopiedSelection = selection
-        return
-      }
-      void writeClipboardText(selection).then((copied) => {
-        if (copied) lastCopiedSelection = selection
-      })
-    }
-    const selectionDisposable = autoCopySelection
-      ? terminal.onSelectionChange(() => {
-          if (!terminal.hasSelection()) return
-          lastObservedSelection = terminal.getSelection()
-          copyTerminalSelection()
-        })
-      : null
-    if (autoCopySelection) {
-      container.addEventListener('pointerup', copyTerminalSelection, { capture: true })
-      container.addEventListener('mouseup', copyTerminalSelection, { capture: true })
-    }
     terminalRef.current = terminal
 
     const fit = () => {
@@ -2533,16 +2472,13 @@ function WebTerminal({
     return () => {
       resizeObserver.disconnect()
       window.removeEventListener('resize', fit)
-      container.removeEventListener('pointerup', copyTerminalSelection, { capture: true })
-      container.removeEventListener('mouseup', copyTerminalSelection, { capture: true })
-      selectionDisposable?.dispose()
       inputDisposable.dispose()
       socket.close()
       terminal.dispose()
       if (socketRef.current === socket) socketRef.current = null
       if (terminalRef.current === terminal) terminalRef.current = null
     }
-  }, [initialCwd, terminalKey, agent, customCommand, sessionKey, autoCopySelection])
+  }, [initialCwd, terminalKey, agent, customCommand, sessionKey])
 
   useEffect(() => {
     if (!terminalCollapsed) window.requestAnimationFrame(() => fitRef.current())
