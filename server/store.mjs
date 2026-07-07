@@ -815,6 +815,10 @@ function scanApps() {
       warnings.push({ dir, id, error: 'invalid slug (use lowercase letters, digits, hyphens)' })
       continue
     }
+    if (id !== dir) {
+      warnings.push({ dir, id, error: 'manifest id must match folder name' })
+      continue
+    }
     seenIds.set(id, [...(seenIds.get(id) ?? []), dir])
     const distDir = join(APPS_DIR, dir, 'dist')
     candidates.push({

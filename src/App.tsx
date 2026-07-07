@@ -317,6 +317,7 @@ const APP_BUILDER_RUN_ID = 'run-app-builder'
 // panel/run pair so each app keeps its own conversation and chat/app-view mode.
 const APP_BUILDER_PANEL_PREFIX = 'app-builder:'
 const APP_BUILDER_RUN_PREFIX = 'run-app-builder:'
+const APP_SLUG_RE = /^[a-z0-9][a-z0-9-]*$/
 
 function appBuilderPanelIdFor(appSlug: string) {
   return `${APP_BUILDER_PANEL_PREFIX}${appSlug}`
@@ -839,6 +840,24 @@ function appBuilderFallbackRoot(workspaceRoot: string) {
 function appBuilderWorkspacePath(appsRoot: string, _category: string, _project: string, title: string, appId?: string | null) {
   const root = appsRoot.replace(/\/+$/, '')
   return [root, pathSegment(appId || title, 'untitled-app')].join('/')
+}
+
+function appSlugFromManifestContent(content: string | undefined) {
+  if (!content) return null
+  try {
+    const manifest = JSON.parse(content) as Record<string, unknown>
+    const id = String(manifest.id ?? '').trim()
+    return APP_SLUG_RE.test(id) ? id : null
+  } catch {
+    return null
+  }
+}
+
+async function appSlugFromWorkspaceManifest(workspacePath: string) {
+  const base = workspacePath.replace(/\/+$/, '')
+  const preview = await readFilePreview(`${base}/manifest.json`)
+  if ('error' in preview) return null
+  return appSlugFromManifestContent(preview.content)
 }
 
 async function ensureWorkspacePath(rootPath: string, targetPath: string) {
@@ -3686,7 +3705,9 @@ export default function App() {
   async function moveAppBuilderWorkspace(runId: string) {
     const run = runsRef.current.find((item) => item.id === runId)
     if (!run) return
-    const targetAppSlug = run.id.startsWith(APP_BUILDER_RUN_PREFIX) ? run.id.slice(APP_BUILDER_RUN_PREFIX.length) : null
+    const targetAppSlug = run.id.startsWith(APP_BUILDER_RUN_PREFIX)
+      ? run.id.slice(APP_BUILDER_RUN_PREFIX.length)
+      : await appSlugFromWorkspaceManifest(run.workspacePath)
     const nextWorkspace = appBuilderWorkspacePath(appBuilderRoot, run.category, run.project, run.task, targetAppSlug)
     if (run.workspacePath === nextWorkspace) {
       void ensureWorkspacePath(appBuilderRoot, nextWorkspace).catch(() => {})
