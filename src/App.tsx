@@ -515,6 +515,24 @@ async function copyToClipboard(value: string) {
   document.body.removeChild(textarea)
 }
 
+function copyTextViaCopyEvent(value: string) {
+  let copied = false
+  const handleCopy = (event: ClipboardEvent) => {
+    if (!event.clipboardData) return
+    event.clipboardData.setData('text/plain', value)
+    event.preventDefault()
+    event.stopImmediatePropagation()
+    copied = true
+  }
+
+  document.addEventListener('copy', handleCopy, true)
+  try {
+    return document.execCommand('copy') && copied
+  } finally {
+    document.removeEventListener('copy', handleCopy, true)
+  }
+}
+
 async function writeClipboardText(value: string) {
   if (!navigator.clipboard?.writeText) return false
   try {
@@ -2438,6 +2456,10 @@ function WebTerminal({
       const selection = terminal.hasSelection() ? terminal.getSelection() : lastObservedSelection
       if (!selection || selection === lastCopiedSelection) return
       lastObservedSelection = selection
+      if (copyTextViaCopyEvent(selection)) {
+        lastCopiedSelection = selection
+        return
+      }
       void writeClipboardText(selection).then((copied) => {
         if (copied) lastCopiedSelection = selection
       })
