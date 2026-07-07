@@ -1,4 +1,4 @@
-import { type DragEvent, type FormEvent, type KeyboardEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { type DragEvent, type FormEvent, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import rehypeRaw from 'rehype-raw'
@@ -67,7 +67,16 @@ type ChatRole = 'user' | 'assistant'
 // terminal (see WebTerminal + the /store/terminal/ws `agent` param).
 type AgentType = 'hermes' | 'claude' | 'codex' | 'agy' | 'custom'
 type TuiAgentType = Exclude<AgentType, 'hermes'>
-type AppBuilderMode = 'chat' | 'app'
+type AppBuilderMode = 'chat' | 'app' | 'split'
+
+// Chat pane share of the Chat+App split, clamped so neither pane collapses.
+const APP_BUILDER_SPLIT_DEFAULT = 0.3
+const APP_BUILDER_SPLIT_MIN = 0.15
+const APP_BUILDER_SPLIT_MAX = 0.85
+
+function clampBuilderSplit(value: number) {
+  return Math.min(APP_BUILDER_SPLIT_MAX, Math.max(APP_BUILDER_SPLIT_MIN, value))
+}
 type RunCardKind = 'conversation' | 'app-builder'
 
 interface HermesModel {
@@ -525,8 +534,9 @@ function normalizePanelStates(value: unknown): Record<string, WorkspacePanelStat
     const state: WorkspacePanelState = {}
     if (typeof source.collapsed === 'boolean') state.collapsed = source.collapsed
     if (typeof source.fullWindow === 'boolean') state.fullWindow = source.fullWindow
-    if (source.builderMode === 'chat' || source.builderMode === 'app') state.builderMode = source.builderMode
+    if (source.builderMode === 'chat' || source.builderMode === 'app' || source.builderMode === 'split') state.builderMode = source.builderMode
     if (typeof source.contextCollapsed === 'boolean') state.contextCollapsed = source.contextCollapsed
+    if (typeof source.builderSplit === 'number' && Number.isFinite(source.builderSplit)) state.builderSplit = clampBuilderSplit(source.builderSplit)
     const migratedKey = migrateLegacyAppPanelId(key)
     // A legacy app panel was showing the app itself, so its builder starts on App View.
     if (migratedKey !== key && !state.builderMode) state.builderMode = 'app'
@@ -2284,6 +2294,7 @@ function AppBuilderPanel({
   onModeChange,
   contextCollapsed,
   onContextCollapsedChange,
+  splitRatio,
   onStateChange,
 }: {
   run: RunNode
@@ -2304,17 +2315,27 @@ function AppBuilderPanel({
   onModeChange?: (mode: AppBuilderMode) => void
   contextCollapsed?: boolean
   onContextCollapsedChange?: (collapsed: boolean) => void
+  /** Chat pane share (0.15–0.85) of the Chat+App split. */
+  splitRatio?: number
   onStateChange?: (patch: WorkspacePanelState) => void
 }) {
   const [internalCollapsed, setInternalCollapsed] = useState(false)
   const [internalFullWindow, setInternalFullWindow] = useState(false)
   const [internalMode, setInternalMode] = useState<AppBuilderMode>('chat')
   const [internalContextCollapsed, setInternalContextCollapsed] = useState(false)
+  const [internalSplit, setInternalSplit] = useState(APP_BUILDER_SPLIT_DEFAULT)
+  // Live ratio while the divider is being dragged (committed on pointer-up).
+  const [dragSplit, setDragSplit] = useState<number | null>(null)
+  const splitContainerRef = useRef<HTMLDivElement | null>(null)
   const [customCommandDraft, setCustomCommandDraft] = useState(run.agentCommand ?? '')
   const isCollapsed = collapsed ?? internalCollapsed
   const isFullWindow = fullWindow ?? internalFullWindow
   const activeMode = mode ?? internalMode
   const isContextCollapsed = contextCollapsed ?? internalContextCollapsed
+  const splitValue = dragSplit ?? splitRatio ?? internalSplit
+  // Full-window App View drops the builder chrome (header/context/tabs) so the
+  // app truly fills the screen.
+  const appViewOnly = isFullWindow && activeMode === 'app'
   const appTitle = run.task.trim() || 'Untitled app'
   const appSlug = pathSegment(appTitle, 'untitled-app')
   const appAtWork = targetAppId
@@ -2347,6 +2368,37 @@ function AppBuilderPanel({
     onContextCollapsedChange?.(next)
   }
 
+  function commitSplit(next: number) {
+    const ratio = clampBuilderSplit(next)
+    if (splitRatio === undefined) setInternalSplit(ratio)
+    onStateChange?.({ builderSplit: ratio })
+  }
+
+  function handleSplitPointerDown(event: ReactPointerEvent<HTMLDivElement>) {
+    const container = splitContainerRef.current
+    if (!container || event.button !== 0) return
+    event.preventDefault()
+    const ratioFor = (clientX: number) => {
+      const rect = container.getBoundingClientRect()
+      return rect.width > 0 ? clampBuilderSplit((clientX - rect.left) / rect.width) : null
+    }
+    const onMove = (moveEvent: PointerEvent) => {
+      const ratio = ratioFor(moveEvent.clientX)
+      if (ratio !== null) setDragSplit(ratio)
+    }
+    const onUp = (upEvent: PointerEvent) => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onUp)
+      const ratio = ratioFor(upEvent.clientX)
+      if (ratio !== null) commitSplit(ratio)
+      setDragSplit(null)
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onUp)
+  }
+
   function toggleFromKey(event: KeyboardEvent<HTMLDivElement>) {
     if (event.key !== 'Enter' && event.key !== ' ') return
     event.preventDefault()
@@ -2373,8 +2425,46 @@ function AppBuilderPanel({
     }
   }
 
+  const appView = (
+    <div className="app-builder-view" role="tabpanel">
+      <div className="app-builder-viewbar">
+        <strong>{appAtWork?.label ?? 'App at work'}</strong>
+        <span>{appAtWork?.hasDist ? 'Ready' : appAtWork ? 'Waiting for build' : 'No app yet'}</span>
+        <button
+          type="button"
+          className="terminal-icon-button app-builder-view-expand"
+          title={isFullWindow ? 'Exit full window' : 'Expand to full window'}
+          aria-label={isFullWindow ? 'Exit full window' : 'Expand to full window'}
+          onClick={() => setFullWindowState((current) => !current)}
+        >
+          {isFullWindow ? '↙' : '⛶'}
+        </button>
+      </div>
+      {appAtWork?.hasDist ? (
+        <iframe className="app-builder-frame" title={appAtWork.label} src={appAtWork.entry} />
+      ) : (
+        <div className="conv-empty">
+          {appAtWork ? `${appAtWork.label} needs a dist/index.html build before preview.` : 'The app being built will appear here after the Resources App scan refreshes.'}
+        </div>
+      )}
+      {appWarnings.length ? (
+        <div className="app-builder-warnings">
+          {appWarnings.map((warning, index) => (
+            <div key={`builder-warn-${index}`} className="app-warning" role="alert">
+              ⚠ {warning.id ?? warning.dir ?? 'plugin'}: {warning.error}
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  )
+
   return (
-    <section className={`app-builder-card conv-card ${isCollapsed ? 'collapsed' : ''} ${isFullWindow ? 'full-window' : ''}`} aria-label="App Builder">
+    <section
+      className={`app-builder-card conv-card ${isCollapsed && !appViewOnly ? 'collapsed' : ''} ${isFullWindow ? 'full-window' : ''} ${appViewOnly ? 'app-view-only' : ''}`}
+      aria-label="App Builder"
+    >
+      {appViewOnly ? null : (
       <div
         className="conv-card-head app-builder-head"
         role="button"
@@ -2425,9 +2515,11 @@ function AppBuilderPanel({
         </div>
         <span className={`conv-caret ${isCollapsed ? '' : 'open'}`} aria-hidden>▾</span>
       </div>
+      )}
 
-      {!isCollapsed ? (
+      {!isCollapsed || appViewOnly ? (
         <div className="conv-card-body app-builder-body">
+          {appViewOnly ? null : (
           <div className={`conv-meta app-builder-context ${isContextCollapsed ? 'collapsed' : ''}`}>
             <button
               type="button"
@@ -2508,7 +2600,9 @@ function AppBuilderPanel({
             </div>
             )}
           </div>
+          )}
 
+          {appViewOnly ? null : (
           <div className="app-builder-tabs" role="tablist" aria-label="App Builder view">
             <button
               type="button"
@@ -2528,44 +2622,42 @@ function AppBuilderPanel({
             >
               App View
             </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeMode === 'split'}
+              className={activeMode === 'split' ? 'active' : ''}
+              onClick={() => setModeState('split')}
+            >
+              Chat+App
+            </button>
           </div>
+          )}
 
           {activeMode === 'chat' ? (
             <div className="app-builder-chat" role="tabpanel">
               {chatContent}
             </div>
-          ) : (
-            <div className="app-builder-view" role="tabpanel">
-              <div className="app-builder-viewbar">
-                <strong>{appAtWork?.label ?? 'App at work'}</strong>
-                <span>{appAtWork?.hasDist ? 'Ready' : appAtWork ? 'Waiting for build' : 'No app yet'}</span>
-                <button
-                  type="button"
-                  className="terminal-icon-button app-builder-view-expand"
-                  title={isFullWindow ? 'Exit full window' : 'Expand to full window'}
-                  aria-label={isFullWindow ? 'Exit full window' : 'Expand to full window'}
-                  onClick={() => setFullWindowState((current) => !current)}
-                >
-                  {isFullWindow ? '↙' : '⛶'}
-                </button>
+          ) : activeMode === 'split' ? (
+            <div
+              className={`app-builder-split ${dragSplit !== null ? 'dragging' : ''}`}
+              role="tabpanel"
+              ref={splitContainerRef}
+            >
+              <div className="app-builder-split-chat" style={{ width: `${splitValue * 100}%` }}>
+                {chatContent}
               </div>
-              {appAtWork?.hasDist ? (
-                <iframe className="app-builder-frame" title={appAtWork.label} src={appAtWork.entry} />
-              ) : (
-                <div className="conv-empty">
-                  {appAtWork ? `${appAtWork.label} needs a dist/index.html build before preview.` : 'The app being built will appear here after the Resources App scan refreshes.'}
-                </div>
-              )}
-              {appWarnings.length ? (
-                <div className="app-builder-warnings">
-                  {appWarnings.map((warning, index) => (
-                    <div key={`builder-warn-${index}`} className="app-warning" role="alert">
-                      ⚠ {warning.id ?? warning.dir ?? 'plugin'}: {warning.error}
-                    </div>
-                  ))}
-                </div>
-              ) : null}
+              <div
+                className="app-builder-split-divider"
+                role="separator"
+                aria-orientation="vertical"
+                aria-label="Resize chat and app panes"
+                onPointerDown={handleSplitPointerDown}
+              />
+              <div className="app-builder-split-app">{appView}</div>
             </div>
+          ) : (
+            appView
           )}
         </div>
       ) : null}
@@ -3640,8 +3732,9 @@ export default function App() {
       const normalized: WorkspacePanelState = {}
       if (typeof nextState.collapsed === 'boolean') normalized.collapsed = nextState.collapsed
       if (typeof nextState.fullWindow === 'boolean') normalized.fullWindow = nextState.fullWindow
-      if (nextState.builderMode === 'chat' || nextState.builderMode === 'app') normalized.builderMode = nextState.builderMode
+      if (nextState.builderMode === 'chat' || nextState.builderMode === 'app' || nextState.builderMode === 'split') normalized.builderMode = nextState.builderMode
       if (typeof nextState.contextCollapsed === 'boolean') normalized.contextCollapsed = nextState.contextCollapsed
+      if (typeof nextState.builderSplit === 'number' && Number.isFinite(nextState.builderSplit)) normalized.builderSplit = clampBuilderSplit(nextState.builderSplit)
       return { ...current, [panelId]: normalized }
     })
   }
@@ -4684,6 +4777,7 @@ export default function App() {
             onModeChange={(nextMode) => updatePanelState(panelId, { builderMode: nextMode })}
             contextCollapsed={panelStates[panelId]?.contextCollapsed ?? Boolean(targetAppSlug)}
             onContextCollapsedChange={(nextCollapsed) => updatePanelState(panelId, { contextCollapsed: nextCollapsed })}
+            splitRatio={panelStates[panelId]?.builderSplit}
             onStateChange={(patch) => updatePanelState(panelId, patch)}
           />
         )

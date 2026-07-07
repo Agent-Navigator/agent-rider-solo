@@ -2756,6 +2756,78 @@ button { cursor: pointer; }
   min-height: 0;
 }
 
+/* Full-window App View: no header/context/tabs — the app owns the screen. */
+.app-builder-card.full-window.app-view-only {
+  inset: 0;
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.app-builder-card.full-window.app-view-only .app-builder-body {
+  grid-template-rows: minmax(0, 1fr);
+  border-top: 0;
+  padding: 10px;
+}
+
+.app-builder-card.full-window.app-view-only .app-builder-view {
+  gap: 8px;
+}
+
+/* Chat+App split view */
+.app-builder-split {
+  display: flex;
+  align-items: stretch;
+  min-height: 460px;
+  min-width: 0;
+}
+
+.app-builder-card.full-window .app-builder-split {
+  min-height: 0;
+  height: 100%;
+}
+
+.app-builder-split-chat {
+  flex-shrink: 0;
+  min-width: 0;
+  overflow-y: auto;
+}
+
+.app-builder-split-chat > .conv-card {
+  height: 100%;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.app-builder-split-divider {
+  flex: 0 0 6px;
+  margin: 0 5px;
+  border-radius: 3px;
+  background: rgba(148, 163, 184, 0.18);
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.app-builder-split-divider:hover,
+.app-builder-split.dragging .app-builder-split-divider {
+  background: rgba(121, 185, 255, 0.4);
+}
+
+.app-builder-split-app {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+}
+
+.app-builder-split .app-builder-view {
+  min-height: 0;
+}
+
+.app-builder-split.dragging {
+  user-select: none;
+}
+
+.app-builder-split.dragging .app-builder-frame {
+  pointer-events: none;
+}
+
 .conv-card-head {
   display: flex;
   align-items: center;
