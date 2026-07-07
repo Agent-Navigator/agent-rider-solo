@@ -66,6 +66,14 @@ type ChatRole = 'user' | 'assistant'
 // terminal (see WebTerminal + the /store/terminal/ws `agent` param).
 type AgentType = 'hermes' | 'claude' | 'codex' | 'agy' | 'custom'
 type TuiAgentType = Exclude<AgentType, 'hermes'>
+type AppBuilderMode = 'chat' | 'app'
+
+interface AppBuilderMessage {
+  id: string
+  role: ChatRole
+  text: string
+  createdAt: string
+}
 
 interface HermesModel {
   id: string
@@ -289,6 +297,7 @@ const DEFAULT_TITLE = 'Agent Rider'
 const AGENT_TERMINAL_STATE_PREFIX = 'agent-terminal:'
 const DEFAULT_REASONING_EFFORTS = ['minimal', 'low', 'medium', 'high', 'xhigh']
 const EMPTY_MODEL_CATALOG: HermesModelCatalog = { groups: [], defaultModel: '', activeProvider: null }
+const APP_BUILDER_PANEL_ID = 'app-builder'
 
 hljs.registerLanguage('bash', bash)
 hljs.registerLanguage('c', c)
@@ -2155,6 +2164,222 @@ function useAgentApps(enabled: boolean): {
   return { listing, reorder, rename }
 }
 
+function AppBuilderPanel({
+  apps,
+  appWarnings,
+  onClose,
+  collapsed,
+  fullWindow,
+  onStateChange,
+}: {
+  apps: AgentApp[]
+  appWarnings: AppWarning[]
+  onClose: () => void
+  collapsed?: boolean
+  fullWindow?: boolean
+  onStateChange?: (patch: WorkspacePanelState) => void
+}) {
+  const [internalCollapsed, setInternalCollapsed] = useState(false)
+  const [internalFullWindow, setInternalFullWindow] = useState(false)
+  const [mode, setMode] = useState<AppBuilderMode>('chat')
+  const [draft, setDraft] = useState('')
+  const [selectedAppId, setSelectedAppId] = useState('')
+  const [messages, setMessages] = useState<AppBuilderMessage[]>(() => [
+    {
+      id: makeId('builder-msg'),
+      role: 'assistant',
+      text: 'Describe the app you want to build. Include the audience, key screens, data sources, and what should appear under Resources -> App.',
+      createdAt: new Date().toISOString(),
+    },
+  ])
+  const isCollapsed = collapsed ?? internalCollapsed
+  const isFullWindow = fullWindow ?? internalFullWindow
+  const selectedApp = apps.find((app) => app.id === selectedAppId) ?? apps.find((app) => app.hasDist) ?? apps[0] ?? null
+
+  useEffect(() => {
+    if (!apps.length) {
+      if (selectedAppId) setSelectedAppId('')
+      return
+    }
+    if (!selectedAppId || !apps.some((app) => app.id === selectedAppId)) {
+      setSelectedAppId((apps.find((app) => app.hasDist) ?? apps[0]).id)
+    }
+  }, [apps, selectedAppId])
+
+  function setCollapsedState(updater: boolean | ((current: boolean) => boolean)) {
+    const next = typeof updater === 'function' ? updater(isCollapsed) : updater
+    if (collapsed === undefined) setInternalCollapsed(next)
+    onStateChange?.({ collapsed: next })
+  }
+
+  function setFullWindowState(updater: boolean | ((current: boolean) => boolean)) {
+    const next = typeof updater === 'function' ? updater(isFullWindow) : updater
+    if (fullWindow === undefined) setInternalFullWindow(next)
+    onStateChange?.({ fullWindow: next })
+  }
+
+  function toggleFromKey(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.key !== 'Enter' && event.key !== ' ') return
+    event.preventDefault()
+    setCollapsedState((current) => !current)
+  }
+
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const text = draft.trim()
+    if (!text) return
+    const now = new Date().toISOString()
+    setDraft('')
+    setMessages((current) => [
+      ...current,
+      { id: makeId('builder-msg'), role: 'user', text, createdAt: now },
+      {
+        id: makeId('builder-msg'),
+        role: 'assistant',
+        text: 'Builder request captured. Use an agent to create a static app under plugins/<slug>/ with manifest.json and dist/index.html; it will appear here automatically after the app scan refreshes.',
+        createdAt: now,
+      },
+    ])
+  }
+
+  return (
+    <section className={`app-builder-card conv-card ${isCollapsed ? 'collapsed' : ''} ${isFullWindow ? 'full-window' : ''}`} aria-label="App Builder">
+      <div
+        className="conv-card-head app-builder-head"
+        role="button"
+        tabIndex={0}
+        aria-expanded={!isCollapsed}
+        onClick={() => setCollapsedState((current) => !current)}
+        onKeyDown={toggleFromKey}
+      >
+        <span className="conv-drag-handle" aria-hidden onClick={(event) => event.stopPropagation()}>
+          ⠿
+        </span>
+        <div className="conv-card-titles">
+          <span className="eyebrow">Resource · App Builder</span>
+          <h2 className="app-builder-title">Build an App</h2>
+        </div>
+        <div className="terminal-actions">
+          <button
+            type="button"
+            className="terminal-icon-button"
+            title={isFullWindow ? 'Exit full window' : 'Expand to full window'}
+            aria-label={isFullWindow ? 'Exit full window' : 'Expand to full window'}
+            onClick={(event) => {
+              event.stopPropagation()
+              setFullWindowState((current) => !current)
+            }}
+          >
+            {isFullWindow ? '↙' : '⛶'}
+          </button>
+          <button
+            type="button"
+            className="card-close"
+            title="Close App Builder"
+            aria-label="Close App Builder"
+            onClick={(event) => {
+              event.stopPropagation()
+              onClose()
+            }}
+          >
+            ×
+          </button>
+        </div>
+        <span className={`conv-caret ${isCollapsed ? '' : 'open'}`} aria-hidden>▾</span>
+      </div>
+
+      {!isCollapsed ? (
+        <div className="conv-card-body app-builder-body">
+          <div className="app-builder-tabs" role="tablist" aria-label="App Builder view">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mode === 'chat'}
+              className={mode === 'chat' ? 'active' : ''}
+              onClick={() => setMode('chat')}
+            >
+              Chat Window
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mode === 'app'}
+              className={mode === 'app' ? 'active' : ''}
+              onClick={() => setMode('app')}
+            >
+              App View
+            </button>
+          </div>
+
+          {mode === 'chat' ? (
+            <div className="app-builder-chat" role="tabpanel">
+              <div className="conversation-feed app-builder-feed">
+                {messages.map((message) => (
+                  <article key={message.id} className={`bubble ${message.role}`}>
+                    <div className="role">{message.role === 'user' ? 'You' : 'App Builder'}</div>
+                    <div className="md-body">
+                      <p>{message.text}</p>
+                    </div>
+                  </article>
+                ))}
+              </div>
+              <form className="composer conv-followup app-builder-composer" onSubmit={submit}>
+                <textarea
+                  value={draft}
+                  onChange={(event) => setDraft(event.target.value)}
+                  placeholder="Describe the app, screens, data, and desired Resources -> App name..."
+                  rows={4}
+                />
+                <div className="composer-meta">
+                  <span className="composer-workspace-path">Creates an Agent Rider App plugin under plugins/&lt;slug&gt;/</span>
+                  <button type="submit" className="send-button">Send</button>
+                </div>
+              </form>
+            </div>
+          ) : (
+            <div className="app-builder-view" role="tabpanel">
+              <div className="app-builder-viewbar">
+                <select
+                  value={selectedApp?.id ?? ''}
+                  onChange={(event) => setSelectedAppId(event.target.value)}
+                  aria-label="Preview app"
+                >
+                  {apps.length ? (
+                    apps.map((app) => (
+                      <option key={app.id} value={app.id}>
+                        {app.label}
+                      </option>
+                    ))
+                  ) : (
+                    <option value="">No apps yet</option>
+                  )}
+                </select>
+                <span>{selectedApp?.hasDist ? 'Ready' : selectedApp ? 'Waiting for build' : 'No app selected'}</span>
+              </div>
+              {selectedApp?.hasDist ? (
+                <iframe className="app-builder-frame" title={selectedApp.label} src={selectedApp.entry} />
+              ) : (
+                <div className="conv-empty">
+                  {selectedApp ? `${selectedApp.label} needs a dist/index.html build before preview.` : 'Built apps will appear here after the Resources App scan refreshes.'}
+                </div>
+              )}
+              {appWarnings.length ? (
+                <div className="app-builder-warnings">
+                  {appWarnings.map((warning, index) => (
+                    <div key={`builder-warn-${index}`} className="app-warning" role="alert">
+                      ⚠ {warning.id ?? warning.dir ?? 'plugin'}: {warning.error}
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          )}
+        </div>
+      ) : null}
+    </section>
+  )
+}
+
 function ResourceSidebar({
   terminalOpen,
   onLaunchTerminal,
@@ -2162,6 +2387,8 @@ function ResourceSidebar({
   onLaunchPlugin,
   apps,
   appWarnings,
+  appBuilderOpen,
+  onLaunchAppBuilder,
   openAppSlugs,
   onLaunchApp,
   onReorderApps,
@@ -2173,6 +2400,8 @@ function ResourceSidebar({
   onLaunchPlugin: (pluginId: string) => void
   apps: AgentApp[]
   appWarnings: AppWarning[]
+  appBuilderOpen: boolean
+  onLaunchAppBuilder: () => void
   openAppSlugs: Set<string>
   onLaunchApp: (slug: string) => void
   onReorderApps: (order: string[]) => void
@@ -2246,6 +2475,22 @@ function ResourceSidebar({
           <section className="tree-nav-category">
             <h3>App</h3>
             <div className="tree-nav-runs">
+              <button
+                type="button"
+                className="send-button new-conversation-btn build-app-button"
+                onClick={onLaunchAppBuilder}
+              >
+                Build an App
+              </button>
+              <button
+                type="button"
+                className={`tree-nav-run resource-tool ${appBuilderOpen ? 'active' : ''}`}
+                onClick={onLaunchAppBuilder}
+                title={appBuilderOpen ? 'App Builder is open' : 'Launch App Builder'}
+              >
+                <span className="tree-run-title">App Builder</span>
+                <LaunchIcon open={appBuilderOpen} />
+              </button>
               {apps.length ? (
                 apps.map((app, index) => (
                   <AppTool
@@ -3030,6 +3275,7 @@ export default function App() {
   }, [turns])
 
   const terminalOpen = panelOrder.includes('terminal')
+  const appBuilderOpen = panelOrder.includes(APP_BUILDER_PANEL_ID)
   const openPluginIds = useMemo(
     () => new Set(panelOrder.filter((p) => p.startsWith('plugin:')).map((p) => p.slice('plugin:'.length))),
     [panelOrder],
@@ -3052,6 +3298,7 @@ export default function App() {
   }
   const launchPlugin = (pluginId: string) => openPanel(`plugin:${pluginId}`)
   const closePlugin = (pluginId: string) => closePanel(`plugin:${pluginId}`)
+  const launchAppBuilder = () => openPanel(APP_BUILDER_PANEL_ID)
   const launchApp = (slug: string) => openPanel(`app:${slug}`)
   const closeApp = (slug: string) => closePanel(`app:${slug}`)
 
@@ -3078,7 +3325,7 @@ export default function App() {
     })
   }
 
-  const hasContent = runs.length > 0
+  const hasContent = runs.length > 0 || panelOrder.length > 0
   // Cards hidden via their close button drop out of the stack but stay in the tree.
   const visibleRuns = useMemo(() => runs.filter((run) => !closedRunIds.has(run.id)), [runs, closedRunIds])
   const hasLegacyDefaultWorkspace = useMemo(
@@ -4017,6 +4264,17 @@ export default function App() {
           onStateChange={(patch) => updatePanelState(panelId, patch)}
         />
       )
+    } else if (panelId === APP_BUILDER_PANEL_ID) {
+      content = (
+        <AppBuilderPanel
+          apps={appListing.apps}
+          appWarnings={appListing.warnings}
+          onClose={() => closePanel(panelId)}
+          collapsed={panelStates[panelId]?.collapsed}
+          fullWindow={panelStates[panelId]?.fullWindow}
+          onStateChange={(patch) => updatePanelState(panelId, patch)}
+        />
+      )
     } else if (panelId.startsWith('plugin:')) {
       const plugin = plugins.find((p) => p.id === panelId.slice('plugin:'.length))
       if (plugin) {
@@ -4173,6 +4431,8 @@ export default function App() {
                   onLaunchPlugin={launchPlugin}
                   apps={appListing.apps}
                   appWarnings={appListing.warnings}
+                  appBuilderOpen={appBuilderOpen}
+                  onLaunchAppBuilder={launchAppBuilder}
                   openAppSlugs={openAppSlugs}
                   onLaunchApp={launchApp}
                   onReorderApps={reorderApps}
