@@ -2010,7 +2010,7 @@ function ConversationCard({
                   sessionKey={run.id}
                   initialCwd={run.workspacePath}
                   eyebrow={`Agent · ${agentLabel(agentType)} · persistent`}
-                  title={`${agentType} — interactive`}
+                  title={agentType === 'custom' ? customAgentCommand : `${agentType} — interactive`}
                   showClose={false}
                   onClose={() => {}}
                 collapsed={agentTerminalState?.collapsed}
