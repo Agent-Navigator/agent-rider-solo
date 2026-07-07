@@ -86,7 +86,7 @@ try {
     [
       'set -g status off', // no status bar — embed cleanly in the card
       'set -g window-size latest', // follow the most recently attached client
-      'set -g mouse on',
+      'set -g mouse off',
       'set -g history-limit 10000',
       'set -g destroy-unattached off', // keep sessions alive while detached
       'setw -g aggressive-resize on',
