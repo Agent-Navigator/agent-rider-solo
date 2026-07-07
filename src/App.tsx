@@ -515,6 +515,16 @@ async function copyToClipboard(value: string) {
   document.body.removeChild(textarea)
 }
 
+async function writeClipboardText(value: string) {
+  if (!navigator.clipboard?.writeText) return false
+  try {
+    await navigator.clipboard.writeText(value)
+    return true
+  } catch {
+    return false
+  }
+}
+
 function titleCase(words: string[]) {
   if (!words.length) return ''
   return words.map((word) => `${word.charAt(0).toUpperCase()}${word.slice(1)}`).join(' ')
@@ -2422,20 +2432,27 @@ function WebTerminal({
       return false
     })
 
+    let lastObservedSelection = ''
     let lastCopiedSelection = ''
-    let selectionCopyTimer: number | undefined
+    const copyTerminalSelection = () => {
+      const selection = terminal.hasSelection() ? terminal.getSelection() : lastObservedSelection
+      if (!selection || selection === lastCopiedSelection) return
+      lastObservedSelection = selection
+      void writeClipboardText(selection).then((copied) => {
+        if (copied) lastCopiedSelection = selection
+      })
+    }
     const selectionDisposable = autoCopySelection
       ? terminal.onSelectionChange(() => {
-          if (selectionCopyTimer !== undefined) window.clearTimeout(selectionCopyTimer)
-          selectionCopyTimer = window.setTimeout(() => {
-            if (!terminal.hasSelection()) return
-            const selection = terminal.getSelection()
-            if (!selection || selection === lastCopiedSelection) return
-            lastCopiedSelection = selection
-            void copyToClipboard(selection).catch(() => {})
-          }, 80)
+          if (!terminal.hasSelection()) return
+          lastObservedSelection = terminal.getSelection()
+          copyTerminalSelection()
         })
       : null
+    if (autoCopySelection) {
+      container.addEventListener('pointerup', copyTerminalSelection, { capture: true })
+      container.addEventListener('mouseup', copyTerminalSelection, { capture: true })
+    }
     terminalRef.current = terminal
 
     const fit = () => {
@@ -2494,7 +2511,8 @@ function WebTerminal({
     return () => {
       resizeObserver.disconnect()
       window.removeEventListener('resize', fit)
-      if (selectionCopyTimer !== undefined) window.clearTimeout(selectionCopyTimer)
+      container.removeEventListener('pointerup', copyTerminalSelection, { capture: true })
+      container.removeEventListener('mouseup', copyTerminalSelection, { capture: true })
       selectionDisposable?.dispose()
       inputDisposable.dispose()
       socket.close()
