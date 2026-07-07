@@ -189,6 +189,28 @@ export async function makeDir(parent: string, name: string): Promise<{ path: str
   }
 }
 
+export async function moveDir(source: string, target: string): Promise<{ path: string; moved: boolean } | { error: string; conflict?: boolean; source?: string; target?: string }> {
+  try {
+    const res = await fetch('/store/fs/move-dir', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ source, target }),
+    })
+    const data = (await res.json()) as { path?: string; moved?: boolean; error?: string; conflict?: boolean; source?: string; target?: string }
+    if (!res.ok || !data.path) {
+      return {
+        error: data.error || 'Failed to move folder',
+        conflict: data.conflict,
+        source: data.source,
+        target: data.target,
+      }
+    }
+    return { path: data.path, moved: Boolean(data.moved) }
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : String(error) }
+  }
+}
+
 // Same-origin URL for downloading a workspace file as an attachment.
 export function fileDownloadUrl(path: string): string {
   return `/store/fs/download?path=${encodeURIComponent(path)}`

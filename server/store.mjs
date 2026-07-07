@@ -5,7 +5,7 @@ import { createServer } from 'node:http'
 import { spawn, spawnSync } from 'node:child_process'
 import { createHash, createHmac, pbkdf2Sync, randomBytes, timingSafeEqual } from 'node:crypto'
 import { DatabaseSync } from 'node:sqlite'
-import { mkdirSync, readdirSync, statSync, readFileSync, writeFileSync, existsSync, createReadStream, accessSync, constants, unlinkSync } from 'node:fs'
+import { mkdirSync, readdirSync, statSync, readFileSync, writeFileSync, existsSync, createReadStream, accessSync, constants, unlinkSync, renameSync } from 'node:fs'
 import { dirname, join, resolve, basename, extname, normalize } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
@@ -642,6 +642,32 @@ function makeDirectory(parent, name) {
   return { path: target, name: basename(target) }
 }
 
+function moveDirectory(sourceInput, targetInput) {
+  const source = safeResolve(sourceInput)
+  const target = safeResolve(targetInput)
+  if (!source || !target) return { error: 'path outside allowed root', status: 403 }
+  if (source === BROWSE_ROOT) return { error: 'cannot move browse root', status: 400 }
+  if (source === target) return { path: target, moved: false }
+  if (target.startsWith(source + '/')) return { error: 'cannot move a folder inside itself', status: 400 }
+
+  try {
+    const sourceStat = statSync(source)
+    if (!sourceStat.isDirectory()) return { error: 'source is not a directory', status: 400 }
+  } catch {
+    return { error: 'source folder not found', status: 404 }
+  }
+
+  if (existsSync(target)) return { error: 'target folder already exists', status: 409, conflict: true, source, target }
+
+  try {
+    mkdirSync(dirname(target), { recursive: true })
+    renameSync(source, target)
+  } catch (error) {
+    return { error: String(error?.message || error), status: 400 }
+  }
+  return { path: target, moved: true }
+}
+
 const FILE_PREVIEW_MAX_BYTES = 25 * 1024 * 1024
 const MARKDOWN_EXTS = new Set(['.md', '.mdx', '.markdown'])
 const HTML_EXTS = new Set(['.html', '.htm'])
@@ -1266,6 +1292,24 @@ const server = createServer((req, res) => {
       try {
         const { parent, name } = JSON.parse(body || '{}')
         const result = makeDirectory(parent, name)
+        sendJson(res, result.error ? result.status : 200, result)
+      } catch (error) {
+        sendJson(res, 400, { error: String(error?.message || error) })
+      }
+    })
+    return
+  }
+
+  if (req.method === 'POST' && url === '/store/fs/move-dir') {
+    let body = ''
+    req.on('data', (chunk) => {
+      body += chunk
+      if (body.length > 100_000) req.destroy()
+    })
+    req.on('end', () => {
+      try {
+        const { source, target } = JSON.parse(body || '{}')
+        const result = moveDirectory(source, target)
         sendJson(res, result.error ? result.status : 200, result)
       } catch (error) {
         sendJson(res, 400, { error: String(error?.message || error) })

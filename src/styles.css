@@ -1697,6 +1697,37 @@ button { cursor: pointer; }
   line-height: 1.58;
 }
 
+.app-folder-conflict-dialog {
+  width: min(620px, 100%);
+}
+
+.folder-conflict-paths {
+  display: grid;
+  gap: 10px;
+}
+
+.folder-conflict-paths label {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.folder-conflict-paths code {
+  display: block;
+  max-width: 100%;
+  overflow: auto;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 8px;
+  padding: 8px 9px;
+  background: rgba(5, 10, 18, 0.58);
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
 .picker-cancel {
   padding: 10px 16px;
   border-radius: 999px;

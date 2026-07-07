@@ -35,6 +35,7 @@ import {
   listDir,
   readFilePreview,
   makeDir,
+  moveDir,
   fileDownloadUrl,
   deleteFile,
   listApps,
@@ -258,6 +259,13 @@ interface QueuedPromptEntry {
   modelProvider?: string | null
   reasoningEffort?: string
   promptContext?: PromptContext
+}
+
+interface AppFolderConflict {
+  sourcePath: string
+  targetPath: string
+  error: string
+  acknowledged?: boolean
 }
 
 interface CategoryRule {
@@ -3350,6 +3358,7 @@ export default function App() {
   // Which conversation's workspace picker is open (null = closed).
   const [pickerRunId, setPickerRunId] = useState<string | null>(null)
   const [deletePromptRunId, setDeletePromptRunId] = useState<string | null>(null)
+  const [appFolderConflict, setAppFolderConflict] = useState<AppFolderConflict | null>(null)
   // Closed (hidden) conversation cards — re-launchable from the Navigator.
   const [closedRunIds, setClosedRunIds] = useState<Set<string>>(new Set())
   // Whether the Local Terminal window is open — re-launchable from Resources.
@@ -3447,12 +3456,47 @@ export default function App() {
     const run = runs.find((item) => item.id === APP_BUILDER_RUN_ID)
     if (!run) return
     const nextWorkspace = appBuilderWorkspacePath(workspaceRoot, run.category, run.project, run.task)
-    if (run.workspacePath !== nextWorkspace) {
-      sessionByRunRef.current.delete(run.id)
-      updateRunContext(run.id, { workspacePath: nextWorkspace, sessionId: null })
+    if (appFolderConflict && appFolderConflict.targetPath !== nextWorkspace) setAppFolderConflict(null)
+    if (run.workspacePath === nextWorkspace) {
+      void ensureWorkspacePath(workspaceRoot, nextWorkspace).catch(() => {})
+      return
     }
-    void ensureWorkspacePath(workspaceRoot, nextWorkspace).catch(() => {})
-  }, [appBuilderOpen, runs, workspaceRoot])
+    if (appFolderConflict?.sourcePath === run.workspacePath && appFolderConflict.targetPath === nextWorkspace) return
+
+    let cancelled = false
+    void (async () => {
+      const sourceListing = await listDir(run.workspacePath)
+      if (cancelled) return
+      if (!sourceListing) {
+        await ensureWorkspacePath(workspaceRoot, nextWorkspace)
+        if (cancelled) return
+        sessionByRunRef.current.delete(run.id)
+        updateRunContext(run.id, { workspacePath: nextWorkspace, sessionId: null })
+        return
+      }
+
+      const result = await moveDir(run.workspacePath, nextWorkspace)
+      if (cancelled) return
+      if ('error' in result) {
+        if (result.conflict) {
+          setAppFolderConflict({
+            sourcePath: run.workspacePath,
+            targetPath: nextWorkspace,
+            error: result.error,
+          })
+          return
+        }
+        setError(result.error)
+        return
+      }
+      setAppFolderConflict(null)
+      sessionByRunRef.current.delete(run.id)
+      updateRunContext(run.id, { workspacePath: result.path, sessionId: null })
+    })().catch((error) => setError(error instanceof Error ? error.message : String(error)))
+    return () => {
+      cancelled = true
+    }
+  }, [appBuilderOpen, runs, workspaceRoot, appFolderConflict])
 
   function setPanelColumn(panelId: string, column: number) {
     setPanelColumns((current) => ({ ...current, [panelId]: column }))
@@ -4599,6 +4643,48 @@ export default function App() {
       ) : null}
 
       {passwordStatus && !passwordStatus.authenticated ? <PasswordUnlock onUnlocked={setPasswordStatus} /> : null}
+
+      {appFolderConflict && !appFolderConflict.acknowledged ? (
+        <div className="confirm-overlay" role="dialog" aria-modal="true" aria-label="App folder conflict">
+          <div className="confirm-dialog card app-folder-conflict-dialog">
+            <div className="picker-head">
+              <div>
+                <div className="eyebrow">App folder conflict</div>
+                <h3>Target folder already exists</h3>
+              </div>
+            </div>
+            <p className="confirm-copy">
+              App Builder cannot rename the current folder because the new auto-named folder already exists. Change the App title, Category, or Project, or manually move/delete the target folder, then retry.
+            </p>
+            <div className="folder-conflict-paths">
+              <label>
+                <span>Current folder</span>
+                <code>{appFolderConflict.sourcePath}</code>
+              </label>
+              <label>
+                <span>Target folder</span>
+                <code>{appFolderConflict.targetPath}</code>
+              </label>
+            </div>
+            <div className="picker-actions confirm-actions">
+              <button
+                type="button"
+                className="picker-cancel"
+                onClick={() => setAppFolderConflict((current) => current ? { ...current, acknowledged: true } : current)}
+              >
+                I will resolve it
+              </button>
+              <button
+                type="button"
+                className="send-button"
+                onClick={() => setAppFolderConflict(null)}
+              >
+                Retry
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       <main className="main-stage">
         <div className={`main-layout ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
