@@ -1,4 +1,5 @@
 import { type DragEvent, type FormEvent, type KeyboardEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import rehypeRaw from 'rehype-raw'
 import rehypeSanitize from 'rehype-sanitize'
@@ -908,6 +909,62 @@ function FileBrowser({ rootPath }: { rootPath: string }) {
     : path.startsWith(`${effectiveRootPath}/`)
       ? path.slice(effectiveRootPath.length + 1)
       : path
+  const previewNode = preview ? (
+    <div className={`file-preview ${previewFullWindow ? 'full-window' : ''}`}>
+      <div className="file-preview-head">
+        <div className="file-preview-title">
+          <strong>{preview.name}</strong>
+          <span>{preview.kind} · {formatBytes(preview.size)}</span>
+        </div>
+        <div className="file-preview-actions">
+          <button
+            type="button"
+            className="file-preview-icon-button"
+            title={previewFullWindow ? 'Exit full window' : 'Expand to full window'}
+            aria-label={previewFullWindow ? 'Exit full window' : 'Expand to full window'}
+            onClick={() => setPreviewFullWindow((current) => !current)}
+          >
+            {previewFullWindow ? '↙' : '⛶'}
+          </button>
+          <button
+            type="button"
+            className="file-preview-close"
+            onClick={() => {
+              setPreview(null)
+              setPreviewFullWindow(false)
+            }}
+            aria-label="Close file preview"
+          >
+            ×
+          </button>
+        </div>
+      </div>
+      {preview.kind === 'image' ? (
+        <div className="file-preview-media">
+          <img src={preview.dataUrl} alt={preview.name} />
+        </div>
+      ) : preview.kind === 'html' ? (
+        <iframe
+          className="file-preview-html"
+          title={preview.name}
+          sandbox=""
+          srcDoc={preview.content ?? ''}
+        />
+      ) : preview.kind === 'markdown' ? (
+        <div className="file-preview-markdown md-body">
+          <ReactMarkdown
+            remarkPlugins={richMarkdownPlugins.remark}
+            rehypePlugins={richMarkdownPlugins.rehype}
+            components={richMarkdownComponents}
+          >
+            {preview.content ?? ''}
+          </ReactMarkdown>
+        </div>
+      ) : (
+        <CodeFilePreview preview={preview} />
+      )}
+    </div>
+  ) : null
 
   return (
     <div className={`file-browser ${open ? 'open' : ''}`}>
@@ -1029,62 +1086,7 @@ function FileBrowser({ rootPath }: { rootPath: string }) {
 
           {previewLoading ? <div className="file-browser-empty">Opening file…</div> : null}
           {previewError ? <p className="error-text">{previewError}</p> : null}
-          {preview ? (
-            <div className={`file-preview ${previewFullWindow ? 'full-window' : ''}`}>
-              <div className="file-preview-head">
-                <div className="file-preview-title">
-                  <strong>{preview.name}</strong>
-                  <span>{preview.kind} · {formatBytes(preview.size)}</span>
-                </div>
-                <div className="file-preview-actions">
-                  <button
-                    type="button"
-                    className="file-preview-icon-button"
-                    title={previewFullWindow ? 'Exit full window' : 'Expand to full window'}
-                    aria-label={previewFullWindow ? 'Exit full window' : 'Expand to full window'}
-                    onClick={() => setPreviewFullWindow((current) => !current)}
-                  >
-                    {previewFullWindow ? '↙' : '⛶'}
-                  </button>
-                  <button
-                    type="button"
-                    className="file-preview-close"
-                    onClick={() => {
-                      setPreview(null)
-                      setPreviewFullWindow(false)
-                    }}
-                    aria-label="Close file preview"
-                  >
-                    ×
-                  </button>
-                </div>
-              </div>
-              {preview.kind === 'image' ? (
-                <div className="file-preview-media">
-                  <img src={preview.dataUrl} alt={preview.name} />
-                </div>
-              ) : preview.kind === 'html' ? (
-                <iframe
-                  className="file-preview-html"
-                  title={preview.name}
-                  sandbox=""
-                  srcDoc={preview.content ?? ''}
-                />
-              ) : preview.kind === 'markdown' ? (
-                <div className="file-preview-markdown md-body">
-                  <ReactMarkdown
-                    remarkPlugins={richMarkdownPlugins.remark}
-                    rehypePlugins={richMarkdownPlugins.rehype}
-                    components={richMarkdownComponents}
-                  >
-                    {preview.content ?? ''}
-                  </ReactMarkdown>
-                </div>
-              ) : (
-                <CodeFilePreview preview={preview} />
-              )}
-            </div>
-          ) : null}
+          {previewFullWindow && previewNode ? createPortal(previewNode, document.body) : previewNode}
         </div>
       ) : null}
 
@@ -1833,7 +1835,7 @@ function ConversationCard({
             )}
           </div>
 
-          <div className={`conv-content-shell ${tui && agentTerminalState?.fullWindow ? 'file-browser-full-window' : ''}`}>
+          <div className={`conv-content-shell ${tui ? 'tui-content-shell' : ''} ${tui && agentTerminalState?.fullWindow ? 'file-browser-full-window' : ''}`}>
             <FileBrowser rootPath={run.workspacePath} />
 
             {tui && (agentType !== 'custom' || customAgentCommand) ? (

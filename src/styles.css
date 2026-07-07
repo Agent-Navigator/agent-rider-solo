@@ -1101,9 +1101,13 @@ button { cursor: pointer; }
   background: rgba(7, 13, 23, 0.96);
 }
 
+.tui-content-shell > .file-browser {
+  top: 52px;
+}
+
 .file-browser-full-window .file-browser {
   position: fixed;
-  top: 28px;
+  top: 76px;
   right: 28px;
   z-index: 70;
 }
@@ -1169,6 +1173,8 @@ button { cursor: pointer; }
 .file-browser-body {
   display: grid;
   gap: 8px;
+  align-content: start;
+  grid-auto-rows: max-content;
   padding: 0 10px 10px;
   max-height: min(68vh, 720px);
   overflow: auto;
@@ -1176,13 +1182,17 @@ button { cursor: pointer; }
 
 .file-browser-bar {
   display: flex;
+  align-items: center;
   gap: 8px;
+  align-self: start;
 }
 
 .file-browser-up,
 .file-browser-refresh,
 .file-preview-close,
 .file-preview-icon-button {
+  flex: 0 0 auto;
+  line-height: 1.2;
   padding: 5px 10px;
   border: 1px solid rgba(148, 163, 184, 0.2);
   border-radius: 8px;
@@ -2955,7 +2965,7 @@ button { cursor: pointer; }
   }
 
   .file-browser-full-window .file-browser {
-    top: 18px;
+    top: 68px;
     right: 18px;
   }
 
