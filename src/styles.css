@@ -2737,12 +2737,6 @@ button { cursor: pointer; }
   margin-left: auto;
 }
 
-.app-builder-title {
-  margin: 2px 0 0;
-  font-size: 0.98rem;
-  letter-spacing: 0;
-}
-
 .conv-card.collapsed .conv-card-head { padding: 12px 16px; }
 
 .conv-card-titles {
@@ -2796,8 +2790,16 @@ button { cursor: pointer; }
 
 .app-builder-body {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
   gap: 12px;
+}
+
+.app-builder-context {
+  margin-bottom: 0;
+}
+
+.app-builder-context .conv-meta-fields {
+  margin-top: 0;
 }
 
 .app-builder-tabs {
@@ -2831,7 +2833,15 @@ button { cursor: pointer; }
 }
 
 .conv-card.embedded {
+  min-height: 0;
+  border: 0;
+  background: transparent;
   box-shadow: none;
+}
+
+.conv-card.embedded .conv-card-body {
+  padding: 0;
+  border-top: 0;
 }
 
 .app-builder-view {

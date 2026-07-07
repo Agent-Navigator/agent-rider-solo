@@ -22,6 +22,7 @@ export interface SubmitPromptOptions {
   model?: string
   modelProvider?: string | null
   promptContext?: PromptContext
+  appWorkspace?: string
 }
 
 export type PromptContext = 'agent-rider' | 'app-builder'
@@ -47,7 +48,7 @@ function errMsg(error: unknown) {
   return error instanceof Error ? error.message : String(error)
 }
 
-function withPromptContext(message: string, context: PromptContext = 'agent-rider') {
+function withPromptContext(message: string, context: PromptContext = 'agent-rider', appWorkspace?: string) {
   const contextBlocks = [
     '<agent-rider-interface-context>',
     AGENT_RIDER_INTERFACE_CONTEXT,
@@ -60,6 +61,14 @@ function withPromptContext(message: string, context: PromptContext = 'agent-ride
       APP_PLUGIN_GUIDE,
       '</agent-rider-app-plugin-guide>',
     )
+    if (appWorkspace?.trim()) {
+      contextBlocks.push(
+        '',
+        '<agent-rider-app-workspace>',
+        appWorkspace.trim(),
+        '</agent-rider-app-workspace>',
+      )
+    }
   }
   return [
     ...contextBlocks,
@@ -172,7 +181,7 @@ export class HermesBridge {
     const cleanProvider = options.modelProvider?.trim()
     const body: Record<string, unknown> = {
       session_id: sessionId,
-      message: withPromptContext(text, options.promptContext ?? 'agent-rider'),
+      message: withPromptContext(text, options.promptContext ?? 'agent-rider', options.appWorkspace),
       workspace: cwd,
     }
     if (cleanModel) {

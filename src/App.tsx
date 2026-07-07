@@ -759,6 +759,37 @@ function fileExtension(name: string) {
   return index > 0 ? name.slice(index).toLowerCase() : ''
 }
 
+function pathSegment(value: string, fallback: string) {
+  const clean = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+  return clean || fallback
+}
+
+function appBuilderWorkspacePath(workspaceRoot: string, category: string, project: string, title: string) {
+  const root = workspaceRoot.replace(/\/+$/, '')
+  return [
+    root,
+    'plugins',
+    pathSegment(category, 'uncategorized'),
+    pathSegment(project, 'agent-rider-app'),
+    pathSegment(title, 'untitled-app'),
+  ].join('/')
+}
+
+async function ensureWorkspacePath(rootPath: string, targetPath: string) {
+  const root = rootPath.replace(/\/+$/, '')
+  if (!targetPath.startsWith(`${root}/`)) return
+  const parts = targetPath.slice(root.length + 1).split('/').filter(Boolean)
+  let parent = root
+  for (const part of parts) {
+    const result = await makeDir(parent, part)
+    parent = 'error' in result ? `${parent}/${part}` : result.path
+  }
+}
+
 function fileTypeIcon(name: string) {
   const lowerName = name.toLowerCase()
   const ext = fileExtension(lowerName)
@@ -1292,6 +1323,8 @@ function ConversationCard({
   metaCollapsed,
   active,
   embedded = false,
+  hideHeader = false,
+  hideContext = false,
   isNewDone,
   onMarkRead,
   onToggle,
@@ -1327,6 +1360,8 @@ function ConversationCard({
   metaCollapsed: boolean
   active: boolean
   embedded?: boolean
+  hideHeader?: boolean
+  hideContext?: boolean
   isNewDone: boolean
   onMarkRead: (runId: string) => void
   onToggle: () => void
@@ -1740,6 +1775,7 @@ function ConversationCard({
         onDropOnCard(dragOverAfterRef.current)
       }}
     >
+      {hideHeader ? null : (
       <div className="conv-card-head" onClick={onToggle}>
         <span
           className="conv-drag-handle"
@@ -1785,9 +1821,11 @@ function ConversationCard({
           ×
         </button>
       </div>
+      )}
 
       {!collapsed ? (
         <div className="conv-card-body">
+          {hideContext ? null : (
           <div className={`conv-meta ${metaCollapsed ? 'collapsed' : ''}`}>
             <button
               type="button"
@@ -1875,6 +1913,7 @@ function ConversationCard({
             </div>
             )}
           </div>
+          )}
 
           <div className={`conv-content-shell ${tui ? 'tui-content-shell' : ''} ${tui && agentTerminalState?.fullWindow ? 'file-browser-full-window' : ''}`}>
             <FileBrowser rootPath={run.workspacePath} />
@@ -1893,10 +1932,12 @@ function ConversationCard({
                   title={`${agentType} — interactive`}
                   showClose={false}
                   onClose={() => {}}
-                  collapsed={agentTerminalState?.collapsed}
-                  fullWindow={agentTerminalState?.fullWindow}
-                  onStateChange={onAgentTerminalStateChange}
-                />
+                collapsed={agentTerminalState?.collapsed}
+                fullWindow={agentTerminalState?.fullWindow}
+                promptContext={run.cardKind === 'app-builder' ? 'app-builder' : undefined}
+                appWorkspace={run.cardKind === 'app-builder' ? run.workspacePath : undefined}
+                onStateChange={onAgentTerminalStateChange}
+              />
               </div>
             ) : tui ? (
               <div className="conv-agent-command-empty">
@@ -2174,17 +2215,29 @@ function useAgentApps(enabled: boolean): {
 }
 
 function AppBuilderPanel({
+  run,
   apps,
   appWarnings,
   chatContent,
+  onTitleChange,
+  onCategoryChange,
+  onProjectChange,
+  onAgentChange,
+  onAgentCommandChange,
   onClose,
   collapsed,
   fullWindow,
   onStateChange,
 }: {
+  run: RunNode
   apps: AgentApp[]
   appWarnings: AppWarning[]
   chatContent: ReactNode
+  onTitleChange: (value: string) => void
+  onCategoryChange: (value: string) => void
+  onProjectChange: (value: string) => void
+  onAgentChange: (value: AgentType) => void
+  onAgentCommandChange: (value: string) => void
   onClose: () => void
   collapsed?: boolean
   fullWindow?: boolean
@@ -2193,9 +2246,16 @@ function AppBuilderPanel({
   const [internalCollapsed, setInternalCollapsed] = useState(false)
   const [internalFullWindow, setInternalFullWindow] = useState(false)
   const [mode, setMode] = useState<AppBuilderMode>('chat')
+  const [customCommandDraft, setCustomCommandDraft] = useState(run.agentCommand ?? '')
   const isCollapsed = collapsed ?? internalCollapsed
   const isFullWindow = fullWindow ?? internalFullWindow
-  const appAtWork = apps.find((app) => app.hasDist) ?? apps[0] ?? null
+  const appTitle = run.task.trim() || 'Untitled app'
+  const appSlug = pathSegment(appTitle, 'untitled-app')
+  const appAtWork = apps.find((app) => app.id === appSlug || app.label.trim().toLowerCase() === appTitle.toLowerCase()) ?? apps.find((app) => app.hasDist) ?? apps[0] ?? null
+
+  useEffect(() => {
+    setCustomCommandDraft(run.agentCommand ?? '')
+  }, [run.id, run.agentCommand])
 
   function setCollapsedState(updater: boolean | ((current: boolean) => boolean)) {
     const next = typeof updater === 'function' ? updater(isCollapsed) : updater
@@ -2215,6 +2275,26 @@ function AppBuilderPanel({
     setCollapsedState((current) => !current)
   }
 
+  function commitCustomAgentCommand() {
+    const next = customCommandDraft.trim()
+    if (next === (run.agentCommand ?? '').trim()) return
+    onAgentCommandChange(next)
+  }
+
+  function handleCustomAgentCommandKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key === 'Enter') {
+      event.preventDefault()
+      commitCustomAgentCommand()
+      event.currentTarget.blur()
+      return
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      setCustomCommandDraft(run.agentCommand ?? '')
+      event.currentTarget.blur()
+    }
+  }
+
   return (
     <section className={`app-builder-card conv-card ${isCollapsed ? 'collapsed' : ''} ${isFullWindow ? 'full-window' : ''}`} aria-label="App Builder">
       <div
@@ -2230,7 +2310,14 @@ function AppBuilderPanel({
         </span>
         <div className="conv-card-titles">
           <span className="eyebrow">Resource · App Builder</span>
-          <h2 className="app-builder-title">Build an App</h2>
+          <input
+            className="conv-title-input app-builder-title-input"
+            value={run.task}
+            onChange={(event) => onTitleChange(event.target.value)}
+            onClick={(event) => event.stopPropagation()}
+            placeholder="Untitled app"
+            aria-label="App title"
+          />
         </div>
         <div className="terminal-actions">
           <button
@@ -2263,6 +2350,71 @@ function AppBuilderPanel({
 
       {!isCollapsed ? (
         <div className="conv-card-body app-builder-body">
+          <div className="conv-meta app-builder-context">
+            <div className="conv-meta-fields">
+              <div className="conv-meta-row">
+                <span className="tree-label">Category</span>
+                <input
+                  className="conv-input"
+                  list="known-categories"
+                  value={run.category}
+                  onChange={(event) => onCategoryChange(event.target.value)}
+                  placeholder="App category"
+                />
+              </div>
+              <div className="conv-meta-row">
+                <span className="tree-label">Project</span>
+                <input
+                  className="conv-input"
+                  list="known-projects"
+                  value={run.project}
+                  onChange={(event) => onProjectChange(event.target.value)}
+                  placeholder="App project"
+                />
+              </div>
+              <div className="conv-meta-row">
+                <span className="tree-label">Agent</span>
+                <select
+                  className="conv-input conv-agent-select"
+                  value={run.agentType ?? 'hermes'}
+                  onChange={(event) => onAgentChange(event.target.value as AgentType)}
+                  aria-label="App Builder agent"
+                >
+                  {AGENT_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              {run.agentType === 'custom' ? (
+                <div className="conv-meta-row">
+                  <span className="tree-label">Command</span>
+                  <div className="conv-agent-command-editor">
+                    <input
+                      className="conv-input conv-agent-command"
+                      value={customCommandDraft}
+                      onChange={(event) => setCustomCommandDraft(event.target.value)}
+                      onKeyDown={handleCustomAgentCommandKeyDown}
+                      placeholder="bash command, e.g. claude --permission-mode auto"
+                      spellCheck={false}
+                      autoCapitalize="off"
+                      autoCorrect="off"
+                    />
+                    <button
+                      type="button"
+                      className="conv-agent-command-apply"
+                      disabled={customCommandDraft.trim() === (run.agentCommand ?? '').trim()}
+                      onClick={commitCustomAgentCommand}
+                    >
+                      Apply
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          </div>
+
           <div className="app-builder-tabs" role="tablist" aria-label="App Builder view">
             <button
               type="button"
@@ -2582,6 +2734,8 @@ function WebTerminal({
   showClose = true,
   collapsed,
   fullWindow,
+  promptContext,
+  appWorkspace,
   onStateChange,
 }: {
   initialCwd: string
@@ -2598,6 +2752,8 @@ function WebTerminal({
   showClose?: boolean
   collapsed?: boolean
   fullWindow?: boolean
+  promptContext?: PromptContext
+  appWorkspace?: string
   onStateChange?: (patch: WorkspacePanelState) => void
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null)
@@ -2672,8 +2828,10 @@ function WebTerminal({
     const agentParam = agent ? `&agent=${encodeURIComponent(agent)}` : ''
     const commandParam = agent === 'custom' && customCommand ? `&command=${encodeURIComponent(customCommand)}` : ''
     const sessionParam = agent && sessionKey ? `&session=${encodeURIComponent(sessionKey)}` : ''
+    const promptContextParam = promptContext ? `&prompt_context=${encodeURIComponent(promptContext)}` : ''
+    const appWorkspaceParam = appWorkspace ? `&app_workspace=${encodeURIComponent(appWorkspace)}` : ''
     const socket = new WebSocket(
-      `${protocol}//${window.location.host}/store/terminal/ws?cwd=${encodeURIComponent(initialCwd)}&cols=${terminal.cols}&rows=${terminal.rows}${agentParam}${commandParam}${sessionParam}`,
+      `${protocol}//${window.location.host}/store/terminal/ws?cwd=${encodeURIComponent(initialCwd)}&cols=${terminal.cols}&rows=${terminal.rows}${agentParam}${commandParam}${sessionParam}${promptContextParam}${appWorkspaceParam}`,
     )
     socketRef.current = socket
     setConnectionState('connecting')
@@ -2717,7 +2875,7 @@ function WebTerminal({
       if (socketRef.current === socket) socketRef.current = null
       if (terminalRef.current === terminal) terminalRef.current = null
     }
-  }, [initialCwd, terminalKey, agent, customCommand, sessionKey])
+  }, [initialCwd, terminalKey, agent, customCommand, sessionKey, promptContext, appWorkspace])
 
   useEffect(() => {
     if (!terminalCollapsed) window.requestAnimationFrame(() => fitRef.current())
@@ -3240,15 +3398,18 @@ export default function App() {
   const closeApp = (slug: string) => closePanel(`app:${slug}`)
 
   function makeAppBuilderRun(): RunNode {
+    const category = 'Product Delivery'
+    const project = 'Agent Rider App'
+    const task = 'Build an App'
     return {
       id: APP_BUILDER_RUN_ID,
       prompt: '',
-      category: 'Product Delivery',
-      categoryTags: tagsForCategory('Product Delivery'),
-      project: 'Agent Rider App',
+      category,
+      categoryTags: tagsForCategory(category),
+      project,
       workspace: '',
-      workspacePath: workspaceRoot,
-      task: 'Build an App',
+      workspacePath: appBuilderWorkspacePath(workspaceRoot, category, project, task),
+      task,
       job: 'App Builder',
       jobStatus: 'queued',
       resourceIds: [],
@@ -3280,6 +3441,18 @@ export default function App() {
     setRuns((current) => (current.some((run) => run.id === APP_BUILDER_RUN_ID) ? current : [makeAppBuilderRun(), ...current]))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appBuilderOpen, workspaceRoot])
+
+  useEffect(() => {
+    if (!appBuilderOpen) return
+    const run = runs.find((item) => item.id === APP_BUILDER_RUN_ID)
+    if (!run) return
+    const nextWorkspace = appBuilderWorkspacePath(workspaceRoot, run.category, run.project, run.task)
+    if (run.workspacePath !== nextWorkspace) {
+      sessionByRunRef.current.delete(run.id)
+      updateRunContext(run.id, { workspacePath: nextWorkspace, sessionId: null })
+    }
+    void ensureWorkspacePath(workspaceRoot, nextWorkspace).catch(() => {})
+  }, [appBuilderOpen, runs, workspaceRoot])
 
   function setPanelColumn(panelId: string, column: number) {
     setPanelColumns((current) => ({ ...current, [panelId]: column }))
@@ -4027,7 +4200,12 @@ export default function App() {
       }
       setSessionId(session)
       setSessionInfoText(`Hermes session ${session}`)
-      const promptOptions = { model, modelProvider, promptContext }
+      const promptOptions = {
+        model,
+        modelProvider,
+        promptContext,
+        appWorkspace: promptContext === 'app-builder' ? workspace : undefined,
+      }
       if (reasoningEffort?.trim()) await bridge.setReasoningEffort(reasoningEffort, promptOptions)
       await bridge.submitPrompt(session, prompt, workspace, promptOptions)
       setActiveHermesTurnId(turnId)
@@ -4252,6 +4430,8 @@ export default function App() {
         metaCollapsed={metaCollapsedIds.has(run.id)}
         active={activeRunId === run.id}
         embedded
+        hideHeader
+        hideContext
         isNewDone={newDoneIds.has(run.id)}
         onMarkRead={markConversationRead}
         dragging={false}
@@ -4301,9 +4481,15 @@ export default function App() {
     } else if (panelId === APP_BUILDER_PANEL_ID) {
       content = (
         <AppBuilderPanel
+          run={runs.find((item) => item.id === APP_BUILDER_RUN_ID) ?? makeAppBuilderRun()}
           apps={appListing.apps}
           appWarnings={appListing.warnings}
           chatContent={renderAppBuilderChat()}
+          onTitleChange={(value) => updateRunContext(APP_BUILDER_RUN_ID, { task: value })}
+          onCategoryChange={(value) => updateRunContext(APP_BUILDER_RUN_ID, { category: value, categoryTags: tagsForCategory(value) })}
+          onProjectChange={(value) => updateRunProject(APP_BUILDER_RUN_ID, value)}
+          onAgentChange={(value) => updateRunContext(APP_BUILDER_RUN_ID, { agentType: value })}
+          onAgentCommandChange={(value) => updateRunContext(APP_BUILDER_RUN_ID, { agentCommand: value })}
           onClose={() => closePanel(panelId)}
           collapsed={panelStates[panelId]?.collapsed}
           fullWindow={panelStates[panelId]?.fullWindow}
