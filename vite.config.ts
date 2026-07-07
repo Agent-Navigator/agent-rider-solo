@@ -3,6 +3,19 @@ import react from '@vitejs/plugin-react'
 import { createCipheriv, createHmac } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import { execSync } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
+import { dirname } from 'node:path'
+
+const configDir = dirname(fileURLToPath(import.meta.url))
+
+function buildGitVersion() {
+  try {
+    return execSync('git rev-parse HEAD', { cwd: configDir }).toString().trim().slice(-6)
+  } catch {
+    return 'unknown'
+  }
+}
 
 const splitCsv = (value: string | undefined) =>
   value
@@ -220,6 +233,9 @@ const apiProxy: Record<string, ProxyOptions> = {
 
 export default defineConfig({
   plugins: [guacamoleAutoLoginPlugin(), react()],
+  define: {
+    __APP_VERSION__: JSON.stringify(buildGitVersion()),
+  },
   resolve: {
     preserveSymlinks: true,
   },

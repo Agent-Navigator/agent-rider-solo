@@ -4902,7 +4902,10 @@ export default function App() {
   return (
     <div className={`app-shell ${hasContent ? 'has-content' : 'blank'} ${workspaceColumns === 2 ? 'full-width' : ''}`}>
       <header className="topbar card">
-        <h1>Agent Rider</h1>
+        <h1>
+          Agent Rider
+          <span className="topbar-version" title={`Build ${__APP_VERSION__}`}>{__APP_VERSION__}</span>
+        </h1>
         <div className="topbar-actions">
           <button
             type="button"
