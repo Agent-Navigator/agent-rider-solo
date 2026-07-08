@@ -1241,6 +1241,9 @@ button { cursor: pointer; }
 
 .file-browser-list {
   display: grid;
+  /* Keep rows content-sized: a stretched container must not inflate row height. */
+  align-content: start;
+  grid-auto-rows: max-content;
   gap: 2px;
   max-height: min(240px, 34vh);
   overflow-y: auto;
@@ -1265,6 +1268,7 @@ button { cursor: pointer; }
   justify-content: space-between;
   gap: 10px;
   width: 100%;
+  min-height: 32px;
   padding: 5px 8px;
   border: none;
   border-radius: 6px;
@@ -2716,6 +2720,7 @@ button { cursor: pointer; }
 }
 
 .terminal-footer span {
+  flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
