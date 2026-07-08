@@ -3236,20 +3236,18 @@ function WebTerminal({
           >
             {terminalFullWindow ? '↙' : '⛶'}
           </button>
-          {!agentTerminal ? (
-            <button
-              type="button"
-              className="terminal-clear"
-              title="Reset the persistent terminal session"
-              onClick={(event) => {
-                event.stopPropagation()
-                resetOnNextConnectRef.current = true
-                setTerminalKey((current) => current + 1)
-              }}
-            >
-              Reset
-            </button>
-          ) : null}
+          <button
+            type="button"
+            className="terminal-clear"
+            title={agentTerminal ? 'Reset the stuck TUI agent session' : 'Reset the persistent terminal session'}
+            onClick={(event) => {
+              event.stopPropagation()
+              resetOnNextConnectRef.current = true
+              setTerminalKey((current) => current + 1)
+            }}
+          >
+            Reset
+          </button>
           {showClose ? (
             <button
               type="button"
