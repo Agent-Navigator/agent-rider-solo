@@ -1,4 +1,4 @@
-import { type DragEvent, type FormEvent, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { type DragEvent, type FormEvent, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type WheelEvent as ReactWheelEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import rehypeRaw from 'rehype-raw'
@@ -309,6 +309,9 @@ const DEFAULT_TERMINAL_CWD = '/root'
 const DEFAULT_APP_BUILDER_ROOT = '/root/.agent-rider/apps'
 const DEFAULT_TITLE = 'Agent Rider'
 const AGENT_TERMINAL_STATE_PREFIX = 'agent-terminal:'
+const TUI_WHEEL_PAGE_DELTA = 80
+const TUI_PAGE_UP = '\x1b[5~'
+const TUI_PAGE_DOWN = '\x1b[6~'
 const DEFAULT_REASONING_EFFORTS = ['minimal', 'low', 'medium', 'high', 'xhigh']
 const EMPTY_MODEL_CATALOG: HermesModelCatalog = { groups: [], defaultModel: '', activeProvider: null }
 const APP_BUILDER_PANEL_ID = 'app-builder'
@@ -3003,6 +3006,7 @@ function WebTerminal({
   const socketRef = useRef<WebSocket | null>(null)
   const fitRef = useRef<() => void>(() => {})
   const resetOnNextConnectRef = useRef(false)
+  const wheelPageAccumulatorRef = useRef(0)
   const [connectionState, setConnectionState] = useState<'connecting' | 'connected' | 'closed' | 'error'>('connecting')
   const [terminalKey, setTerminalKey] = useState(0)
   const [internalCollapsed, setInternalCollapsed] = useState(false)
@@ -3166,6 +3170,29 @@ function WebTerminal({
     }
   }
 
+  function pageThroughTuiFromWheel(event: ReactWheelEvent<HTMLDivElement>) {
+    if (!agentTerminal || terminalCollapsed) return
+    if (socketRef.current?.readyState !== WebSocket.OPEN) return
+
+    // TUI agents run inside tmux and often use the alternate screen, where the
+    // browser/xterm scrollback is not the useful history. Treat the mouse wheel
+    // as PageUp/PageDown input so Hermes/Codex/Claude/custom TUIs can scroll
+    // their own transcript instead of cycling prompt history with arrow keys.
+    event.preventDefault()
+    event.stopPropagation()
+    terminalRef.current?.focus()
+
+    const unit = event.deltaMode === 1 ? 18 : event.deltaMode === 2 ? window.innerHeight : 1
+    wheelPageAccumulatorRef.current += event.deltaY * unit
+    const pages = Math.trunc(wheelPageAccumulatorRef.current / TUI_WHEEL_PAGE_DELTA)
+    if (!pages) return
+
+    wheelPageAccumulatorRef.current -= pages * TUI_WHEEL_PAGE_DELTA
+    const sequence = pages < 0 ? TUI_PAGE_UP : TUI_PAGE_DOWN
+    const repeat = Math.min(3, Math.abs(pages))
+    socketRef.current.send(JSON.stringify({ type: 'input', data: sequence.repeat(repeat) }))
+  }
+
   return (
     <section className={`web-terminal ${terminalCollapsed ? 'collapsed' : ''} ${terminalFullWindow ? 'full-window' : ''}`} aria-label="Local Terminal">
       <div
@@ -3234,6 +3261,7 @@ function WebTerminal({
           ref={containerRef}
           role="application"
           aria-label="Interactive shell terminal"
+          onWheelCapture={pageThroughTuiFromWheel}
           onClick={() => terminalRef.current?.focus()}
           onDragOver={(event) => {
             if (event.dataTransfer.types.includes('application/x-agent-rider-file-path')) event.preventDefault()
