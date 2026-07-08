@@ -1096,9 +1096,11 @@ function attachTerminalSocket(server) {
 
     // Optional `agent` param runs a TUI coding agent. Built-ins are allowlisted;
     // agent=custom accepts a user-entered bash command from an authenticated UI.
-    // With a `session` key the agent runs in a detached-survivable tmux session
-    // (persistent background); reconnecting re-attaches it. Without a key it
-    // runs directly and dies on disconnect.
+    // With a `session` key the terminal runs in a detached-survivable tmux
+    // session (persistent background); reconnecting re-attaches it. Without a
+    // key it runs directly and dies on disconnect. A `reset=1` attach kills the
+    // existing tmux session first, giving the UI's Reset button explicit restart
+    // semantics without making normal close/reopen or resize destructive.
     const agentParam = requestUrl.searchParams.get('agent') || ''
     const agentCmd = Object.prototype.hasOwnProperty.call(TUI_AGENTS, agentParam) ? TUI_AGENTS[agentParam] : null
     const customCommand = agentParam === 'custom' ? (requestUrl.searchParams.get('command') || '').trim() : ''
@@ -1106,6 +1108,7 @@ function attachTerminalSocket(server) {
     const appWorkspace = promptContext === 'app-builder'
       ? safeResolve(requestUrl.searchParams.get('app_workspace') || cwd) || cwd
       : ''
+    const resetSession = requestUrl.searchParams.get('reset') === '1'
     const customCommandTooLong = customCommand.length > 2000
     if (agentParam === 'custom' && (!customCommand || customCommandTooLong)) {
       socket.send(customCommandTooLong
@@ -1115,10 +1118,12 @@ function attachTerminalSocket(server) {
       return
     }
     const agentLabel = agentCmd ? [agentCmd.label, ...agentCmd.argv].join(' ') : customCommand
-    const agentShellCommand = agentCmd ? shellQuote([agentCmd.file, ...agentCmd.argv]) : customCommand
-    const sessionKey = (requestUrl.searchParams.get('session') || '').trim()
     const hasAgentCommand = Boolean(agentCmd || customCommand)
-    const persistent = Boolean(hasAgentCommand && sessionKey)
+    const launchLabel = hasAgentCommand ? agentLabel : 'Local Terminal'
+    const agentShellCommand = agentCmd ? shellQuote([agentCmd.file, ...agentCmd.argv]) : customCommand
+    const launchCommand = hasAgentCommand ? agentShellCommand : shellQuote([shell, '-l'])
+    const sessionKey = (requestUrl.searchParams.get('session') || '').trim()
+    const persistent = Boolean(sessionKey)
 
     let file
     let argv
@@ -1126,14 +1131,18 @@ function attachTerminalSocket(server) {
     if (persistent) {
       // `new-session -A` attaches if the session exists, else creates it running
       // the agent. -x/-y/-c apply only on create; on re-attach tmux redraws.
+      const sessionKind = hasAgentCommand ? agentParam : 'shell'
       const nameKey = agentParam === 'custom'
-        ? `${sessionKey}|${cwd}|${shortHash(agentShellCommand)}`
+        ? `${sessionKey}|${cwd}|${shortHash(launchCommand)}`
         : `${sessionKey}|${cwd}`
-      const name = tmuxSessionName(nameKey, agentParam)
+      const name = tmuxSessionName(nameKey, sessionKind)
+      if (resetSession && tmuxSessionExists(name)) {
+        spawnSync('tmux', ['-L', TMUX_SOCKET, 'kill-session', '-t', name], { stdio: 'ignore' })
+      }
       shouldInjectAgentRiderBackground = Boolean(agentCmd && !tmuxSessionExists(name))
       file = 'tmux'
       argv = ['-L', TMUX_SOCKET, '-f', TMUX_CONF, 'new-session', '-A', '-s', name,
-        '-x', String(cols), '-y', String(rows), '-c', cwd, '-e', `PATH=${AGENT_PATH}`, '--', agentShellCommand]
+        '-x', String(cols), '-y', String(rows), '-c', cwd, '-e', `PATH=${AGENT_PATH}`, '--', launchCommand]
     } else if (agentCmd) {
       file = agentCmd.file
       argv = agentCmd.argv
@@ -1163,8 +1172,8 @@ function attachTerminalSocket(server) {
     }
 
     writeSocket(
-      hasAgentCommand
-        ? `\r\n\x1b[32m${persistent ? 'Attaching' : 'Starting'} ${agentLabel} in ${cwd}…\x1b[0m\r\n`
+      hasAgentCommand || persistent
+        ? `\r\n\x1b[32m${persistent ? (resetSession ? 'Resetting' : 'Attaching') : 'Starting'} ${launchLabel} in ${cwd}…\x1b[0m\r\n`
         : `\r\n\x1b[32mConnected to Agent Rider terminal\x1b[0m\r\n`,
     )
 

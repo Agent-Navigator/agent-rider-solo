@@ -2986,8 +2986,8 @@ function WebTerminal({
   agent?: TuiAgentType
   /** Bash command used when `agent` is the custom TUI option. */
   customCommand?: string
-  /** Stable key for a persistent (tmux-backed) agent session that survives
-   *  disconnects. Only meaningful together with `agent`. */
+  /** Stable key for a persistent (tmux-backed) terminal session that survives
+   *  disconnects, panel close/reopen, and layout changes. */
   sessionKey?: string
   eyebrow?: string
   title?: string
@@ -3002,6 +3002,7 @@ function WebTerminal({
   const terminalRef = useRef<XTermTerminal | null>(null)
   const socketRef = useRef<WebSocket | null>(null)
   const fitRef = useRef<() => void>(() => {})
+  const resetOnNextConnectRef = useRef(false)
   const [connectionState, setConnectionState] = useState<'connecting' | 'connected' | 'closed' | 'error'>('connecting')
   const [terminalKey, setTerminalKey] = useState(0)
   const [internalCollapsed, setInternalCollapsed] = useState(false)
@@ -3069,11 +3070,13 @@ function WebTerminal({
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
     const agentParam = agent ? `&agent=${encodeURIComponent(agent)}` : ''
     const commandParam = agent === 'custom' && customCommand ? `&command=${encodeURIComponent(customCommand)}` : ''
-    const sessionParam = agent && sessionKey ? `&session=${encodeURIComponent(sessionKey)}` : ''
+    const sessionParam = sessionKey ? `&session=${encodeURIComponent(sessionKey)}` : ''
     const promptContextParam = promptContext ? `&prompt_context=${encodeURIComponent(promptContext)}` : ''
     const appWorkspaceParam = appWorkspace ? `&app_workspace=${encodeURIComponent(appWorkspace)}` : ''
+    const resetParam = resetOnNextConnectRef.current ? '&reset=1' : ''
+    resetOnNextConnectRef.current = false
     const socket = new WebSocket(
-      `${protocol}//${window.location.host}/store/terminal/ws?cwd=${encodeURIComponent(initialCwd)}&cols=${terminal.cols}&rows=${terminal.rows}${agentParam}${commandParam}${sessionParam}${promptContextParam}${appWorkspaceParam}`,
+      `${protocol}//${window.location.host}/store/terminal/ws?cwd=${encodeURIComponent(initialCwd)}&cols=${terminal.cols}&rows=${terminal.rows}${agentParam}${commandParam}${sessionParam}${promptContextParam}${appWorkspaceParam}${resetParam}`,
     )
     socketRef.current = socket
     setConnectionState('connecting')
@@ -3198,12 +3201,14 @@ function WebTerminal({
             <button
               type="button"
               className="terminal-clear"
+              title="Reset the persistent terminal session"
               onClick={(event) => {
                 event.stopPropagation()
+                resetOnNextConnectRef.current = true
                 setTerminalKey((current) => current + 1)
               }}
             >
-              Restart
+              Reset
             </button>
           ) : null}
           {showClose ? (
@@ -3248,11 +3253,10 @@ function WebTerminal({
             type="button"
             className="terminal-clear"
             onClick={() => {
-              if (agentTerminal) setTerminalKey((current) => current + 1)
-              else terminalRef.current?.clear()
+              setTerminalKey((current) => current + 1)
             }}
           >
-            {agentTerminal ? 'Refresh' : 'Clear'}
+            Refresh
           </button>
         </div>
       </div>
@@ -4862,6 +4866,7 @@ export default function App() {
       content = (
         <WebTerminal
           initialCwd={workspaceRoot}
+          sessionKey="local-terminal"
           onClose={() => closePanel('terminal')}
           collapsed={panelStates[panelId]?.collapsed}
           fullWindow={panelStates[panelId]?.fullWindow}
