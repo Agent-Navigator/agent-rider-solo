@@ -1,4 +1,4 @@
-import { type DragEvent, type FormEvent, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type WheelEvent as ReactWheelEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { type DragEvent, type FormEvent, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import rehypeRaw from 'rehype-raw'
@@ -3170,9 +3170,8 @@ function WebTerminal({
     }
   }
 
-  function pageThroughTuiFromWheel(event: ReactWheelEvent<HTMLDivElement>) {
+  function pageThroughTuiFromWheel(event: WheelEvent) {
     if (!agentTerminal || terminalCollapsed) return
-    if (socketRef.current?.readyState !== WebSocket.OPEN) return
 
     // TUI agents run inside tmux and often use the alternate screen, where the
     // browser/xterm scrollback is not the useful history. Treat the mouse wheel
@@ -3180,7 +3179,9 @@ function WebTerminal({
     // their own transcript instead of cycling prompt history with arrow keys.
     event.preventDefault()
     event.stopPropagation()
+    event.stopImmediatePropagation()
     terminalRef.current?.focus()
+    if (socketRef.current?.readyState !== WebSocket.OPEN) return
 
     const unit = event.deltaMode === 1 ? 18 : event.deltaMode === 2 ? window.innerHeight : 1
     wheelPageAccumulatorRef.current += event.deltaY * unit
@@ -3192,6 +3193,17 @@ function WebTerminal({
     const repeat = Math.min(3, Math.abs(pages))
     socketRef.current.send(JSON.stringify({ type: 'input', data: sequence.repeat(repeat) }))
   }
+
+  useEffect(() => {
+    const container = containerRef.current
+    if (!container || !agentTerminal) return undefined
+    // React's delegated wheel handlers can still allow page-level scrolling in
+    // some browsers. Use a native non-passive capture listener so wheel events
+    // over a TUI terminal never bubble up to the Agent Rider workspace scroller.
+    const handleWheel = (event: WheelEvent) => pageThroughTuiFromWheel(event)
+    container.addEventListener('wheel', handleWheel, { capture: true, passive: false })
+    return () => container.removeEventListener('wheel', handleWheel, { capture: true })
+  }, [agentTerminal, terminalCollapsed])
 
   return (
     <section className={`web-terminal ${terminalCollapsed ? 'collapsed' : ''} ${terminalFullWindow ? 'full-window' : ''}`} aria-label="Local Terminal">
@@ -3261,7 +3273,6 @@ function WebTerminal({
           ref={containerRef}
           role="application"
           aria-label="Interactive shell terminal"
-          onWheelCapture={pageThroughTuiFromWheel}
           onClick={() => terminalRef.current?.focus()}
           onDragOver={(event) => {
             if (event.dataTransfer.types.includes('application/x-agent-rider-file-path')) event.preventDefault()

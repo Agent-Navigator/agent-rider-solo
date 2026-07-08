@@ -2684,6 +2684,7 @@ button { cursor: pointer; }
   height: 340px;
   min-height: 220px;
   overflow: hidden;
+  overscroll-behavior: contain;
   border: 1px solid rgba(148, 163, 184, 0.14);
   border-radius: 12px;
   background: #050a12;
@@ -2701,6 +2702,7 @@ button { cursor: pointer; }
 
 .terminal-screen .xterm-viewport {
   border-radius: 12px;
+  overscroll-behavior: contain;
 }
 
 .terminal-footer {
