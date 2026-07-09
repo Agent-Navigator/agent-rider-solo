@@ -1187,6 +1187,16 @@ button { cursor: pointer; }
 
 .file-browser-cwd + .file-browser-action { margin-left: 0; }
 
+.file-browser-path {
+  align-self: start;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  color: var(--muted);
+}
+
 .file-browser-body {
   display: grid;
   gap: 8px;
@@ -1200,8 +1210,8 @@ button { cursor: pointer; }
 .file-browser.open.list-only .file-browser-body {
   min-height: 0;
   max-height: none;
-  align-content: stretch;
-  grid-template-rows: auto minmax(0, 1fr);
+  align-content: start;
+  grid-template-rows: auto auto auto minmax(0, 1fr);
 }
 
 .file-browser-bar {
@@ -1209,6 +1219,54 @@ button { cursor: pointer; }
   align-items: center;
   gap: 8px;
   align-self: start;
+  flex-wrap: nowrap;
+  width: 100%;
+}
+
+.file-browser-filters {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  align-self: start;
+  flex-wrap: nowrap;
+  width: 100%;
+}
+
+.file-browser-search {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 5px 10px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text);
+  font-size: 12px;
+}
+
+.file-browser-search::placeholder { color: var(--muted); }
+
+.file-browser-search:focus {
+  outline: none;
+  border-color: rgba(121, 185, 255, 0.42);
+  background: rgba(121, 185, 255, 0.08);
+}
+
+.file-browser-type-filter {
+  flex: 0 0 auto;
+  max-width: 40%;
+  padding: 5px 8px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.file-browser-hint {
+  margin: -2px 0 0;
+  font-size: 11px;
+  color: var(--muted);
 }
 
 .file-browser-up,
@@ -2592,6 +2650,10 @@ button { cursor: pointer; }
   align-items: flex-start;
   gap: 12px;
   cursor: pointer;
+}
+
+.terminal-head.static {
+  cursor: default;
 }
 
 .terminal-head > div:not(.terminal-actions) {

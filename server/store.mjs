@@ -635,6 +635,59 @@ function listDirectory(input) {
   }
 }
 
+const SEARCH_MAX_RESULTS = 200
+const SEARCH_MAX_DEPTH = 12
+
+function searchFiles(input, queryText) {
+  const path = safeResolve(input)
+  if (!path) return { error: 'path outside allowed root', status: 403 }
+  let stat
+  try {
+    stat = statSync(path)
+  } catch {
+    return { error: 'path not found', status: 404 }
+  }
+  if (!stat.isDirectory()) return { error: 'not a directory', status: 400 }
+
+  const needle = String(queryText || '').trim().toLowerCase()
+  if (!needle) return { root: BROWSE_ROOT, path, query: '', results: [], truncated: false }
+
+  const results = []
+
+  function walk(dirPath, depth) {
+    if (results.length >= SEARCH_MAX_RESULTS || depth > SEARCH_MAX_DEPTH) return
+    let entries
+    try {
+      entries = readdirSync(dirPath, { withFileTypes: true }).filter((entry) => !entry.name.startsWith('.'))
+    } catch {
+      return
+    }
+    for (const entry of entries) {
+      if (results.length >= SEARCH_MAX_RESULTS) return
+      const entryPath = join(dirPath, entry.name)
+      const isDir = entry.isDirectory()
+      if (entry.name.toLowerCase().includes(needle)) {
+        if (isDir) {
+          results.push({ name: entry.name, path: entryPath, type: 'dir' })
+        } else if (entry.isFile()) {
+          let size = null
+          try {
+            size = statSync(entryPath).size
+          } catch {
+            // Unreadable file (e.g. broken symlink) — report it without a size.
+          }
+          results.push({ name: entry.name, path: entryPath, type: 'file', size })
+        }
+      }
+      if (isDir) walk(entryPath, depth + 1)
+    }
+  }
+
+  walk(path, 0)
+  results.sort((a, b) => a.name.localeCompare(b.name))
+  return { root: BROWSE_ROOT, path, query: needle, results, truncated: results.length >= SEARCH_MAX_RESULTS }
+}
+
 function makeDirectory(parent, name) {
   const cleanName = String(name || '').trim()
   if (!cleanName || cleanName.includes('/') || cleanName === '.' || cleanName === '..') {
@@ -1320,6 +1373,13 @@ const server = createServer((req, res) => {
   if (req.method === 'GET' && url === '/store/fs/read') {
     const query = new URL(req.url, 'http://localhost').searchParams
     const result = readFilePreview(query.get('path') || '')
+    sendJson(res, result.error ? result.status : 200, result)
+    return
+  }
+
+  if (req.method === 'GET' && url === '/store/fs/search') {
+    const query = new URL(req.url, 'http://localhost').searchParams
+    const result = searchFiles(query.get('path') || '', query.get('query') || '')
     sendJson(res, result.error ? result.status : 200, result)
     return
   }

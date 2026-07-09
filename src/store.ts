@@ -167,6 +167,31 @@ export async function listDir(path?: string): Promise<FsListing | null> {
   }
 }
 
+export interface FsSearchResultEntry extends FsEntry {
+  type: 'dir' | 'file'
+  size?: number | null
+}
+
+export interface FsSearchResult {
+  root: string
+  path: string
+  query: string
+  results: FsSearchResultEntry[]
+  truncated?: boolean
+}
+
+export async function searchFiles(path: string, query: string): Promise<FsSearchResult | { error: string }> {
+  try {
+    const res = await fetch(`/store/fs/search?path=${encodeURIComponent(path)}&query=${encodeURIComponent(query)}`)
+    const data = (await res.json()) as Partial<FsSearchResult> & { error?: string }
+    if (!res.ok || data.error) return { error: data.error || 'Search failed' }
+    if (!data.results) return { error: 'Invalid search response' }
+    return data as FsSearchResult
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : String(error) }
+  }
+}
+
 export async function readFilePreview(path: string): Promise<FsFilePreview | { error: string }> {
   try {
     const res = await fetch(`/store/fs/read?path=${encodeURIComponent(path)}`)

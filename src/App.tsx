@@ -34,6 +34,7 @@ import {
   persistState,
   listDir,
   readFilePreview,
+  searchFiles,
   makeDir,
   moveDir,
   fileDownloadUrl,
@@ -46,8 +47,10 @@ import {
   setPagePassword,
   logoutPagePassword,
   type FsListing,
+  type FsEntry,
   type FsFileEntry,
   type FsFilePreview,
+  type FsSearchResultEntry,
   type AgentApp,
   type AppListing,
   type AppWarning,
@@ -891,6 +894,22 @@ function fileTypeIcon(name: string) {
   return 'FILE'
 }
 
+const FILE_TYPE_FILTERS: { value: string; label: string }[] = [
+  { value: 'all', label: 'All types' },
+  { value: 'CODE', label: 'Code' },
+  { value: 'DATA', label: 'Data' },
+  { value: 'MD', label: 'Markdown' },
+  { value: 'HTML', label: 'HTML' },
+  { value: 'TXT', label: 'Text' },
+  { value: 'CFG', label: 'Config' },
+  { value: 'IMG', label: 'Images' },
+  { value: 'VID', label: 'Video' },
+  { value: 'AUD', label: 'Audio' },
+  { value: 'PDF', label: 'PDF' },
+  { value: 'ZIP', label: 'Archives' },
+  { value: 'FILE', label: 'Other' },
+]
+
 function languageForFile(path: string) {
   const name = fileNameFromPath(path)
   return CODE_LANGUAGE_BY_NAME[name] ?? CODE_LANGUAGE_BY_EXT[fileExtension(name)] ?? null
@@ -961,6 +980,46 @@ function FileBrowser({ rootPath }: { rootPath: string }) {
   const [previewError, setPreviewError] = useState<string | null>(null)
   const [pendingDelete, setPendingDelete] = useState<FsFileEntry | null>(null)
   const [deleting, setDeleting] = useState(false)
+  const [typeFilter, setTypeFilter] = useState('all')
+  const [searchInput, setSearchInput] = useState('')
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchResults, setSearchResults] = useState<FsSearchResultEntry[] | null>(null)
+  const [searching, setSearching] = useState(false)
+  const [searchTruncated, setSearchTruncated] = useState(false)
+  const [searchError, setSearchError] = useState<string | null>(null)
+
+  // Debounce the search box before hitting the backend.
+  useEffect(() => {
+    const timer = setTimeout(() => setSearchQuery(searchInput.trim()), 250)
+    return () => clearTimeout(timer)
+  }, [searchInput])
+
+  useEffect(() => {
+    if (!searchQuery) {
+      setSearchResults(null)
+      setSearchTruncated(false)
+      setSearchError(null)
+      return
+    }
+    let cancelled = false
+    setSearching(true)
+    setSearchError(null)
+    void searchFiles(path, searchQuery).then((result) => {
+      if (cancelled) return
+      if ('error' in result) {
+        setSearchError(result.error)
+        setSearchResults(null)
+        setSearchTruncated(false)
+      } else {
+        setSearchResults(result.results)
+        setSearchTruncated(Boolean(result.truncated))
+      }
+      setSearching(false)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [path, searchQuery])
 
   async function confirmDelete() {
     if (!pendingDelete) return
@@ -988,6 +1047,8 @@ function FileBrowser({ rootPath }: { rootPath: string }) {
     setPreview(null)
     setPreviewFullWindow(false)
     setPreviewError(null)
+    setSearchInput('')
+    setSearchQuery('')
     // Fall back to the workspace root, then the backend's allowed root, if a
     // persisted card still points at an unreadable or disallowed path.
     const attempts = Array.from(new Set([target, rootPath, '']))
@@ -1030,6 +1091,8 @@ function FileBrowser({ rootPath }: { rootPath: string }) {
     setPreview(null)
     setPreviewFullWindow(false)
     setPreviewError(null)
+    setSearchInput('')
+    setSearchQuery('')
     if (open) void load(rootPath)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rootPath])
@@ -1047,6 +1110,18 @@ function FileBrowser({ rootPath }: { rootPath: string }) {
     : path.startsWith(`${effectiveRootPath}/`)
       ? path.slice(effectiveRootPath.length + 1)
       : path
+
+  const matchesTypeFilter = (name: string) => typeFilter === 'all' || fileTypeIcon(name) === typeFilter
+  const isSearching = Boolean(searchQuery)
+  const visibleDirs = isSearching ? [] : (listing?.dirs ?? [])
+  const visibleFiles = (isSearching ? [] : listing?.files ?? []).filter((file) => matchesTypeFilter(file.name))
+  const visibleSearchResults = (searchResults ?? []).filter((entry) => entry.type === 'dir' || matchesTypeFilter(entry.name))
+  const dirsToShow: FsEntry[] = isSearching ? visibleSearchResults.filter((entry) => entry.type === 'dir') : visibleDirs
+  const filesToShow: FsFileEntry[] = isSearching
+    ? visibleSearchResults
+        .filter((entry) => entry.type === 'file')
+        .map((entry) => ({ name: entry.name, path: entry.path, size: entry.size ?? null }))
+    : visibleFiles
   const previewNode = preview ? (
     <div className={`file-preview ${previewFullWindow ? 'full-window' : ''}`}>
       <div className="file-preview-head">
@@ -1117,6 +1192,7 @@ function FileBrowser({ rootPath }: { rootPath: string }) {
 
       {open ? (
         <div className="file-browser-body">
+          <div className="file-browser-path" title={path}>{path}</div>
           <div className="file-browser-bar">
             <button
               type="button"
@@ -1138,14 +1214,41 @@ function FileBrowser({ rootPath }: { rootPath: string }) {
             </button>
           </div>
 
+          <div className="file-browser-filters">
+            <input
+              type="search"
+              className="file-browser-search"
+              placeholder="Search files in this folder…"
+              value={searchInput}
+              onChange={(event) => setSearchInput(event.target.value)}
+              onKeyDown={(event) => event.stopPropagation()}
+            />
+            <select
+              className="file-browser-type-filter"
+              value={typeFilter}
+              onChange={(event) => setTypeFilter(event.target.value)}
+              title="Filter by file type"
+            >
+              {FILE_TYPE_FILTERS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
           {error ? <p className="error-text">{error}</p> : null}
+          {searchError ? <p className="error-text">{searchError}</p> : null}
+          {isSearching && searchTruncated ? (
+            <p className="file-browser-hint">Showing first matches only — refine your search.</p>
+          ) : null}
 
           <div className="file-browser-list">
-            {loading ? (
-              <div className="file-browser-empty">Loading…</div>
-            ) : listing && (listing.dirs.length || listing.files?.length) ? (
+            {loading || (isSearching && searching) ? (
+              <div className="file-browser-empty">{isSearching ? 'Searching…' : 'Loading…'}</div>
+            ) : (isSearching ? searchResults !== null : Boolean(listing)) && (dirsToShow.length || filesToShow.length) ? (
               <>
-                {listing.dirs.map((dir) => (
+                {dirsToShow.map((dir) => (
                   <div
                     role="button"
                     tabIndex={0}
@@ -1172,7 +1275,7 @@ function FileBrowser({ rootPath }: { rootPath: string }) {
                     </span>
                   </div>
                 ))}
-                {(listing.files ?? []).map((file) => (
+                {filesToShow.map((file) => (
                   <div
                     role="button"
                     tabIndex={0}
@@ -1226,7 +1329,7 @@ function FileBrowser({ rootPath }: { rootPath: string }) {
                 ))}
               </>
             ) : (
-              <div className="file-browser-empty">Empty folder.</div>
+              <div className="file-browser-empty">{isSearching ? 'No matches found.' : 'Empty folder.'}</div>
             )}
           </div>
 
@@ -2018,12 +2121,12 @@ function ConversationCard({
                   title={agentType === 'custom' ? customAgentCommand : `${agentType} — interactive`}
                   showClose={false}
                   onClose={() => {}}
-                collapsed={agentTerminalState?.collapsed}
-                fullWindow={agentTerminalState?.fullWindow}
-                promptContext={run.cardKind === 'app-builder' ? 'app-builder' : undefined}
-                appWorkspace={run.cardKind === 'app-builder' ? run.workspacePath : undefined}
-                onStateChange={onAgentTerminalStateChange}
-              />
+                  collapsible={false}
+                  fullWindow={agentTerminalState?.fullWindow}
+                  promptContext={run.cardKind === 'app-builder' ? 'app-builder' : undefined}
+                  appWorkspace={run.cardKind === 'app-builder' ? run.workspacePath : undefined}
+                  onStateChange={onAgentTerminalStateChange}
+                />
               </div>
             ) : tui ? (
               <div className="conv-agent-command-empty">
@@ -2977,6 +3080,7 @@ function WebTerminal({
   eyebrow = 'Resource · Tools',
   title = 'Local Terminal',
   showClose = true,
+  collapsible = true,
   collapsed,
   fullWindow,
   promptContext,
@@ -2995,6 +3099,8 @@ function WebTerminal({
   eyebrow?: string
   title?: string
   showClose?: boolean
+  /** When false, the terminal always stays expanded and its header isn't collapsible. */
+  collapsible?: boolean
   collapsed?: boolean
   fullWindow?: boolean
   promptContext?: PromptContext
@@ -3011,7 +3117,7 @@ function WebTerminal({
   const [terminalKey, setTerminalKey] = useState(0)
   const [internalCollapsed, setInternalCollapsed] = useState(false)
   const [internalFullWindow, setInternalFullWindow] = useState(false)
-  const terminalCollapsed = collapsed ?? internalCollapsed
+  const terminalCollapsed = collapsible ? (collapsed ?? internalCollapsed) : false
   const terminalFullWindow = fullWindow ?? internalFullWindow
   const agentTerminal = Boolean(agent)
 
@@ -3208,16 +3314,18 @@ function WebTerminal({
   return (
     <section className={`web-terminal ${terminalCollapsed ? 'collapsed' : ''} ${terminalFullWindow ? 'full-window' : ''}`} aria-label="Local Terminal">
       <div
-        className="terminal-head"
-        role="button"
-        tabIndex={0}
-        aria-expanded={!terminalCollapsed}
-        onClick={() => setTerminalCollapsedState((current) => !current)}
-        onKeyDown={toggleTerminalFromKey}
+        className={`terminal-head ${collapsible ? '' : 'static'}`}
+        role={collapsible ? 'button' : undefined}
+        tabIndex={collapsible ? 0 : undefined}
+        aria-expanded={collapsible ? !terminalCollapsed : undefined}
+        onClick={collapsible ? () => setTerminalCollapsedState((current) => !current) : undefined}
+        onKeyDown={collapsible ? toggleTerminalFromKey : undefined}
       >
-        <span className={`terminal-caret ${terminalCollapsed ? '' : 'open'}`} aria-hidden>
-          ▾
-        </span>
+        {collapsible ? (
+          <span className={`terminal-caret ${terminalCollapsed ? '' : 'open'}`} aria-hidden>
+            ▾
+          </span>
+        ) : null}
         <div>
           <div className="eyebrow">{eyebrow}</div>
           <h2>{title}</h2>
