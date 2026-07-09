@@ -1213,7 +1213,23 @@ function FileBrowser({
 
       {open ? (
         <div className="file-browser-body">
-          <div className="file-browser-path" title={path}>{path}</div>
+          <div className="file-browser-path-row">
+            <div className="file-browser-path" title={path}>{path}</div>
+            {!showOwnToggle ? (
+              // Without its own toggle pill (the TUI header button lives
+              // underneath this floating panel once it's open, so it can't be
+              // clicked to close), the panel needs its own close control.
+              <button
+                type="button"
+                className="file-browser-close-inline"
+                onClick={onToggle}
+                aria-label="Close file browser"
+                title="Close file browser"
+              >
+                ×
+              </button>
+            ) : null}
+          </div>
           <div className="file-browser-bar">
             <button
               type="button"
