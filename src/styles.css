@@ -1057,6 +1057,89 @@ button { cursor: pointer; }
   gap: 8px;
 }
 
+.terminal-tabs {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  margin-bottom: 6px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 12px;
+  background: rgba(8, 14, 24, 0.62);
+}
+
+.terminal-tabs button {
+  border: 0;
+  border-radius: 8px;
+  padding: 7px 10px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.terminal-tabs button.active {
+  background: rgba(121, 185, 255, 0.16);
+  color: var(--text);
+}
+
+.file-browser-toggle-inline {
+  padding: 7px 11px;
+}
+
+.file-browser-toggle-inline.active {
+  border-color: rgba(121, 185, 255, 0.42);
+  background: rgba(121, 185, 255, 0.14);
+  color: var(--text);
+}
+
+/* Covers only the terminal screen/footer (its positioning context), never the
+ * topBar/header above, so Terminal/History tabs stay reachable while shown. */
+.terminal-history-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background: rgba(5, 10, 18, 0.97);
+  border-radius: 12px;
+  overflow-y: auto;
+}
+
+.terminal-history {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 4px 2px;
+}
+
+.terminal-history-empty,
+.terminal-history-note {
+  padding: 12px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.terminal-history-raw-block {
+  margin: 0;
+  padding: 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  max-height: 440px;
+  overflow-y: auto;
+  border: 1px solid rgba(148, 163, 184, 0.15);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.terminal-history-user-text {
+  margin-top: 7px;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+
 .conv-workspace-btn {
   display: flex;
   align-items: center;
@@ -2732,6 +2815,7 @@ button { cursor: pointer; }
 
 
 .terminal-body {
+  position: relative;
   display: grid;
   grid-template-rows: minmax(220px, 340px) auto;
   gap: 10px;
