@@ -5621,7 +5621,7 @@ export default function App() {
       layoutPreset === 'quad'
         ? 4
         : layoutPreset === 'three-col'
-          ? 6
+          ? 3
           : layoutPreset === 'master-stack'
             ? 4
             : freeRows * freeCols

@@ -2595,6 +2595,15 @@ button { cursor: pointer; }
   gap: 14px;
   min-width: 0;
   min-height: 0;
+  flex: 1;
+}
+
+/* Invisible spacer fills remaining height so the column extends to the
+   page bottom even when cards don't fill it naturally. */
+.ws-column::after {
+  content: '';
+  flex: 1;
+  min-height: 0;
 }
 
 /* Make a column (incl. an empty one) a comfortable drop target while dragging. */
