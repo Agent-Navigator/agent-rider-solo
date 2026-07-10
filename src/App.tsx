@@ -2198,7 +2198,12 @@ function ConversationCard({
       }}
     >
       {hideHeader ? null : (
-      <div className="win-titlebar" onDoubleClick={onToggle} title="Drag to reorder · double-click to collapse">
+      <div
+        className={`win-titlebar${tui && agentTerminalState?.fullWindow ? ' full-window-fixed' : ''}`}
+        onDoubleClick={onToggle}
+        title="Drag to reorder · double-click to collapse"
+        style={tui && agentTerminalState?.fullWindow ? { position: 'fixed', top: 14, left: 14, right: 14, zIndex: 51 } : undefined}
+      >
         <WinGrip />
         <span className="win-dot" style={{ background: tone.dot }} aria-hidden />
         <input
@@ -3684,7 +3689,7 @@ function WebTerminal({
 
   return (
     <section className={`web-terminal ${terminalCollapsed ? 'collapsed' : ''} ${terminalFullWindow ? 'full-window' : ''} ${frameless ? 'frameless' : ''}`} aria-label="Local Terminal">
-      {frameless && !terminalFullWindow ? null : (
+      {frameless ? null : (
       <div className="win-titlebar">
         <WinGrip />
         <span className="win-dot" style={{ background: stateTone.dot }} aria-hidden />

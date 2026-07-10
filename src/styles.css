@@ -3603,6 +3603,15 @@ button { cursor: pointer; }
 
 .win-titlebar:active { cursor: grabbing; }
 
+/* Titlebar pinned above a full-window terminal — needs its own surface
+   since the card it belongs to is behind the terminal overlay. */
+.win-titlebar.full-window-fixed {
+  border-radius: 10px 10px 0 0;
+  border: 1px solid var(--win-line);
+  border-bottom: none;
+  box-shadow: 0 -4px 14px rgba(0, 0, 0, 0.3);
+}
+
 .win-grip {
   display: flex;
   align-items: center;
@@ -4099,8 +4108,13 @@ button { cursor: pointer; }
   padding: 0;
 }
 
+/* Full-window frameless: the card's titlebar is fixed above, so the
+   terminal body sits flush against it with no top padding. */
+.web-terminal.frameless.full-window {
+  top: 48px;
+}
 .web-terminal.frameless.full-window .terminal-body {
-  padding: 10px 12px 8px;
+  padding: 0 12px 8px;
 }
 
 .terminal-screen {
