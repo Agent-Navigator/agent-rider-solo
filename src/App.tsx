@@ -5636,10 +5636,6 @@ export default function App() {
 
   return (
     <div className={`app-shell ${hasContent ? 'has-content' : 'blank'}`}>
-      <div className="floating-status" aria-label="Hermes connection status">
-        <StatusPill state={connectionState} detail={headerStatusText(connectionState, connectionDetail)} />
-      </div>
-
       {settingsOpen ? <div className="settings-popover-backdrop" onClick={() => setSettingsOpen(false)} /> : null}
 
       <div className="settings-gear-anchor">

@@ -40,7 +40,7 @@ button { cursor: pointer; }
 .app-shell {
   flex: 1;
   min-height: 0;
-  padding: 20px 0;
+  padding: 0 0 20px 0;
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -126,16 +126,6 @@ button { cursor: pointer; }
   justify-content: flex-end;
   gap: 8px;
   margin-top: 0;
-}
-
-/* Compact connection pill that floats top-right in place of the removed
-   header bar, so status stays visible without costing layout height. */
-.floating-status {
-  position: fixed;
-  top: 12px;
-  right: 16px;
-  z-index: 60;
-  pointer-events: none;
 }
 
 .topbar-actions {
