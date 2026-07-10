@@ -32,7 +32,7 @@ button { cursor: pointer; }
 
 .app-shell {
   min-height: 100vh;
-  padding: 20px;
+  padding: 20px 0;
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -49,14 +49,6 @@ button { cursor: pointer; }
 .topbar,
 .main-stage,
 .composer-bar {
-  width: min(1440px, 100%);
-  margin: 0 auto;
-}
-
-/* Two-column mode goes full width, leaving only the app-shell's small left/right border. */
-.app-shell.full-width .topbar,
-.app-shell.full-width .main-stage,
-.app-shell.full-width .composer-bar {
   width: 100%;
 }
 
@@ -126,6 +118,16 @@ button { cursor: pointer; }
   justify-content: flex-end;
   gap: 8px;
   margin-top: 0;
+}
+
+/* Compact connection pill that floats top-right in place of the removed
+   header bar, so status stays visible without costing layout height. */
+.floating-status {
+  position: fixed;
+  top: 12px;
+  right: 16px;
+  z-index: 60;
+  pointer-events: none;
 }
 
 .topbar-actions {
@@ -267,8 +269,8 @@ button { cursor: pointer; }
 .main-stage {
   flex: 1;
   min-height: 0;
-  width: min(1440px, 100%);
-  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
 }
 
 .main-stage.empty {
@@ -360,260 +362,11 @@ button { cursor: pointer; }
   color: var(--muted);
 }
 
-.hide-all-button {
-  border: 1px solid rgba(148, 163, 184, 0.18);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.03);
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 700;
-  padding: 4px 12px;
-  cursor: pointer;
-}
-
-.hide-all-button:hover {
-  border-color: rgba(121, 185, 255, 0.34);
-  color: var(--text);
-  background: rgba(121, 185, 255, 0.08);
-}
-
-.turn-node {
-  display: grid;
-  gap: 10px;
-  min-width: 0;
-  scroll-margin-block: 96px;
-}
-
-.turn {
-  display: grid;
-  gap: 10px;
-  min-width: 0;
-}
-
-.turn.collapsed {
-  gap: 0;
-}
-
-.bubble {
-  border: 1px solid rgba(148, 163, 184, 0.15);
-  border-radius: 20px;
-  padding: 14px 16px;
-  background: rgba(255, 255, 255, 0.03);
-  min-width: 0;
-  overflow-wrap: break-word;
-  user-select: text;
-}
-
-.bubble.user { background: rgba(121, 185, 255, 0.075); border-color: rgba(121, 185, 255, 0.18); }
-.bubble.assistant { background: rgba(139, 92, 246, 0.075); border-color: rgba(139, 92, 246, 0.18); }
-
-.bubble.user.turn-toggle {
-  cursor: pointer;
-  transition: border-color 120ms ease, background 120ms ease;
-}
-
-.bubble.user.turn-toggle:hover,
-.bubble.user.turn-toggle:focus-visible {
-  border-color: rgba(121, 185, 255, 0.42);
-  background: rgba(121, 185, 255, 0.11);
-  outline: none;
-}
-
-.bubble.user.turn-toggle.collapsed {
-  border-color: rgba(121, 185, 255, 0.30);
-}
-
-.bubble.user.turn-toggle:not(.collapsed) .bubble-head,
-.bubble.user.turn-toggle:not(.collapsed) .role-group {
-  align-items: flex-start;
-}
-
-.bubble.user.turn-toggle:not(.collapsed) .turn-prompt-text {
-  overflow: hidden;
-  text-overflow: clip;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.bubble-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.role-group {
-  display: flex;
-  flex: 1;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
-.turn-prompt-sep {
-  color: var(--muted);
-  opacity: 0.5;
-  flex-shrink: 0;
-}
-
-.turn-prompt-text {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  line-height: 1.5;
-}
-
-.turn-toggle-caret {
-  display: inline-flex;
-  flex-shrink: 0;
-  color: var(--muted);
-  font-size: 11px;
-  transition: transform 150ms ease;
-}
-
-.turn-toggle-caret.open {
-  transform: rotate(180deg);
-}
-
-.bubble p {
-  margin: 7px 0 0;
-  white-space: pre-wrap;
-  line-height: 1.58;
-}
-
-.role {
-  display: inline-flex;
-  flex-shrink: 0;
-  font-size: 11px;
-  text-transform: uppercase;
-  color: var(--muted);
-}
-
-.copy-prompt-button,
-.turn-delete-button,
-.assistant-to-bottom-button,
-.assistant-refresh-button,
-.assistant-stop-button,
-.ask-more-button,
-.ask-more-cancel {
-  border: 1px solid rgba(148, 163, 184, 0.18);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.03);
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 700;
-}
-
-.copy-prompt-button {
-  padding: 3px 8px;
-}
-
-.turn-head-actions {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
-}
-
-.turn-delete-button {
-  padding: 3px 8px;
-}
-
-.turn-delete-button:hover:not(:disabled) {
-  border-color: rgba(239, 109, 109, 0.4);
-  color: #ffd6d6;
-  background: rgba(239, 109, 109, 0.10);
-}
-
-.turn-delete-button:disabled {
-  cursor: default;
-  opacity: 0.45;
-}
-
-.assistant-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.assistant-head-actions {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
-}
-
-.assistant-to-bottom-button {
-  flex-shrink: 0;
-  padding: 3px 8px;
-  white-space: nowrap;
-}
-
-.assistant-refresh-button {
-  flex-shrink: 0;
-  padding: 3px 9px;
-  white-space: nowrap;
-}
-
-.assistant-stop-button {
-  flex-shrink: 0;
-  padding: 3px 9px;
-  border-color: rgba(239, 68, 68, 0.44);
-  background: rgba(239, 68, 68, 0.12);
-  color: #fecaca;
-  white-space: nowrap;
-}
-
-.copy-prompt-button:hover,
-.assistant-to-bottom-button:hover,
-.assistant-refresh-button:hover,
-.assistant-stop-button:hover,
-.ask-more-button:hover,
-.ask-more-cancel:hover {
-  border-color: rgba(121, 185, 255, 0.34);
-  color: var(--text);
-  background: rgba(121, 185, 255, 0.08);
-}
-
-.assistant-stop-button:hover {
-  border-color: rgba(239, 68, 68, 0.7);
-  background: rgba(239, 68, 68, 0.2);
-  color: #fff1f2;
-}
-
 .assistant-bubble-bottom {
   scroll-margin-block-end: 96px;
   /* 1px so the IntersectionObserver that clears the "unread" dot can reliably
      detect when the end of a reply scrolls into view. */
   min-height: 1px;
-}
-
-.assistant-actions {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: 12px;
-}
-
-.ask-more-button {
-  padding: 8px 14px;
-  border-color: rgba(34, 197, 94, 0.42);
-  background: #14532d;
-  color: #ecfdf5;
-  font-size: 13px;
-}
-
-.ask-more-button:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
-
-.ask-more-button:hover {
-  border-color: rgba(74, 222, 128, 0.62);
-  background: #166534;
-  color: #ffffff;
 }
 
 .ask-more-form {
@@ -647,10 +400,6 @@ button { cursor: pointer; }
   display: flex;
   justify-content: flex-end;
   gap: 8px;
-}
-
-.ask-more-cancel {
-  padding: 7px 11px;
 }
 
 .empty-feed,
@@ -2084,7 +1833,9 @@ button { cursor: pointer; }
   display: grid;
   grid-template-columns: 52px minmax(0, 1fr);
   gap: 16px;
-  align-items: start;
+  align-items: stretch;
+  flex: 1;
+  min-height: 0;
 }
 
 /* "Pinned" reserves room for the icon strip AND the content panel beside it
@@ -2096,6 +1847,10 @@ button { cursor: pointer; }
 
 .conversation-workspace {
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
 }
 
 /* Matches the reference design: a permanent 52px icon strip (pin toggle +
@@ -2730,29 +2485,34 @@ button { cursor: pointer; }
 
 .workspace-panels {
   min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
 }
 
-/* One block filling the whole canvas; the rest of the grid is hidden but
-   stays mounted in layoutOrder so restoring drops it right back in place. */
+/* True full-screen: the maximized block covers the entire viewport,
+   hiding the sidebar and all other chrome behind it. */
 .workspace-panels.maximized {
-  display: flex;
+  position: static;
 }
 
 .maximized-block {
-  position: relative;
+  position: fixed;
+  inset: 0;
+  z-index: 100;
   display: flex;
   flex-direction: column;
-  flex: 1;
   min-width: 0;
-  min-height: 60vh;
+  background: var(--bg);
+  padding: 16px 20px 20px;
 }
 
 .maximize-restore-btn {
-  position: absolute;
-  top: -38px;
-  right: 0;
-  z-index: 5;
-  padding: 5px 12px;
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  z-index: 110;
+  padding: 6px 14px;
   border: 1px solid rgba(121, 185, 255, 0.32);
   border-radius: 8px;
   background: rgba(121, 185, 255, 0.1);
@@ -2762,13 +2522,15 @@ button { cursor: pointer; }
 }
 
 .maximize-restore-btn:hover {
-  background: rgba(121, 185, 255, 0.18);
+  background: rgba(121, 185, 255, 0.2);
 }
 
 /* Tiling grid presets (quad / three-col / master-stack / free): column count
    is fixed by the preset, rows auto-grow as more blocks open. */
 .tile-grid {
   align-items: stretch;
+  flex: 1;
+  min-height: 0;
 }
 
 .tile-slot {
@@ -2826,6 +2588,8 @@ button { cursor: pointer; }
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 14px;
   align-items: start;
+  flex: 1;
+  min-height: 0;
 }
 
 .ws-column {
@@ -2833,6 +2597,7 @@ button { cursor: pointer; }
   flex-direction: column;
   gap: 14px;
   min-width: 0;
+  min-height: 0;
 }
 
 /* Make a column (incl. an empty one) a comfortable drop target while dragging. */
@@ -2895,29 +2660,6 @@ button { cursor: pointer; }
 }
 .workspace-panel.drag-over.after {
   box-shadow: 0 3px 0 -1px var(--accent), var(--shadow);
-}
-
-/* Generic per-panel maximize toggle, floats over the panel's own header. */
-.panel-maximize-btn {
-  position: absolute;
-  top: 6px;
-  right: 34px;
-  z-index: 6;
-  display: inline-grid;
-  place-items: center;
-  width: 22px;
-  height: 22px;
-  border: 1px solid rgba(148, 163, 184, 0.24);
-  border-radius: 6px;
-  background: rgba(10, 13, 20, 0.75);
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1;
-}
-
-.panel-maximize-btn:hover {
-  border-color: rgba(121, 185, 255, 0.42);
-  color: var(--text);
 }
 
 .conv-card.drag-over {
@@ -3808,4 +3550,651 @@ button { cursor: pointer; }
 .settings-popover-row:disabled {
   color: var(--muted);
   cursor: default;
+}
+
+/* ==========================================================================
+   WINDOW SYSTEM — every workspace block (conversation, TUI agent, tool, app)
+   renders as a "window" following the reference design: 34px titlebar
+   (grip · status dot · mono title · meta · status · icon actions), a dark
+   monospace body, and — for chat windows — a prompt bar + model/context
+   footer. These rules come last on purpose: they override the older
+   card/terminal chrome above.
+   ========================================================================== */
+
+:root {
+  --win-bg: #0b0e14;
+  --win-bar: #0d1119;
+  --win-body-bg: #05070b;
+  --win-foot-bg: #070a10;
+  --win-line: rgba(255, 255, 255, 0.07);
+  --win-line-soft: rgba(255, 255, 255, 0.05);
+  --win-accent: #7c8cff;
+  --win-accent-soft: rgba(124, 140, 255, 0.14);
+  --win-text: #e6e9ef;
+  --win-body-text: #c1c7d0;
+  --win-mid: #8b93a0;
+  --win-dim: #6a7280;
+  --win-faint: #4a515c;
+  --win-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+@keyframes ar-blink {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+
+@keyframes ar-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+/* --- Titlebar ------------------------------------------------------------ */
+
+.win-titlebar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 6px 0 4px;
+  background: var(--win-bar);
+  border-bottom: 1px solid var(--win-line);
+  flex: 0 0 auto;
+  cursor: grab;
+  user-select: none;
+}
+
+.win-titlebar:active { cursor: grabbing; }
+
+.win-grip {
+  display: flex;
+  align-items: center;
+  padding: 0 3px;
+  color: var(--win-faint);
+  flex: 0 0 auto;
+}
+
+.win-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+
+.win-title,
+.win-title-input {
+  font-family: var(--win-mono);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--win-text);
+}
+
+.win-title {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.win-title-input {
+  flex: 0 1 auto;
+  width: auto;
+  min-width: 48px;
+  max-width: 45%;
+  margin: 0;
+  padding: 2px 4px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  outline: none;
+  text-overflow: ellipsis;
+}
+
+.win-title-input:hover { border-color: rgba(255, 255, 255, 0.12); }
+.win-title-input:focus { border-color: rgba(124, 140, 255, 0.5); background: rgba(5, 7, 11, 0.7); }
+.win-title-input::placeholder { color: var(--win-dim); font-weight: 500; }
+
+.win-meta {
+  font-family: var(--win-mono);
+  font-size: 10px;
+  color: var(--win-dim);
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.win-spacer { flex: 1; min-width: 0; }
+
+.win-status {
+  font-family: var(--win-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+.win-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 24px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--win-dim);
+  padding: 0;
+  flex: 0 0 auto;
+}
+
+.win-btn:hover { background: rgba(255, 255, 255, 0.06); color: var(--win-text); }
+.win-btn.active { color: var(--win-accent); background: var(--win-accent-soft); }
+.win-btn-close:hover { background: rgba(239, 109, 109, 0.14); color: #ff9d9d; }
+.win-btn .conv-caret { margin: 0; font-size: 11px; }
+
+/* Compact text buttons that sit inside a titlebar (e.g. WebView Reload,
+   the TUI Files toggle) — restyle the legacy pill to match the bar. */
+.win-titlebar .terminal-clear {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--win-dim);
+  font-family: var(--win-mono);
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 8px;
+}
+
+.win-titlebar .terminal-clear:hover,
+.win-titlebar .terminal-clear.active {
+  color: var(--win-text);
+  border-color: rgba(124, 140, 255, 0.4);
+  background: var(--win-accent-soft);
+}
+
+/* --- Window shells -------------------------------------------------------- */
+
+.conv-card,
+.web-terminal,
+.web-view {
+  border: 1px solid var(--win-line);
+  border-radius: 9px;
+  background: var(--win-bg);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.25);
+  overflow: hidden;
+  padding: 0;
+  gap: 0;
+  min-height: 0;
+}
+
+.conv-card:not(.app-builder-card),
+.web-terminal,
+.web-view {
+  display: flex;
+  flex-direction: column;
+}
+
+.conv-card.active {
+  border-color: rgba(124, 140, 255, 0.55);
+  box-shadow: 0 0 0 1px rgba(124, 140, 255, 0.35), 0 8px 30px rgba(0, 0, 0, 0.4);
+}
+
+.conv-card.embedded {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.conv-card.embedded .win-body {
+  background: transparent;
+}
+
+.app-builder-card {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.conv-card-body:not(.app-builder-body) {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  padding: 0;
+  border-top: 0;
+}
+
+.conv-card.collapsed .conv-card-body { display: none; }
+
+.conv-card-body .conv-meta {
+  margin: 10px 12px 0;
+}
+
+.conv-card-body .conv-meta .conv-meta-fields {
+  padding-top: 0;
+}
+
+.conv-content-shell {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.conv-content-shell > .file-browser {
+  margin: 10px 12px 0;
+}
+
+/* The tile rule above scrolls the whole shell; with the window layout only
+   the body scrolls, so the prompt bar and footer stay pinned. */
+.tile-slot .conv-card .conv-content-shell {
+  overflow: hidden;
+}
+
+/* --- Window body (chat transcript) ---------------------------------------- */
+
+.win-body {
+  background: var(--win-body-bg);
+  padding: 12px 14px;
+  font-family: var(--win-mono);
+  font-size: 12px;
+  line-height: 1.65;
+  color: var(--win-body-text);
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  user-select: text;
+}
+
+/* When the context fields (or an open file browser) sit above the body,
+   give the body a small breathing gap; otherwise it runs flush under the
+   titlebar like the reference windows. */
+.conv-meta ~ .conv-content-shell .win-body,
+.conv-meta ~ .conv-content-shell .conv-agent-terminal,
+.file-browser.open ~ .win-body,
+.file-browser.open ~ .conv-agent-terminal {
+  margin-top: 10px;
+}
+
+.win-body-empty {
+  white-space: pre-wrap;
+  color: var(--win-dim);
+}
+
+.conv-transcript {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.conv-transcript .feed-toolbar {
+  margin-bottom: 2px;
+}
+
+.conv-transcript .feed-toolbar-label {
+  font-family: var(--win-mono);
+  font-size: 10px;
+  color: var(--win-faint);
+}
+
+.term-turn {
+  min-width: 0;
+  scroll-margin-block: 96px;
+}
+
+.term-prompt-line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 3px 6px;
+  margin: 0 -6px;
+  border-radius: 6px;
+  cursor: pointer;
+  color: #aeb6c2;
+}
+
+.term-prompt-line:hover,
+.term-prompt-line:focus-visible {
+  background: rgba(124, 140, 255, 0.07);
+  outline: none;
+}
+
+.term-prompt-line.collapsed { color: var(--win-mid); }
+
+.term-prompt-mark {
+  color: var(--win-accent);
+  font-weight: 700;
+  flex: 0 0 auto;
+}
+
+.term-prompt-text {
+  flex: 1;
+  min-width: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.term-prompt-line.collapsed .term-prompt-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.term-turn-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.term-prompt-line:hover .term-turn-actions,
+.term-prompt-line:focus-within .term-turn-actions,
+.term-turn-actions.always {
+  opacity: 1;
+}
+
+.term-action {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--win-dim);
+  font-family: var(--win-mono);
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 7px;
+  white-space: nowrap;
+}
+
+.term-action:hover:not(:disabled) {
+  color: var(--win-text);
+  border-color: rgba(124, 140, 255, 0.4);
+  background: rgba(124, 140, 255, 0.1);
+}
+
+.term-action:disabled { opacity: 0.4; cursor: default; }
+
+.term-action.danger:hover:not(:disabled) {
+  color: #ff9d9d;
+  border-color: rgba(239, 109, 109, 0.45);
+  background: rgba(239, 109, 109, 0.1);
+}
+
+.term-action.accent {
+  color: #9aa6ff;
+  border-color: rgba(124, 140, 255, 0.4);
+  background: rgba(124, 140, 255, 0.1);
+}
+
+.term-response {
+  margin: 6px 0 2px 3px;
+  padding-left: 13px;
+  border-left: 1px solid rgba(255, 255, 255, 0.08);
+  min-width: 0;
+}
+
+.term-response-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.term-response-role {
+  font-family: var(--win-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--win-dim);
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.term-turn.running .term-response-role { color: #e6b25a; animation: ar-pulse 2s infinite; }
+.term-turn.queued .term-response-role { color: #e6b25a; }
+.term-turn.error .term-response-role { color: #ff9d9d; }
+
+.term-md {
+  font-size: 12px;
+  color: var(--win-body-text);
+}
+
+.term-md pre {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.term-response .ask-more-form {
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.term-response .ask-more-form textarea {
+  background: rgba(255, 255, 255, 0.02);
+  border-color: rgba(255, 255, 255, 0.1);
+  font-family: var(--win-mono);
+  font-size: 11.5px;
+  color: var(--win-body-text);
+}
+
+/* --- Prompt bar + footer --------------------------------------------------- */
+
+.win-promptbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px;
+  background: var(--win-foot-bg);
+  border-top: 1px solid var(--win-line-soft);
+  flex: 0 0 auto;
+}
+
+.win-prompt-mark {
+  color: var(--win-accent);
+  font-family: var(--win-mono);
+  font-size: 12px;
+  font-weight: 700;
+  flex: 0 0 auto;
+}
+
+.win-promptbar textarea {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  resize: none;
+  background: transparent;
+  font-family: var(--win-mono);
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--win-body-text);
+  padding: 0;
+  max-height: 96px;
+  field-sizing: content;
+}
+
+.win-promptbar textarea::placeholder { color: var(--win-dim); }
+
+.win-cursor {
+  width: 6px;
+  height: 13px;
+  background: var(--win-accent);
+  animation: ar-blink 1.1s steps(1) infinite;
+  flex: 0 0 auto;
+}
+
+.win-send { flex: 0 0 auto; }
+
+.win-footer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 14px;
+  background: var(--win-foot-bg);
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
+  font-family: var(--win-mono);
+  font-size: 10.5px;
+  color: var(--win-faint);
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+.win-footer-control {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.win-footer-control select {
+  border: none;
+  background: transparent;
+  color: var(--win-dim);
+  font-family: var(--win-mono);
+  font-size: 10.5px;
+  padding: 1px 2px;
+  outline: none;
+  cursor: pointer;
+  max-width: 240px;
+  text-overflow: ellipsis;
+}
+
+.win-footer-control select:hover { color: var(--win-text); }
+.win-footer-control select option,
+.win-footer-control select optgroup { color: #0b0f17; background: #ffffff; }
+
+.win-footer-path {
+  border: none;
+  background: transparent;
+  color: var(--win-faint);
+  font-family: var(--win-mono);
+  font-size: 10.5px;
+  padding: 0;
+  min-width: 0;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 0 1 auto;
+}
+
+.win-footer-path:hover { color: var(--win-accent); }
+
+/* --- Terminal / web-view windows ------------------------------------------ */
+
+.terminal-body {
+  padding: 10px 12px 8px;
+}
+
+.web-terminal.frameless {
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+}
+
+.web-terminal.frameless .terminal-body {
+  padding: 0;
+}
+
+.web-terminal.frameless.full-window .terminal-body {
+  padding: 10px 12px 8px;
+}
+
+.terminal-screen {
+  border-color: rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  background: var(--win-body-bg);
+}
+
+.terminal-footer {
+  font-size: 11px;
+  color: var(--win-faint);
+}
+
+.terminal-footer .terminal-clear {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--win-dim);
+  font-family: var(--win-mono);
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 8px;
+}
+
+.terminal-footer .terminal-clear:hover {
+  color: var(--win-text);
+  border-color: rgba(124, 140, 255, 0.4);
+  background: var(--win-accent-soft);
+}
+
+.web-view-frame {
+  border-color: rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  background: var(--win-body-bg);
+}
+
+/* The TUI terminal embedded in a conversation window fills the shell flush
+   under the titlebar, like a transcript body. */
+.conv-agent-terminal {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.conv-agent-terminal .web-terminal {
+  flex: 1;
+  min-height: 0;
+}
+
+/* --- Empty tile slots ------------------------------------------------------ */
+
+.tile-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1.5px dashed rgba(255, 255, 255, 0.1);
+  border-radius: 9px;
+  color: var(--win-faint);
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.008);
+  min-width: 0;
+  min-height: 0;
+}
+
+.tile-empty:hover {
+  border-color: rgba(124, 140, 255, 0.35);
+  color: var(--win-dim);
+  background: rgba(124, 140, 255, 0.04);
+}
+
+.tile-empty-plus {
+  font-size: 22px;
+  line-height: 0;
+}
+
+.tile-empty span:last-child {
+  font-family: var(--win-mono);
+  font-size: 11px;
+}
+
+/* Drag affordances tuned for the flat window look. */
+.workspace-panel.drag-over,
+.conv-card.drag-over {
+  border-radius: 9px;
+  box-shadow: 0 -3px 0 -1px var(--win-accent), 0 2px 12px rgba(0, 0, 0, 0.25);
+}
+
+.workspace-panel.drag-over.after,
+.conv-card.drag-over.after {
+  box-shadow: 0 3px 0 -1px var(--win-accent), 0 2px 12px rgba(0, 0, 0, 0.25);
 }

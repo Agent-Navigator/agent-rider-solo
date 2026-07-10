@@ -10,6 +10,10 @@ export interface PluginPanelContext {
   panelState?: PluginPanelState
   /** Persists chrome state changes such as collapse / full-window. */
   onPanelStateChange?: (patch: PluginPanelState) => void
+  /** True while this panel is the single block filling the workspace grid. */
+  maximized?: boolean
+  /** Toggles this panel as the single block filling the workspace grid. */
+  onToggleMaximize?: () => void
 }
 
 export interface PluginPanelState {

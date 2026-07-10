@@ -32,7 +32,7 @@ function clearGuacamoleSession() {
   }
 }
 
-function LocalDesktopGuacamolePanel({ onClose, panelState, onPanelStateChange }: PluginPanelContext) {
+function LocalDesktopGuacamolePanel({ onClose, panelState, onPanelStateChange, maximized, onToggleMaximize }: PluginPanelContext) {
   const reloadRef = useRef<(() => void) | null>(null)
   const frameRef = useRef<HTMLIFrameElement | null>(null)
   const attemptsRef = useRef(0)
@@ -91,6 +91,8 @@ function LocalDesktopGuacamolePanel({ onClose, panelState, onPanelStateChange }:
       collapsed={panelState?.collapsed}
       fullWindow={panelState?.fullWindow}
       onStateChange={onPanelStateChange}
+      maximized={maximized}
+      onToggleMaximize={onToggleMaximize}
       onFrameLoad={handleFrameLoad}
       onBeforeReload={handleBeforeReload}
       reloadRef={reloadRef}

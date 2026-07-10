@@ -805,6 +805,119 @@ function turnRoleLabel(status: JobStatus) {
           : 'Running'
 }
 
+// --- Window chrome (reference design) helpers -------------------------------
+// Every workspace block — conversation, TUI agent, tool, app — renders as a
+// "window": a 34px titlebar (grip · status dot · mono title · meta · status ·
+// actions), a dark body, and (for chat windows) a prompt bar + footer.
+
+interface WindowStatusTone {
+  label: string
+  dot: string
+  color: string
+}
+
+function windowStatusTone(status: JobStatus, isDraft: boolean): WindowStatusTone {
+  if (isDraft) return { label: 'idle', dot: '#5c6470', color: '#7a828f' }
+  switch (status) {
+    case 'running':
+      return { label: 'running', dot: '#e0a33e', color: '#e6b25a' }
+    case 'queued':
+      return { label: 'queued', dot: '#e0a33e', color: '#e6b25a' }
+    case 'error':
+      return { label: 'error', dot: '#ef6d6d', color: '#ff9d9d' }
+    case 'cancelled':
+      return { label: 'stopped', dot: '#5c6470', color: '#7a828f' }
+    default:
+      return { label: 'ready', dot: '#46c98b', color: '#5fd39b' }
+  }
+}
+
+function connectionStatusTone(state: 'connecting' | 'connected' | 'closed' | 'error'): WindowStatusTone {
+  switch (state) {
+    case 'connected':
+      return { label: 'connected', dot: '#46c98b', color: '#5fd39b' }
+    case 'connecting':
+      return { label: 'connecting', dot: '#e0a33e', color: '#e6b25a' }
+    case 'error':
+      return { label: 'error', dot: '#ef6d6d', color: '#ff9d9d' }
+    default:
+      return { label: 'closed', dot: '#5c6470', color: '#7a828f' }
+  }
+}
+
+function WinGrip() {
+  return (
+    <span className="win-grip" aria-hidden>
+      <svg width="8" height="14" viewBox="0 0 8 14">
+        <circle cx="2" cy="2" r="1.3" fill="currentColor" />
+        <circle cx="6" cy="2" r="1.3" fill="currentColor" />
+        <circle cx="2" cy="7" r="1.3" fill="currentColor" />
+        <circle cx="6" cy="7" r="1.3" fill="currentColor" />
+        <circle cx="2" cy="12" r="1.3" fill="currentColor" />
+        <circle cx="6" cy="12" r="1.3" fill="currentColor" />
+      </svg>
+    </span>
+  )
+}
+
+function WinFilesIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+      <path
+        d="M2 4.5A1.5 1.5 0 013.5 3H6l1.5 1.5H12.5A1.5 1.5 0 0114 6v6a1.5 1.5 0 01-1.5 1.5h-9A1.5 1.5 0 012 12V4.5z"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
+
+function WinFullscreenIcon({ active }: { active?: boolean }) {
+  return active ? (
+    <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
+      <path d="M6 2v4H2M10 2v4h4M6 14v-4H2M10 14v-4h4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+    </svg>
+  ) : (
+    <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
+      <path d="M2 6V2h4M14 6V2h-4M2 10v4h4M14 10v4h-4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+function WinMaximizeIcon({ active }: { active?: boolean }) {
+  return (
+    <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
+      {active ? (
+        <>
+          <rect x="2.5" y="5.5" width="8" height="8" rx="1.5" stroke="currentColor" strokeWidth="1.3" />
+          <path d="M5.5 3h6.5a1.5 1.5 0 011.5 1.5V11" stroke="currentColor" strokeWidth="1.3" />
+        </>
+      ) : (
+        <rect x="2.5" y="2.5" width="11" height="11" rx="1.5" stroke="currentColor" strokeWidth="1.3" />
+      )}
+    </svg>
+  )
+}
+
+function WinCloseIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
+      <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+function WinContextIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+      <path d="M2 4.5h8M12.5 4.5H14M2 11.5h3M7.5 11.5H14" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+      <circle cx="11" cy="4.5" r="1.6" stroke="currentColor" strokeWidth="1.3" />
+      <circle cx="5.8" cy="11.5" r="1.6" stroke="currentColor" strokeWidth="1.3" />
+    </svg>
+  )
+}
+
 function formatBytes(size: number | null): string {
   if (size == null) return ''
   if (size < 1024) return `${size} B`
@@ -1459,7 +1572,7 @@ function FileBrowser({
 
 // Interactive areas that should keep their own mouse behaviour rather than
 // starting a drag (shared by cards and workspace panels).
-const DRAG_EXCLUDE = 'input, textarea, select, button, a, iframe, [contenteditable="true"], .bubble, .conv-agent-terminal, .terminal-screen, .file-browser, .file-preview'
+const DRAG_EXCLUDE = 'input, textarea, select, button, a, iframe, [contenteditable="true"], .win-body, .win-promptbar, .conv-agent-terminal, .terminal-screen, .file-browser, .file-preview'
 
 // Layout preset picker shown in the workspace toolbar. Icons are tiny inline
 // bars mirroring each grid shape (single / 2-up / quad / 3-col / master+stack
@@ -1569,8 +1682,6 @@ function DraggablePanel({
   onDragStartPanel,
   onDragEndPanel,
   onDropOnPanel,
-  maximized = false,
-  onToggleMaximize,
   children,
 }: {
   panelId: string
@@ -1579,9 +1690,6 @@ function DraggablePanel({
   onDragStartPanel: () => void
   onDragEndPanel: () => void
   onDropOnPanel: (after: boolean) => void
-  /** Whether this panel is the single block currently filling the workspace. */
-  maximized?: boolean
-  onToggleMaximize?: () => void
   children: ReactNode
 }) {
   const ref = useRef<HTMLDivElement | null>(null)
@@ -1639,20 +1747,6 @@ function DraggablePanel({
         onDropOnPanel(dragOverAfterRef.current)
       }}
     >
-      {onToggleMaximize ? (
-        <button
-          type="button"
-          className="panel-maximize-btn"
-          title={maximized ? 'Restore grid layout' : 'Maximize this panel'}
-          aria-label={maximized ? 'Restore grid layout' : 'Maximize this panel'}
-          onClick={(event) => {
-            event.stopPropagation()
-            onToggleMaximize()
-          }}
-        >
-          {maximized ? '⤡' : '⤢'}
-        </button>
-      ) : null}
       {children}
     </div>
   )
@@ -1763,6 +1857,7 @@ function ConversationCard({
   const linearTurns = useMemo(() => buildLinearTurns(turns), [turns])
   const status = run.jobStatus
   const isDraft = turns.length === 0
+  const tone = windowStatusTone(status, isDraft)
   const topVisibleTurnId = linearTurns[0]?.id ?? null
   const focusedTurnId = focusTurnId && linearTurns.some((turn) => turn.id === focusTurnId) ? focusTurnId : topVisibleTurnId
   const focusedTurnRef = useRef<HTMLDivElement | null>(null)
@@ -1911,148 +2006,127 @@ function ConversationCard({
       <div
         key={turn.id}
         ref={turn.id === focusedTurnId ? focusedTurnRef : undefined}
-        className="turn-node"
+        className={`term-turn ${turn.status}`}
       >
-        <article className={`turn ${turn.status} ${isTurnCollapsed ? 'collapsed' : ''}`}>
-          <div
-            className={`bubble user turn-toggle ${isTurnCollapsed ? 'collapsed' : ''}`}
-            role="button"
-            tabIndex={0}
-            aria-expanded={!isTurnCollapsed}
-            onClick={(event) => {
-              if (hasTextSelectionInside(event.currentTarget)) return
-              toggleTurnCollapsed(turn.id)
-            }}
-            onKeyDown={(event) => toggleTurnFromKey(event, turn.id)}
-          >
-            <div className="bubble-head">
-              <span className="role-group">
-                <span className={`turn-toggle-caret ${isTurnCollapsed ? '' : 'open'}`} aria-hidden>
-                  ▾
-                </span>
-                <span className="role">You</span>
-                <span className="turn-prompt-sep" aria-hidden>|</span>
-                <span className="turn-prompt-text">{turn.prompt}</span>
-              </span>
-              <span className="turn-head-actions">
-                <button
-                  type="button"
-                  className="copy-prompt-button"
-                  onKeyDown={(event) => event.stopPropagation()}
-                  onClick={(event) => {
-                    event.stopPropagation()
-                    void copyPrompt(turn)
-                  }}
-                >
-                  {copiedTurnId === turn.id ? 'Copied' : 'Copy'}
-                </button>
-                <button
-                  type="button"
-                  className="turn-delete-button"
-                  disabled={!canDelete}
-                  title={canDelete ? 'Delete this Q/A turn' : 'Stop the running turn before deleting it'}
-                  onKeyDown={(event) => event.stopPropagation()}
-                  onClick={(event) => {
-                    event.stopPropagation()
-                    if (canDelete) onDeleteTurn(turn.id)
-                  }}
-                >
-                  Delete
-                </button>
-              </span>
-            </div>
-          </div>
-          {!isTurnCollapsed ? (
-            <div className="bubble assistant">
-              <div className="assistant-head">
-                <span className="role">Hermes · {turnRoleLabel(turn.status)}</span>
-                <div className="assistant-head-actions">
-                  {canStop ? (
-                    <button
-                      type="button"
-                      className="assistant-stop-button"
-                      onClick={() => onStopTurn(turn.id)}
-                      aria-label="Stop Hermes"
-                    >
-                      Stop
-                    </button>
-                  ) : null}
-                  {canRefresh ? (
-                    <button
-                      type="button"
-                      className="assistant-refresh-button"
-                      onClick={() => onRefreshTurn(turn.id)}
-                      aria-label="Refresh Hermes stream"
-                    >
-                      Refresh
-                    </button>
-                  ) : null}
-                  <button
-                    type="button"
-                    className="assistant-to-bottom-button"
-                    onClick={() => scrollAssistantBubbleToBottom(turn.id)}
-                    aria-label="Scroll to bottom of this reply"
-                  >
-                    To bottom
+        <div
+          className={`term-prompt-line ${isTurnCollapsed ? 'collapsed' : ''}`}
+          role="button"
+          tabIndex={0}
+          aria-expanded={!isTurnCollapsed}
+          onClick={(event) => {
+            if (hasTextSelectionInside(event.currentTarget)) return
+            toggleTurnCollapsed(turn.id)
+          }}
+          onKeyDown={(event) => toggleTurnFromKey(event, turn.id)}
+        >
+          <span className="term-prompt-mark" aria-hidden>›</span>
+          <span className="term-prompt-text">{turn.prompt}</span>
+          <span className="term-turn-actions">
+            <button
+              type="button"
+              className="term-action"
+              onKeyDown={(event) => event.stopPropagation()}
+              onClick={(event) => {
+                event.stopPropagation()
+                void copyPrompt(turn)
+              }}
+            >
+              {copiedTurnId === turn.id ? 'copied' : 'copy'}
+            </button>
+            <button
+              type="button"
+              className="term-action danger"
+              disabled={!canDelete}
+              title={canDelete ? 'Delete this Q/A turn' : 'Stop the running turn before deleting it'}
+              onKeyDown={(event) => event.stopPropagation()}
+              onClick={(event) => {
+                event.stopPropagation()
+                if (canDelete) onDeleteTurn(turn.id)
+              }}
+            >
+              delete
+            </button>
+          </span>
+        </div>
+        {!isTurnCollapsed ? (
+          <div className="term-response">
+            <div className="term-response-head">
+              <span className="term-response-role">hermes · {turnRoleLabel(turn.status).toLowerCase()}</span>
+              <span className="term-turn-actions always">
+                {canStop ? (
+                  <button type="button" className="term-action danger" onClick={() => onStopTurn(turn.id)} aria-label="Stop Hermes">
+                    stop
                   </button>
-                </div>
-              </div>
-              <div className="md-body">
-                <ReactMarkdown
-                  remarkPlugins={richMarkdownPlugins.remark}
-                  rehypePlugins={richMarkdownPlugins.rehype}
-                  components={richMarkdownComponents}
-                >
-                  {turn.response || '…'}
-                </ReactMarkdown>
-              </div>
-              <div className="assistant-actions">
+                ) : null}
+                {canRefresh ? (
+                  <button type="button" className="term-action" onClick={() => onRefreshTurn(turn.id)} aria-label="Refresh Hermes stream">
+                    refresh
+                  </button>
+                ) : null}
                 <button
                   type="button"
-                  className="ask-more-button"
+                  className="term-action"
+                  onClick={() => scrollAssistantBubbleToBottom(turn.id)}
+                  aria-label="Scroll to bottom of this reply"
+                >
+                  to bottom
+                </button>
+                <button
+                  type="button"
+                  className="term-action"
                   disabled={!canAskMore}
+                  title="Ask a follow-up from this reply"
                   onClick={() => {
                     setAskParentId(turn.id)
                     setAskDraft('')
                   }}
                 >
-                  Ask Here
+                  ask here
                 </button>
-              </div>
-              {askParentId === turn.id ? (
-                <form ref={askMoreFormRef} className="ask-more-form" onSubmit={(event) => submitAskMore(event, turn.id)}>
-                  <textarea
-                    ref={askMoreTextareaRef}
-                    value={askDraft}
-                    onChange={(event) => setAskDraft(event.target.value)}
-                    onDragOver={(event) => {
-                      if (event.dataTransfer.types.includes('application/x-agent-rider-file-path')) event.preventDefault()
-                    }}
-                    onDrop={(event) => dropFilePathIntoTextarea(event, setAskDraft)}
-                    placeholder="Ask a follow-up from this reply…"
-                    rows={2}
-                  />
-                  <div className="ask-more-controls">
-                    <button
-                      type="button"
-                      className="ask-more-cancel"
-                      onClick={() => {
-                        setAskParentId(null)
-                        setAskDraft('')
-                      }}
-                    >
-                      Cancel
-                    </button>
-                    <button type="submit" className="send-button">
-                      Send
-                    </button>
-                  </div>
-                </form>
-              ) : null}
-              <div id={assistantBubbleBottomId(turn.id)} className="assistant-bubble-bottom" aria-hidden />
+              </span>
             </div>
-          ) : null}
-        </article>
+            <div className="md-body term-md">
+              <ReactMarkdown
+                remarkPlugins={richMarkdownPlugins.remark}
+                rehypePlugins={richMarkdownPlugins.rehype}
+                components={richMarkdownComponents}
+              >
+                {turn.response || '…'}
+              </ReactMarkdown>
+            </div>
+            {askParentId === turn.id ? (
+              <form ref={askMoreFormRef} className="ask-more-form" onSubmit={(event) => submitAskMore(event, turn.id)}>
+                <textarea
+                  ref={askMoreTextareaRef}
+                  value={askDraft}
+                  onChange={(event) => setAskDraft(event.target.value)}
+                  onDragOver={(event) => {
+                    if (event.dataTransfer.types.includes('application/x-agent-rider-file-path')) event.preventDefault()
+                  }}
+                  onDrop={(event) => dropFilePathIntoTextarea(event, setAskDraft)}
+                  placeholder="Ask a follow-up from this reply…"
+                  rows={2}
+                />
+                <div className="ask-more-controls">
+                  <button
+                    type="button"
+                    className="term-action"
+                    onClick={() => {
+                      setAskParentId(null)
+                      setAskDraft('')
+                    }}
+                  >
+                    cancel
+                  </button>
+                  <button type="submit" className="term-action accent">
+                    send
+                  </button>
+                </div>
+              </form>
+            ) : null}
+            <div id={assistantBubbleBottomId(turn.id)} className="assistant-bubble-bottom" aria-hidden />
+          </div>
+        ) : null}
       </div>
     )
   }
@@ -2124,86 +2198,100 @@ function ConversationCard({
       }}
     >
       {hideHeader ? null : (
-      <div className="conv-card-head" onClick={onToggle}>
-        <span
-          className="conv-drag-handle"
-          title="Drag anywhere on the card (except inputs) to reorder / move column"
-          aria-hidden
+      <div className="win-titlebar" onDoubleClick={onToggle} title="Drag to reorder · double-click to collapse">
+        <WinGrip />
+        <span className="win-dot" style={{ background: tone.dot }} aria-hidden />
+        <input
+          className="win-title-input"
+          value={run.task}
+          onChange={(event) => onTitleChange(event.target.value)}
           onClick={(event) => event.stopPropagation()}
-        >
-          ⠿
+          placeholder="untitled"
+          aria-label="Conversation title"
+          size={Math.max(4, Math.min(28, (run.task || 'untitled').length + 1))}
+        />
+        <span className="win-meta" title={timeLabel(run.createdAt)}>
+          {agentLabel(agentType)}
+          {run.category ? ` · ${run.category}` : ''}
+          {tui ? '' : isDraft ? ' · draft' : ` · ${turns.length} ${turns.length === 1 ? 'turn' : 'turns'}`}
         </span>
-        <div className="conv-card-titles">
-          <span className="eyebrow">
-            {timeLabel(run.createdAt)}
-            {` · ${agentLabel(agentType)}`}
-            {run.category ? ` · ${run.category}` : ''}
-            {tui ? '' : isDraft ? ' · Draft' : ` · ${turns.length} ${turns.length === 1 ? 'turn' : 'turns'}`}
-          </span>
-          <input
-            className="conv-title-input"
-            value={run.task}
-            onChange={(event) => onTitleChange(event.target.value)}
-            onClick={(event) => event.stopPropagation()}
-            placeholder="Untitled conversation"
-            aria-label="Conversation title"
-          />
-        </div>
-        <div className="conv-card-status">
-          {!isDraft && status === 'running' ? <span className="spinner" aria-label="Running" /> : null}
-          {!isDraft && status === 'queued' ? <span className="chip">Queued</span> : null}
-          {!isDraft && status === 'error' ? <span className="pill error">Error</span> : null}
-          {isNewDone ? <span className="new-dot" title="New result" /> : null}
-        </div>
-        <span className={`conv-caret ${collapsed ? '' : 'open'}`} aria-hidden>▾</span>
+        <div className="win-spacer" />
+        {isNewDone ? <span className="new-dot" title="New result" /> : null}
+        <span className="win-status" style={{ color: tone.color }}>{tone.label}</span>
+        <button
+          type="button"
+          className={`win-btn ${fileBrowserOpen ? 'active' : ''}`}
+          title={fileBrowserOpen ? 'Hide file browser' : 'Browse files'}
+          aria-label={fileBrowserOpen ? 'Hide file browser' : 'Browse files'}
+          aria-expanded={fileBrowserOpen}
+          onClick={(event) => {
+            event.stopPropagation()
+            setFileBrowserOpen((current) => !current)
+          }}
+        >
+          <WinFilesIcon />
+        </button>
+        {hideContext ? null : (
+          <button
+            type="button"
+            className={`win-btn ${metaCollapsed ? '' : 'active'}`}
+            title={metaCollapsed ? 'Show context (category / project / agent / workspace)' : 'Hide context'}
+            aria-label="Toggle context fields"
+            aria-expanded={!metaCollapsed}
+            onClick={(event) => {
+              event.stopPropagation()
+              onMetaCollapsedChange(!metaCollapsed)
+            }}
+          >
+            <WinContextIcon />
+          </button>
+        )}
+        <button
+          type="button"
+          className="win-btn"
+          title={collapsed ? 'Expand window' : 'Collapse window'}
+          aria-label={collapsed ? 'Expand window' : 'Collapse window'}
+          aria-expanded={!collapsed}
+          onClick={(event) => {
+            event.stopPropagation()
+            onToggle()
+          }}
+        >
+          <span className={`conv-caret ${collapsed ? '' : 'open'}`} aria-hidden>▾</span>
+        </button>
         {onToggleMaximize ? (
           <button
             type="button"
-            className="card-maximize"
-            title={maximized ? 'Restore grid layout' : 'Maximize this card'}
-            aria-label={maximized ? 'Restore grid layout' : 'Maximize this card'}
+            className="win-btn"
+            title={maximized ? 'Restore grid layout' : 'Maximize in grid'}
+            aria-label={maximized ? 'Restore grid layout' : 'Maximize in grid'}
             onClick={(event) => {
               event.stopPropagation()
               onToggleMaximize()
             }}
           >
-            {maximized ? '⤡' : '⤢'}
+            <WinMaximizeIcon active={maximized} />
           </button>
         ) : null}
         <button
           type="button"
-          className="card-close"
-          title="Close conversation card"
-          aria-label="Close conversation card"
+          className="win-btn win-btn-close"
+          title="Close window"
+          aria-label="Close window"
           onClick={(event) => {
             event.stopPropagation()
             onClose()
           }}
         >
-          ×
+          <WinCloseIcon />
         </button>
       </div>
       )}
 
       {!collapsed ? (
         <div className="conv-card-body">
-          {hideContext ? null : (
-          <div className={`conv-meta ${metaCollapsed ? 'collapsed' : ''}`}>
-            <button
-              type="button"
-              className="conv-meta-toggle"
-              aria-expanded={!metaCollapsed}
-              onClick={() => onMetaCollapsedChange(!metaCollapsed)}
-            >
-              <span className={`conv-meta-caret ${metaCollapsed ? '' : 'open'}`} aria-hidden>▾</span>
-              <span className="conv-meta-toggle-label">Context</span>
-              {metaCollapsed ? (
-                <span className="conv-meta-summary">
-                  {[run.category, run.project, agentLabel(agentType)].filter(Boolean).join(' · ') || 'Category · Project · Agent · Workspace'}
-                </span>
-              ) : null}
-            </button>
-            {metaCollapsed ? null : (
+          {hideContext || metaCollapsed ? null : (
+          <div className="conv-meta">
             <div className="conv-meta-fields">
             <div className="conv-meta-row">
               <span className="tree-label">Category</span>
@@ -2273,7 +2361,6 @@ function ConversationCard({
               </button>
             </div>
             </div>
-            )}
           </div>
           )}
 
@@ -2282,7 +2369,7 @@ function ConversationCard({
               rootPath={run.workspacePath}
               open={fileBrowserOpen}
               onToggle={() => setFileBrowserOpen((current) => !current)}
-              showOwnToggle={!tui}
+              showOwnToggle={false}
             />
 
             {tui && (agentType !== 'custom' || customAgentCommand) ? (
@@ -2300,6 +2387,7 @@ function ConversationCard({
                   showClose={false}
                   onClose={() => {}}
                   collapsible={false}
+                  frameless
                   fullWindow={agentTerminalState?.fullWindow}
                   promptContext={run.cardKind === 'app-builder' ? 'app-builder' : undefined}
                   appWorkspace={run.cardKind === 'app-builder' ? run.workspacePath : undefined}
@@ -2329,82 +2417,103 @@ function ConversationCard({
               </div>
             ) : (
               <>
-                <form className="composer conv-followup" onSubmit={submit}>
+                <div className="win-body conv-transcript">
+                  {turns.length ? (
+                    <>
+                      <div className="feed-toolbar">
+                        <span className="feed-toolbar-label">
+                          {turns.length} {turns.length === 1 ? 'turn' : 'turns'}
+                        </span>
+                        <button
+                          type="button"
+                          className="term-action"
+                          onClick={hideAllTurns}
+                          title="Collapse every turn in this conversation"
+                        >
+                          hide all
+                        </button>
+                      </div>
+                      {linearTurns.map((turn) => renderTurn(turn))}
+                    </>
+                  ) : (
+                    <div className="win-body-empty">
+                      New conversation.
+                      {'\n'}Awaiting first message…
+                    </div>
+                  )}
+                </div>
+
+                <form className="win-promptbar" onSubmit={submit}>
+                  <span className="win-prompt-mark" aria-hidden>›</span>
                   <textarea
                     value={draft}
+                    rows={1}
                     onChange={(event) => setDraft(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' && !event.shiftKey) {
+                        event.preventDefault()
+                        event.currentTarget.form?.requestSubmit()
+                      }
+                    }}
                     onDragOver={(event) => {
                       if (event.dataTransfer.types.includes('application/x-agent-rider-file-path')) event.preventDefault()
                     }}
                     onDrop={(event) => dropFilePathIntoTextarea(event, setDraft)}
-                    placeholder={isDraft ? 'Describe the task to start this conversation…' : 'Reply in this conversation…'}
-                    rows={2}
+                    placeholder={isDraft ? 'Describe the task to start this conversation…' : `Reply to ${conversationTitle(run)}…`}
+                    aria-label="Message"
                   />
-                  <div className="composer-meta">
-                    <div className="composer-controls" aria-label="Hermes options">
-                      <label className="composer-control">
-                        <span>Model</span>
-                      <select
-                        value={selectedModelValue}
-                        onChange={(event) => {
-                          const next = parseModelSelectValue(event.target.value)
-                          onModelChange(next.model, next.modelProvider)
-                        }}
-                      >
-                        <option value="">
-                          {modelCatalog.defaultModel ? `Default · ${modelCatalog.defaultModel}` : 'Default model'}
+                  {draft ? (
+                    <button type="submit" className="term-action accent win-send" title="Send (Enter)">
+                      send ↵
+                    </button>
+                  ) : (
+                    <span className="win-cursor" aria-hidden />
+                  )}
+                </form>
+
+                <div className="win-footer">
+                  <label className="win-footer-control" title="Model">
+                    <select
+                      value={selectedModelValue}
+                      onChange={(event) => {
+                        const next = parseModelSelectValue(event.target.value)
+                        onModelChange(next.model, next.modelProvider)
+                      }}
+                      aria-label="Model"
+                    >
+                      <option value="">
+                        {modelCatalog.defaultModel ? `default · ${modelCatalog.defaultModel}` : 'default model'}
+                      </option>
+                      {modelCatalog.groups.map((group) => (
+                        <optgroup key={`${group.providerId ?? group.provider}:${group.provider}`} label={group.provider}>
+                          {group.models.map((model) => (
+                            <option key={`${group.providerId ?? group.provider}:${model.id}`} value={modelSelectValue(model.id, group.providerId)}>
+                              {model.label}
+                            </option>
+                          ))}
+                        </optgroup>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="win-footer-control" title="Reasoning effort">
+                    <select
+                      value={selectedReasoningEffort}
+                      onChange={(event) => onReasoningEffortChange(event.target.value)}
+                      aria-label="Reasoning effort"
+                    >
+                      <option value="">default effort</option>
+                      {reasoningEfforts.map((effort) => (
+                        <option key={effort} value={effort}>
+                          {effort}
                         </option>
-                        {modelCatalog.groups.map((group) => (
-                          <optgroup key={`${group.providerId ?? group.provider}:${group.provider}`} label={group.provider}>
-                            {group.models.map((model) => (
-                              <option key={`${group.providerId ?? group.provider}:${model.id}`} value={modelSelectValue(model.id, group.providerId)}>
-                                {model.label}
-                              </option>
-                            ))}
-                          </optgroup>
-                        ))}
-                      </select>
-                    </label>
-                    <label className="composer-control">
-                      <span>Reasoning</span>
-                      <select
-                        value={selectedReasoningEffort}
-                        onChange={(event) => onReasoningEffortChange(event.target.value)}
-                      >
-                        <option value="">Default effort</option>
-                        {reasoningEfforts.map((effort) => (
-                          <option key={effort} value={effort}>
-                            {effort}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  </div>
-                  <span className="composer-workspace-path">{run.workspacePath}</span>
-                  <button type="submit" className="send-button">
-                    Send
+                      ))}
+                    </select>
+                  </label>
+                  <div className="win-spacer" />
+                  <button type="button" className="win-footer-path" onClick={onOpenPicker} title={`${run.workspacePath} — change workspace`}>
+                    {run.workspacePath}
                   </button>
                 </div>
-              </form>
-
-              {turns.length ? (
-                <div className="conversation-feed">
-                  <div className="feed-toolbar">
-                    <span className="feed-toolbar-label">
-                      {turns.length} {turns.length === 1 ? 'turn' : 'turns'}
-                    </span>
-                    <button
-                      type="button"
-                      className="hide-all-button"
-                      onClick={hideAllTurns}
-                      title="Collapse every turn in this conversation"
-                    >
-                      Hide All
-                    </button>
-                  </div>
-                  {linearTurns.map((turn) => renderTurn(turn))}
-                </div>
-              ) : null}
             </>
           )}
           </div>
@@ -2618,6 +2727,8 @@ function AppBuilderPanel({
   onContextCollapsedChange,
   splitRatio,
   onStateChange,
+  maximized,
+  onToggleMaximize,
 }: {
   run: RunNode
   apps: AgentApp[]
@@ -2640,6 +2751,10 @@ function AppBuilderPanel({
   /** Chat pane share (0.15–0.85) of the Chat+App split. */
   splitRatio?: number
   onStateChange?: (patch: WorkspacePanelState) => void
+  /** True while this panel is the single block filling the workspace grid. */
+  maximized?: boolean
+  /** Toggles this panel as the single block filling the workspace grid. */
+  onToggleMaximize?: () => void
 }) {
   const [internalCollapsed, setInternalCollapsed] = useState(false)
   const [internalFullWindow, setInternalFullWindow] = useState(false)
@@ -2721,12 +2836,6 @@ function AppBuilderPanel({
     window.addEventListener('pointercancel', onUp)
   }
 
-  function toggleFromKey(event: KeyboardEvent<HTMLDivElement>) {
-    if (event.key !== 'Enter' && event.key !== ' ') return
-    event.preventDefault()
-    setCollapsedState((current) => !current)
-  }
-
   function commitCustomAgentCommand() {
     const next = customCommandDraft.trim()
     if (next === (run.agentCommand ?? '').trim()) return
@@ -2787,55 +2896,75 @@ function AppBuilderPanel({
       aria-label="App Builder"
     >
       {appViewOnly ? null : (
-      <div
-        className="conv-card-head app-builder-head"
-        role="button"
-        tabIndex={0}
-        aria-expanded={!isCollapsed}
-        onClick={() => setCollapsedState((current) => !current)}
-        onKeyDown={toggleFromKey}
-      >
-        <span className="conv-drag-handle" aria-hidden onClick={(event) => event.stopPropagation()}>
-          ⠿
+      <div className="win-titlebar" onDoubleClick={() => setCollapsedState((current) => !current)}>
+        <WinGrip />
+        <span
+          className="win-dot"
+          style={{ background: appAtWork?.hasDist ? '#46c98b' : '#e0a33e' }}
+          aria-hidden
+        />
+        <input
+          className="win-title-input app-builder-title-input"
+          value={run.task}
+          onChange={(event) => onTitleChange(event.target.value)}
+          onClick={(event) => event.stopPropagation()}
+          placeholder="untitled app"
+          aria-label="App title"
+          size={Math.max(4, Math.min(28, (run.task || 'untitled app').length + 1))}
+        />
+        <span className="win-meta">Resource · App Builder</span>
+        <div className="win-spacer" />
+        <span className="win-status" style={{ color: appAtWork?.hasDist ? '#5fd39b' : '#e6b25a' }}>
+          {appAtWork?.hasDist ? 'ready' : appAtWork ? 'building' : 'no build'}
         </span>
-        <div className="conv-card-titles">
-          <span className="eyebrow">Resource · App Builder</span>
-          <input
-            className="conv-title-input app-builder-title-input"
-            value={run.task}
-            onChange={(event) => onTitleChange(event.target.value)}
-            onClick={(event) => event.stopPropagation()}
-            placeholder="Untitled app"
-            aria-label="App title"
-          />
-        </div>
-        <div className="terminal-actions">
+        <button
+          type="button"
+          className="win-btn"
+          title={isCollapsed ? 'Expand window' : 'Collapse window'}
+          aria-label={isCollapsed ? 'Expand window' : 'Collapse window'}
+          aria-expanded={!isCollapsed}
+          onClick={() => setCollapsedState((current) => !current)}
+        >
+          <span className={`conv-caret ${isCollapsed ? '' : 'open'}`} aria-hidden>▾</span>
+        </button>
+        {onToggleMaximize ? (
           <button
             type="button"
-            className="terminal-icon-button"
-            title={isFullWindow ? 'Exit full window' : 'Expand to full window'}
-            aria-label={isFullWindow ? 'Exit full window' : 'Expand to full window'}
+            className="win-btn"
+            title={maximized ? 'Restore grid layout' : 'Maximize in grid'}
+            aria-label={maximized ? 'Restore grid layout' : 'Maximize in grid'}
             onClick={(event) => {
               event.stopPropagation()
-              setFullWindowState((current) => !current)
+              onToggleMaximize()
             }}
           >
-            {isFullWindow ? '↙' : '⛶'}
+            <WinMaximizeIcon active={maximized} />
           </button>
-          <button
-            type="button"
-            className="card-close"
-            title="Close App Builder"
-            aria-label="Close App Builder"
-            onClick={(event) => {
-              event.stopPropagation()
-              onClose()
-            }}
-          >
-            ×
-          </button>
-        </div>
-        <span className={`conv-caret ${isCollapsed ? '' : 'open'}`} aria-hidden>▾</span>
+        ) : null}
+        <button
+          type="button"
+          className="win-btn"
+          title={isFullWindow ? 'Exit full window' : 'Expand to full window'}
+          aria-label={isFullWindow ? 'Exit full window' : 'Expand to full window'}
+          onClick={(event) => {
+            event.stopPropagation()
+            setFullWindowState((current) => !current)
+          }}
+        >
+          <WinFullscreenIcon active={isFullWindow} />
+        </button>
+        <button
+          type="button"
+          className="win-btn win-btn-close"
+          title="Close App Builder"
+          aria-label="Close App Builder"
+          onClick={(event) => {
+            event.stopPropagation()
+            onClose()
+          }}
+        >
+          <WinCloseIcon />
+        </button>
       </div>
       )}
 
@@ -3282,6 +3411,9 @@ function WebTerminal({
   appWorkspace,
   onStateChange,
   headerLeading,
+  frameless = false,
+  maximized,
+  onToggleMaximize,
 }: {
   initialCwd: string
   onClose: () => void
@@ -3306,6 +3438,14 @@ function WebTerminal({
    *  button — lets the card slot in extra controls (e.g. the File Browser
    *  toggle) that stay visible in both small and full-window modes. */
   headerLeading?: ReactNode
+  /** Embedded inside another window (e.g. a TUI conversation window): the
+   *  terminal skips its own titlebar except in full-window mode, where the
+   *  host titlebar is covered and the exit control must live here. */
+  frameless?: boolean
+  /** True while this panel is the single block filling the workspace grid. */
+  maximized?: boolean
+  /** Toggles this panel as the single block filling the workspace grid. */
+  onToggleMaximize?: () => void
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const terminalRef = useRef<XTermTerminal | null>(null)
@@ -3463,12 +3603,6 @@ function WebTerminal({
     onStateChange?.({ fullWindow: next })
   }
 
-  function toggleTerminalFromKey(event: KeyboardEvent<HTMLDivElement>) {
-    if (event.key !== 'Enter' && event.key !== ' ') return
-    event.preventDefault()
-    setTerminalCollapsedState((current) => !current)
-  }
-
   function pasteIntoTerminal(value: string) {
     terminalRef.current?.focus()
     if (socketRef.current?.readyState === WebSocket.OPEN) {
@@ -3511,56 +3645,73 @@ function WebTerminal({
     return () => container.removeEventListener('wheel', handleWheel, { capture: true })
   }, [agentTerminal, terminalCollapsed])
 
+  const stateTone = connectionStatusTone(connectionState)
+
   return (
-    <section className={`web-terminal ${terminalCollapsed ? 'collapsed' : ''} ${terminalFullWindow ? 'full-window' : ''}`} aria-label="Local Terminal">
-      <div
-        className={`terminal-head ${collapsible ? '' : 'static'}`}
-        role={collapsible ? 'button' : undefined}
-        tabIndex={collapsible ? 0 : undefined}
-        aria-expanded={collapsible ? !terminalCollapsed : undefined}
-        onClick={collapsible ? () => setTerminalCollapsedState((current) => !current) : undefined}
-        onKeyDown={collapsible ? toggleTerminalFromKey : undefined}
-      >
+    <section className={`web-terminal ${terminalCollapsed ? 'collapsed' : ''} ${terminalFullWindow ? 'full-window' : ''} ${frameless ? 'frameless' : ''}`} aria-label="Local Terminal">
+      {frameless && !terminalFullWindow ? null : (
+      <div className="win-titlebar">
+        <WinGrip />
+        <span className="win-dot" style={{ background: stateTone.dot }} aria-hidden />
+        <span className="win-title">{title}</span>
+        <span className="win-meta">{eyebrow}</span>
+        <div className="win-spacer" />
+        <span className="win-status" style={{ color: stateTone.color }}>{stateTone.label}</span>
+        {headerLeading}
         {collapsible ? (
-          <span className={`terminal-caret ${terminalCollapsed ? '' : 'open'}`} aria-hidden>
-            ▾
-          </span>
-        ) : null}
-        <div>
-          <div className="eyebrow">{eyebrow}</div>
-          <h2>{title}</h2>
-        </div>
-        <div className="terminal-actions">
-          <span className={`terminal-state ${connectionState}`}>{connectionState}</span>
-          {headerLeading}
           <button
             type="button"
-            className="terminal-icon-button"
-            title={terminalFullWindow ? 'Exit full window' : 'Expand to full window'}
-            aria-label={terminalFullWindow ? 'Exit full window' : 'Expand to full window'}
+            className="win-btn"
+            title={terminalCollapsed ? 'Expand window' : 'Collapse window'}
+            aria-label={terminalCollapsed ? 'Expand window' : 'Collapse window'}
+            aria-expanded={!terminalCollapsed}
+            onClick={() => setTerminalCollapsedState((current) => !current)}
+          >
+            <span className={`conv-caret ${terminalCollapsed ? '' : 'open'}`} aria-hidden>▾</span>
+          </button>
+        ) : null}
+        {onToggleMaximize ? (
+          <button
+            type="button"
+            className="win-btn"
+            title={maximized ? 'Restore grid layout' : 'Maximize in grid'}
+            aria-label={maximized ? 'Restore grid layout' : 'Maximize in grid'}
             onClick={(event) => {
               event.stopPropagation()
-              setTerminalFullWindowState((current) => !current)
+              onToggleMaximize()
             }}
           >
-            {terminalFullWindow ? '↙' : '⛶'}
+            <WinMaximizeIcon active={maximized} />
           </button>
-          {showClose ? (
-            <button
-              type="button"
-              className="card-close"
-              title="Close Local Terminal"
-              aria-label="Close Local Terminal"
-              onClick={(event) => {
-                event.stopPropagation()
-                onClose()
-              }}
-            >
-              ×
-            </button>
-          ) : null}
-        </div>
+        ) : null}
+        <button
+          type="button"
+          className="win-btn"
+          title={terminalFullWindow ? 'Exit full window' : 'Expand to full window'}
+          aria-label={terminalFullWindow ? 'Exit full window' : 'Expand to full window'}
+          onClick={(event) => {
+            event.stopPropagation()
+            setTerminalFullWindowState((current) => !current)
+          }}
+        >
+          <WinFullscreenIcon active={terminalFullWindow} />
+        </button>
+        {showClose ? (
+          <button
+            type="button"
+            className="win-btn win-btn-close"
+            title="Close Local Terminal"
+            aria-label="Close Local Terminal"
+            onClick={(event) => {
+              event.stopPropagation()
+              onClose()
+            }}
+          >
+            <WinCloseIcon />
+          </button>
+        ) : null}
       </div>
+      )}
 
       <div className="terminal-body" aria-hidden={terminalCollapsed}>
         <div
@@ -3593,6 +3744,9 @@ function WebTerminal({
           >
             Reset
           </button>
+          {frameless ? (
+            <span className="win-status" style={{ color: stateTone.color }}>{stateTone.label}</span>
+          ) : null}
           <span>{initialCwd === DEFAULT_TERMINAL_CWD ? '~/' : initialCwd}</span>
           <button
             type="button"
@@ -5244,6 +5398,8 @@ export default function App() {
   // Resolve a panel id to its content + draggable wrapper (null if the
   // referenced plugin/app no longer exists).
   const renderPanelBlock = (panelId: string) => {
+    const panelMaximized = maximizedKey === panelId
+    const togglePanelMaximize = () => setMaximizedKey((current) => (current === panelId ? null : panelId))
     let content: ReactNode = null
     if (panelId === 'terminal') {
       content = (
@@ -5254,6 +5410,8 @@ export default function App() {
           collapsed={panelStates[panelId]?.collapsed}
           fullWindow={panelStates[panelId]?.fullWindow}
           onStateChange={(patch) => updatePanelState(panelId, patch)}
+          maximized={panelMaximized}
+          onToggleMaximize={togglePanelMaximize}
         />
       )
     } else if (isAppBuilderPanelId(panelId)) {
@@ -5282,6 +5440,8 @@ export default function App() {
             onContextCollapsedChange={(nextCollapsed) => updatePanelState(panelId, { contextCollapsed: nextCollapsed })}
             splitRatio={panelStates[panelId]?.builderSplit}
             onStateChange={(patch) => updatePanelState(panelId, patch)}
+            maximized={panelMaximized}
+            onToggleMaximize={togglePanelMaximize}
           />
         )
       }
@@ -5292,6 +5452,8 @@ export default function App() {
           onClose: () => closePanel(panelId),
           panelState: panelStates[panelId],
           onPanelStateChange: (patch) => updatePanelState(panelId, patch),
+          maximized: panelMaximized,
+          onToggleMaximize: togglePanelMaximize,
         })
       }
     } else if (panelId.startsWith('app:')) {
@@ -5305,6 +5467,8 @@ export default function App() {
             collapsed={panelStates[panelId]?.collapsed}
             fullWindow={panelStates[panelId]?.fullWindow}
             onStateChange={(patch) => updatePanelState(panelId, patch)}
+            maximized={panelMaximized}
+            onToggleMaximize={togglePanelMaximize}
           />
         )
       }
@@ -5319,8 +5483,6 @@ export default function App() {
         onDragStartPanel={() => setDraggingKey(panelId)}
         onDragEndPanel={() => setDraggingKey(null)}
         onDropOnPanel={(after) => handleDropOnBlock(panelId, after)}
-        maximized={maximizedKey === panelId}
-        onToggleMaximize={() => setMaximizedKey((current) => (current === panelId ? null : panelId))}
       >
         {content}
       </DraggablePanel>
@@ -5385,6 +5547,17 @@ export default function App() {
   // order-driven — there's no per-block column assignment to maintain.
   const renderTileGrid = () => {
     const dragActive = draggingKey !== null
+    // Fill unused preset slots with dashed "open window" placeholders, like
+    // the reference design; extra blocks beyond capacity still auto-grow rows.
+    const capacity =
+      layoutPreset === 'quad'
+        ? 4
+        : layoutPreset === 'three-col'
+          ? 6
+          : layoutPreset === 'master-stack'
+            ? 4
+            : freeRows * freeCols
+    const placeholderCount = Math.max(0, capacity - orderedKeys.length)
     return (
       <div
         className={`ws-columns tile-grid tile-grid-${layoutPreset}`}
@@ -5403,32 +5576,27 @@ export default function App() {
             {renderBlock(key)}
           </div>
         ))}
+        {Array.from({ length: placeholderCount }, (_, index) => (
+          <div
+            key={`tile-empty-${index}`}
+            className="tile-slot"
+            style={{ display: 'flex', minWidth: 0, minHeight: 0, ...tileSlotStyle(orderedKeys.length + index) }}
+          >
+            <button type="button" className="tile-empty" onClick={startNewConversation} title="Open a new conversation window">
+              <span className="tile-empty-plus" aria-hidden>+</span>
+              <span>open window</span>
+            </button>
+          </div>
+        ))}
       </div>
     )
   }
 
   return (
     <div className={`app-shell ${hasContent ? 'has-content' : 'blank'} ${layoutPreset !== 'single' ? 'full-width' : ''}`}>
-      <header className="topbar card">
-        <h1>
-          Agent Rider
-          <span className="topbar-version" title={`Build ${__APP_VERSION__}`}>{__APP_VERSION__}</span>
-        </h1>
-        <div className="topbar-actions">
-          <button
-            type="button"
-            className="topbar-button"
-            onClick={() => setPasswordDialogOpen(true)}
-            disabled={!passwordStatus}
-            title={passwordStatus?.enabled ? 'Change page password' : 'Set page password'}
-          >
-            Password
-          </button>
-          <div className="status-stack">
-            <StatusPill state={connectionState} detail={headerStatusText(connectionState, connectionDetail)} />
-          </div>
-        </div>
-      </header>
+      <div className="floating-status" aria-label="Hermes connection status">
+        <StatusPill state={connectionState} detail={headerStatusText(connectionState, connectionDetail)} />
+      </div>
 
       {settingsOpen ? <div className="settings-popover-backdrop" onClick={() => setSettingsOpen(false)} /> : null}
 

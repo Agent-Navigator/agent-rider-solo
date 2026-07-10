@@ -10,7 +10,7 @@ const hermesWebUiPlugin: AgentRiderPlugin = {
   id: 'hermes-webui',
   label: 'Hermes WebUI',
   group: 'Tools',
-  renderPanel: ({ onClose, panelState, onPanelStateChange }) => (
+  renderPanel: ({ onClose, panelState, onPanelStateChange, maximized, onToggleMaximize }) => (
     <WebView
       title="Hermes WebUI"
       src={HERMES_WEBUI_SRC}
@@ -18,6 +18,8 @@ const hermesWebUiPlugin: AgentRiderPlugin = {
       collapsed={panelState?.collapsed}
       fullWindow={panelState?.fullWindow}
       onStateChange={onPanelStateChange}
+      maximized={maximized}
+      onToggleMaximize={onToggleMaximize}
     />
   ),
 }

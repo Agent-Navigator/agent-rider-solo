@@ -1,5 +1,4 @@
 import {
-  type KeyboardEvent,
   type MouseEvent,
   type MutableRefObject,
   type PointerEvent,
@@ -19,6 +18,10 @@ interface WebViewProps {
   onClose: () => void
   collapsed?: boolean
   fullWindow?: boolean
+  /** True while this panel is the single block filling the workspace grid. */
+  maximized?: boolean
+  /** Toggles this panel as the single block filling the workspace grid. */
+  onToggleMaximize?: () => void
   onStateChange?: (patch: WebViewStatePatch) => void
   allow?: string
   onFrameLoad?: (frame: HTMLIFrameElement) => void
@@ -41,6 +44,8 @@ export function WebView({
   onClose,
   collapsed,
   fullWindow,
+  maximized,
+  onToggleMaximize,
   onStateChange,
   allow = 'clipboard-write; microphone',
   onFrameLoad,
@@ -82,12 +87,6 @@ export function WebView({
     onStateChange?.({ fullWindow: next })
   }
 
-  function toggleFromKey(event: KeyboardEvent<HTMLDivElement>) {
-    if (event.key !== 'Enter' && event.key !== ' ') return
-    event.preventDefault()
-    setCollapsedState((current) => !current)
-  }
-
   function releaseWorkspacePanelDrag(element: HTMLElement) {
     const panel = element.closest<HTMLElement>('.workspace-panel')
     if (panel) panel.draggable = false
@@ -118,57 +117,98 @@ export function WebView({
       className={`web-terminal web-view ${isCollapsed ? 'collapsed' : ''} ${isFullWindow ? 'full-window' : ''}`}
       aria-label={title}
     >
-      <div
-        className="terminal-head"
-        role="button"
-        tabIndex={0}
-        aria-expanded={!isCollapsed}
-        onClick={() => setCollapsedState((current) => !current)}
-        onKeyDown={toggleFromKey}
-      >
-        <span className={`terminal-caret ${isCollapsed ? '' : 'open'}`} aria-hidden>
-          ▾
+      <div className="win-titlebar">
+        <span className="win-grip" aria-hidden>
+          <svg width="8" height="14" viewBox="0 0 8 14">
+            <circle cx="2" cy="2" r="1.3" fill="currentColor" />
+            <circle cx="6" cy="2" r="1.3" fill="currentColor" />
+            <circle cx="2" cy="7" r="1.3" fill="currentColor" />
+            <circle cx="6" cy="7" r="1.3" fill="currentColor" />
+            <circle cx="2" cy="12" r="1.3" fill="currentColor" />
+            <circle cx="6" cy="12" r="1.3" fill="currentColor" />
+          </svg>
         </span>
-        <div>
-          <div className="eyebrow">Resource · Tools</div>
-          <h2>{title}</h2>
-        </div>
-        <div className="terminal-actions">
+        <span className="win-dot" style={{ background: '#46c98b' }} aria-hidden />
+        <span className="win-title">{title}</span>
+        <span className="win-meta">Resource · Tools</span>
+        <div className="win-spacer" />
+        <button
+          type="button"
+          className="terminal-clear"
+          onClick={(event) => {
+            event.stopPropagation()
+            reload()
+          }}
+        >
+          Reload
+        </button>
+        <button
+          type="button"
+          className="win-btn"
+          title={isCollapsed ? 'Expand window' : 'Collapse window'}
+          aria-label={isCollapsed ? 'Expand window' : 'Collapse window'}
+          aria-expanded={!isCollapsed}
+          onClick={() => setCollapsedState((current) => !current)}
+        >
+          <span className={`conv-caret ${isCollapsed ? '' : 'open'}`} aria-hidden>▾</span>
+        </button>
+        {onToggleMaximize ? (
           <button
             type="button"
-            className="terminal-icon-button"
-            title={isFullWindow ? 'Exit full window' : 'Expand to full window'}
-            aria-label={isFullWindow ? 'Exit full window' : 'Expand to full window'}
+            className="win-btn"
+            title={maximized ? 'Restore grid layout' : 'Maximize in grid'}
+            aria-label={maximized ? 'Restore grid layout' : 'Maximize in grid'}
             onClick={(event) => {
               event.stopPropagation()
-              setFullWindowState((current) => !current)
+              onToggleMaximize()
             }}
           >
-            {isFullWindow ? '↙' : '⛶'}
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
+              {maximized ? (
+                <>
+                  <rect x="2.5" y="5.5" width="8" height="8" rx="1.5" stroke="currentColor" strokeWidth="1.3" />
+                  <path d="M5.5 3h6.5a1.5 1.5 0 011.5 1.5V11" stroke="currentColor" strokeWidth="1.3" />
+                </>
+              ) : (
+                <rect x="2.5" y="2.5" width="11" height="11" rx="1.5" stroke="currentColor" strokeWidth="1.3" />
+              )}
+            </svg>
           </button>
-          <button
-            type="button"
-            className="terminal-clear"
-            onClick={(event) => {
-              event.stopPropagation()
-              reload()
-            }}
-          >
-            Reload
-          </button>
-          <button
-            type="button"
-            className="card-close"
-            title={`Close ${title}`}
-            aria-label={`Close ${title}`}
-            onClick={(event) => {
-              event.stopPropagation()
-              onClose()
-            }}
-          >
-            ×
-          </button>
-        </div>
+        ) : null}
+        <button
+          type="button"
+          className="win-btn"
+          title={isFullWindow ? 'Exit full window' : 'Expand to full window'}
+          aria-label={isFullWindow ? 'Exit full window' : 'Expand to full window'}
+          onClick={(event) => {
+            event.stopPropagation()
+            setFullWindowState((current) => !current)
+          }}
+        >
+          {isFullWindow ? (
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
+              <path d="M6 2v4H2M10 2v4h4M6 14v-4H2M10 14v-4h4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+            </svg>
+          ) : (
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
+              <path d="M2 6V2h4M14 6V2h-4M2 10v4h4M14 10v4h-4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+            </svg>
+          )}
+        </button>
+        <button
+          type="button"
+          className="win-btn win-btn-close"
+          title={`Close ${title}`}
+          aria-label={`Close ${title}`}
+          onClick={(event) => {
+            event.stopPropagation()
+            onClose()
+          }}
+        >
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
+            <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+          </svg>
+        </button>
       </div>
 
       <div className="terminal-body" aria-hidden={isCollapsed}>
