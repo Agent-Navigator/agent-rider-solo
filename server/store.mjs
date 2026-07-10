@@ -3,11 +3,11 @@
 // Uses Node's built-in node:sqlite (Node >= 22.5). No native deps to compile.
 import { createServer } from 'node:http'
 import { spawn, spawnSync } from 'node:child_process'
-import { createHash, createHmac, pbkdf2Sync, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
+import { createHash, createHmac, pbkdf2Sync, randomBytes, timingSafeEqual } from 'node:crypto'
 import { DatabaseSync } from 'node:sqlite'
 import { mkdirSync, readdirSync, statSync, readFileSync, writeFileSync, existsSync, createReadStream, accessSync, constants, unlinkSync, renameSync } from 'node:fs'
 import { dirname, join, resolve, basename, extname, normalize } from 'node:path'
-import { tmpdir, homedir } from 'node:os'
+import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import * as pty from 'node-pty'
 import { WebSocket, WebSocketServer } from 'ws'
@@ -232,41 +232,6 @@ try {
 } catch {
   // column already present
 }
-
-// Raw pty output capture (batched) and CLI-native session-id correlation, so a
-// Conversation Card's TUI transcript can be reviewed as chat bubbles even after
-// xterm's scrollback is gone (full-screen agents redraw in place).
-db.exec(`
-  CREATE TABLE IF NOT EXISTS terminal_log (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    session_key TEXT,
-    agent TEXT,
-    cwd TEXT,
-    seq INTEGER,
-    chunk TEXT,
-    created_at INTEGER
-  );
-  CREATE INDEX IF NOT EXISTS idx_terminal_log_session ON terminal_log(session_key);
-  CREATE TABLE IF NOT EXISTS terminal_session_map (
-    session_key TEXT PRIMARY KEY,
-    agent TEXT,
-    cwd TEXT,
-    cli_session_id TEXT,
-    updated_at INTEGER
-  );
-`)
-const insertTerminalLog = db.prepare(
-  'INSERT INTO terminal_log (session_key, agent, cwd, seq, chunk, created_at) VALUES (?, ?, ?, ?, ?, ?)',
-)
-const selectTerminalLog = db.prepare('SELECT chunk FROM terminal_log WHERE session_key = ? ORDER BY id ASC')
-const selectTerminalSessionMap = db.prepare('SELECT * FROM terminal_session_map WHERE session_key = ?')
-const upsertTerminalSessionMap = db.prepare(`
-  INSERT INTO terminal_session_map (session_key, agent, cwd, cli_session_id, updated_at)
-  VALUES (?, ?, ?, ?, ?)
-  ON CONFLICT(session_key) DO UPDATE SET
-    agent = excluded.agent, cwd = excluded.cwd,
-    cli_session_id = excluded.cli_session_id, updated_at = excluded.updated_at
-`)
 
 // Persisted display order for Agent Apps (existence comes from manifests under
 // the local apps dir; this table only records the user's preferred order).
@@ -721,176 +686,6 @@ function searchFiles(input, queryText) {
   walk(path, 0)
   results.sort((a, b) => a.name.localeCompare(b.name))
   return { root: BROWSE_ROOT, path, query: needle, results, truncated: results.length >= SEARCH_MAX_RESULTS }
-}
-
-// ── Terminal Q/A history (Conversation Card "History" tab) ──────────────────
-// Reconstructs a readable transcript for a TUI agent session. Prefers the
-// CLI's own structured session log (clean text, no redraw artifacts); falls
-// back to the raw captured pty bytes (terminal_log) when no such log exists.
-
-function stripAnsi(text) {
-  return String(text)
-    .replace(/\x1b\][^\x07\x1b]*(\x07|\x1b\\)/g, '') // OSC sequences (titles, clipboard, …)
-    .replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, '') // CSI sequences (cursor moves, colors, …)
-    .replace(/\x1b[()][0-9A-Za-z]/g, '') // charset selection
-    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, '') // remaining control chars (keeps \t \n \r)
-}
-
-function claudeProjectSlug(cwd) {
-  return String(cwd).replace(/\//g, '-')
-}
-
-function extractTextBlocks(content) {
-  if (typeof content === 'string') return content.trim()
-  if (!Array.isArray(content)) return ''
-  return content
-    .filter((block) => block && (block.type === 'text' || block.type === 'input_text' || block.type === 'output_text'))
-    .map((block) => block.text || '')
-    .join('\n')
-    .trim()
-}
-
-function readClaudeTranscript(cwd, cliSessionId) {
-  const filePath = join(homedir(), '.claude', 'projects', claudeProjectSlug(cwd), `${cliSessionId}.jsonl`)
-  let raw
-  try {
-    raw = readFileSync(filePath, 'utf8')
-  } catch {
-    return null
-  }
-  const turns = []
-  for (const line of raw.split('\n')) {
-    if (!line.trim()) continue
-    let entry
-    try {
-      entry = JSON.parse(line)
-    } catch {
-      continue
-    }
-    if (entry.isMeta || (entry.type !== 'user' && entry.type !== 'assistant')) continue
-    const text = extractTextBlocks(entry.message?.content)
-    if (!text) continue
-    turns.push({ role: entry.type, text, timestamp: entry.timestamp || null })
-  }
-  return turns
-}
-
-const CODEX_SESSIONS_DIR = join(homedir(), '.codex', 'sessions')
-
-function listCodexRolloutFiles() {
-  const files = []
-  function walk(dirPath, depth) {
-    if (depth > 4) return
-    let entries
-    try {
-      entries = readdirSync(dirPath, { withFileTypes: true })
-    } catch {
-      return
-    }
-    for (const entry of entries) {
-      const entryPath = join(dirPath, entry.name)
-      if (entry.isDirectory()) walk(entryPath, depth + 1)
-      else if (entry.isFile() && entry.name.startsWith('rollout-') && entry.name.endsWith('.jsonl')) files.push(entryPath)
-    }
-  }
-  walk(CODEX_SESSIONS_DIR, 0)
-  return files
-}
-
-function readCodexSessionMeta(filePath) {
-  try {
-    const firstLine = readFileSync(filePath, 'utf8').split('\n', 1)[0]
-    const meta = JSON.parse(firstLine)
-    return meta?.type === 'session_meta' ? meta.payload || null : null
-  } catch {
-    return null
-  }
-}
-
-// Locate a codex rollout file either by its known session id, or (when not yet
-// known) by matching cwd among files created at/after `sinceMs`, picking the
-// most recently modified match.
-function findCodexRolloutFile({ sessionId, cwd, sinceMs }) {
-  const candidates = []
-  for (const filePath of listCodexRolloutFiles()) {
-    const payload = readCodexSessionMeta(filePath)
-    if (!payload) continue
-    if (sessionId) {
-      if (payload.id === sessionId) return filePath
-      continue
-    }
-    let fileStat
-    try {
-      fileStat = statSync(filePath)
-    } catch {
-      continue
-    }
-    if (cwd && payload.cwd !== cwd) continue
-    if (sinceMs && fileStat.mtimeMs < sinceMs - 5000) continue
-    candidates.push({ filePath, mtimeMs: fileStat.mtimeMs })
-  }
-  if (sessionId) return null
-  candidates.sort((a, b) => b.mtimeMs - a.mtimeMs)
-  return candidates[0]?.filePath || null
-}
-
-function readCodexTranscript(filePath) {
-  let raw
-  try {
-    raw = readFileSync(filePath, 'utf8')
-  } catch {
-    return null
-  }
-  const turns = []
-  for (const line of raw.split('\n')) {
-    if (!line.trim()) continue
-    let entry
-    try {
-      entry = JSON.parse(line)
-    } catch {
-      continue
-    }
-    const payload = entry.payload
-    if (entry.type !== 'response_item' || !payload || payload.type !== 'message') continue
-    if (payload.role !== 'user' && payload.role !== 'assistant') continue
-    const text = extractTextBlocks(payload.content)
-    if (!text) continue
-    turns.push({ role: payload.role, text, timestamp: entry.timestamp || null })
-  }
-  return turns
-}
-
-function readRawTerminalLog(sessionKey) {
-  const rows = selectTerminalLog.all(sessionKey)
-  return stripAnsi(rows.map((r) => r.chunk).join(''))
-}
-
-function getTerminalHistory(sessionKey, agentParam, fallbackCwd) {
-  if (!sessionKey) return { source: 'raw-log', turns: [] }
-  const mapped = selectTerminalSessionMap.get(sessionKey)
-  const cwd = mapped?.cwd || fallbackCwd
-
-  if (agentParam === 'claude' && mapped?.cli_session_id) {
-    const turns = readClaudeTranscript(cwd, mapped.cli_session_id)
-    if (turns) return { source: 'claude-jsonl', turns }
-  }
-
-  if (agentParam === 'codex') {
-    let filePath = mapped?.cli_session_id ? findCodexRolloutFile({ sessionId: mapped.cli_session_id }) : null
-    if (!filePath) {
-      filePath = findCodexRolloutFile({ cwd, sinceMs: mapped?.updated_at || null })
-      if (filePath) {
-        const payload = readCodexSessionMeta(filePath)
-        if (payload?.id) upsertTerminalSessionMap.run(sessionKey, 'codex', cwd, payload.id, Date.now())
-      }
-    }
-    if (filePath) {
-      const turns = readCodexTranscript(filePath)
-      if (turns) return { source: 'codex-jsonl', turns }
-    }
-  }
-
-  return { source: 'raw-log', turns: [{ role: 'raw', text: readRawTerminalLog(sessionKey) }] }
 }
 
 function makeDirectory(parent, name) {
@@ -1397,27 +1192,11 @@ function attachTerminalSocket(server) {
       if (resetSession && tmuxSessionExists(name)) {
         spawnSync('tmux', ['-L', TMUX_SOCKET, 'kill-session', '-t', name], { stdio: 'ignore' })
       }
-      const isNewSession = !tmuxSessionExists(name)
-      shouldInjectAgentRiderBackground = Boolean(agentCmd && isNewSession)
-
-      // On a fresh session for a CLI that supports pinning its own session id,
-      // generate one and record the mapping — the History tab reads the CLI's
-      // own transcript file via this id instead of parsing raw terminal output.
-      let effectiveLaunchCommand = launchCommand
-      if (isNewSession && agentParam === 'claude') {
-        const claudeSessionId = randomUUID()
-        effectiveLaunchCommand = shellQuote([agentCmd.file, ...agentCmd.argv, '--session-id', claudeSessionId])
-        upsertTerminalSessionMap.run(sessionKey, agentParam, cwd, claudeSessionId, Date.now())
-      } else if (isNewSession && agentParam === 'codex') {
-        // codex has no pin-on-create flag; record the mapping row now (cli id
-        // unresolved) so the history endpoint knows the session's cwd and can
-        // bound its directory scan to files created at/after this point.
-        upsertTerminalSessionMap.run(sessionKey, agentParam, cwd, null, Date.now())
-      }
+      shouldInjectAgentRiderBackground = Boolean(agentCmd && !tmuxSessionExists(name))
 
       file = 'tmux'
       argv = ['-L', TMUX_SOCKET, '-f', TMUX_CONF, 'new-session', '-A', '-s', name,
-        '-x', String(cols), '-y', String(rows), '-c', cwd, '-e', `PATH=${AGENT_PATH}`, '--', effectiveLaunchCommand]
+        '-x', String(cols), '-y', String(rows), '-c', cwd, '-e', `PATH=${AGENT_PATH}`, '--', launchCommand]
     } else if (agentCmd) {
       file = agentCmd.file
       argv = agentCmd.argv
@@ -1452,32 +1231,7 @@ function attachTerminalSocket(server) {
         : `\r\n\x1b[32mConnected to Agent Rider terminal\x1b[0m\r\n`,
     )
 
-    // Best-effort raw capture of the pty stream into terminal_log, batched so a
-    // burst of small pty chunks doesn't turn into a SQLite write each. Only
-    // logged when a session key exists (i.e. a Conversation Card, not a
-    // throwaway one-off shell) since there'd be no way to query it back later.
-    let logBuffer = []
-    let logSeq = 0
-    let logFlushTimer = null
-    function flushTerminalLog() {
-      logFlushTimer = null
-      if (!logBuffer.length) return
-      const chunk = logBuffer.join('')
-      logBuffer = []
-      try {
-        insertTerminalLog.run(sessionKey, agentParam || 'shell', cwd, logSeq++, chunk, Date.now())
-      } catch {
-        // best-effort persistence; a missed chunk shouldn't break the terminal
-      }
-    }
-
-    const terminalData = terminal.onData((data) => {
-      writeSocket(data)
-      if (sessionKey) {
-        logBuffer.push(data)
-        if (!logFlushTimer) logFlushTimer = setTimeout(flushTerminalLog, 1000)
-      }
-    })
+    const terminalData = terminal.onData((data) => writeSocket(data))
     if (shouldInjectAgentRiderBackground) {
       const backgroundPrompt = agentRiderBackgroundPrompt(agentLabel, { promptContext, appWorkspace })
       if (backgroundPrompt) {
@@ -1521,8 +1275,6 @@ function attachTerminalSocket(server) {
     })
 
     socket.on('close', () => {
-      if (logFlushTimer) clearTimeout(logFlushTimer)
-      flushTerminalLog()
       terminalData.dispose()
       terminal.kill()
     })
@@ -1630,15 +1382,6 @@ const server = createServer((req, res) => {
     const query = new URL(req.url, 'http://localhost').searchParams
     const result = searchFiles(query.get('path') || '', query.get('query') || '')
     sendJson(res, result.error ? result.status : 200, result)
-    return
-  }
-
-  if (req.method === 'GET' && url === '/store/terminal/history') {
-    const query = new URL(req.url, 'http://localhost').searchParams
-    const sessionKey = (query.get('session') || '').trim()
-    const agentParam = query.get('agent') || ''
-    const fallbackCwd = safeResolve(query.get('cwd') || DEFAULT_CWD) || DEFAULT_CWD
-    sendJson(res, 200, getTerminalHistory(sessionKey, agentParam, fallbackCwd))
     return
   }
 

@@ -46,7 +46,6 @@ import {
   loginPagePassword,
   setPagePassword,
   logoutPagePassword,
-  fetchTerminalHistory,
   type FsListing,
   type FsEntry,
   type FsFileEntry,
@@ -57,7 +56,6 @@ import {
   type AppWarning,
   type WorkspacePanelState,
   type PasswordStatus,
-  type TerminalHistory,
 } from './store'
 import { plugins, type AgentRiderPlugin } from '../plugins'
 import { WebView } from '../plugins/WebView'
@@ -1626,7 +1624,6 @@ function ConversationCard({
   const selectedModelValue = run.model ? modelSelectValue(run.model, run.modelProvider ?? null) : ''
   const selectedReasoningEffort = run.reasoningEffort ?? ''
   const cardRef = useRef<HTMLElement | null>(null)
-  const [terminalTab, setTerminalTab] = useState<'terminal' | 'history'>('terminal')
   const [fileBrowserOpen, setFileBrowserOpen] = useState(false)
   const [dragOver, setDragOver] = useState(false)
   // Whether the hovering drop would land after (below) this card vs before.
@@ -2170,37 +2167,9 @@ function ConversationCard({
                   promptContext={run.cardKind === 'app-builder' ? 'app-builder' : undefined}
                   appWorkspace={run.cardKind === 'app-builder' ? run.workspacePath : undefined}
                   onStateChange={onAgentTerminalStateChange}
-                  // Rendered inside WebTerminal's own box (not a sibling) so both
-                  // stay visible/clickable in full-window mode, where the section
+                  // Rendered inside WebTerminal's own box (not a sibling) so it
+                  // stays visible/clickable in full-window mode, where the section
                   // becomes `position: fixed` and covers any sibling elements.
-                  topBar={
-                    <div className="terminal-tabs" role="tablist" aria-label="Terminal view">
-                      <button
-                        type="button"
-                        role="tab"
-                        aria-selected={terminalTab === 'terminal'}
-                        className={terminalTab === 'terminal' ? 'active' : ''}
-                        onClick={(event) => {
-                          event.stopPropagation()
-                          setTerminalTab('terminal')
-                        }}
-                      >
-                        Terminal
-                      </button>
-                      <button
-                        type="button"
-                        role="tab"
-                        aria-selected={terminalTab === 'history'}
-                        className={terminalTab === 'history' ? 'active' : ''}
-                        onClick={(event) => {
-                          event.stopPropagation()
-                          setTerminalTab('history')
-                        }}
-                      >
-                        History
-                      </button>
-                    </div>
-                  }
                   headerLeading={
                     <button
                       type="button"
@@ -2214,21 +2183,6 @@ function ConversationCard({
                     >
                       Files
                     </button>
-                  }
-                  // The terminal screen/footer get covered by an opaque History
-                  // layer — the topBar/header above stay uncovered so switching
-                  // back to Terminal is always reachable, in both window modes.
-                  bodyOverlay={
-                    terminalTab === 'history' ? (
-                      <div className="terminal-history-overlay">
-                        <TerminalHistoryPanel
-                          active
-                          sessionKey={run.id}
-                          agent={agentType}
-                          cwd={run.workspacePath}
-                        />
-                      </div>
-                    ) : null
                   }
                 />
               </div>
@@ -3175,87 +3129,6 @@ function PluginTool({ plugin, open, onLaunch }: { plugin: AgentRiderPlugin; open
   )
 }
 
-// Read-only Q/A view of a TUI agent session, alternative to the live terminal
-// for reviewing past turns (xterm's scrollback is unreliable for full-screen
-// agents that redraw in place — see the `convertEol` note on `WebTerminal`).
-function TerminalHistoryPanel({
-  active,
-  sessionKey,
-  agent,
-  cwd,
-}: {
-  active: boolean
-  sessionKey: string
-  agent: AgentType
-  cwd: string
-}) {
-  const [history, setHistory] = useState<TerminalHistory | null>(null)
-
-  useEffect(() => {
-    if (!active) return
-    let cancelled = false
-    async function load() {
-      const result = await fetchTerminalHistory(sessionKey, agent, cwd)
-      if (!cancelled) setHistory(result)
-    }
-    void load()
-    const interval = window.setInterval(load, 4000)
-    return () => {
-      cancelled = true
-      window.clearInterval(interval)
-    }
-  }, [active, sessionKey, agent, cwd])
-
-  if (!active) return null
-
-  if (!history || !history.turns.length) {
-    return <div className="terminal-history-empty">No history captured yet.</div>
-  }
-
-  if (history.source === 'raw-log') {
-    return (
-      <div className="terminal-history raw">
-        <div className="terminal-history-note">
-          Raw captured session — {agentLabel(agent)} has no structured transcript to parse into Q/A turns.
-        </div>
-        <pre className="terminal-history-raw-block">{history.turns[0]?.text || 'No output captured yet.'}</pre>
-      </div>
-    )
-  }
-
-  // Most recent turn first — a live pty stream has no "scroll to bottom" the
-  // way a normal chat page does, so putting new turns at the top is what
-  // makes the latest Q/A visible without having to scroll down.
-  const orderedTurns = [...history.turns].reverse()
-
-  return (
-    <div className="terminal-history">
-      {orderedTurns.map((turn, index) => (
-        <div key={index} className="turn-node">
-          <div className={`bubble ${turn.role}`}>
-            <div className="bubble-head">
-              <span className="role">{turn.role === 'user' ? 'You' : agentLabel(agent)}</span>
-            </div>
-            {turn.role === 'assistant' ? (
-              <div className="md-body">
-                <ReactMarkdown
-                  remarkPlugins={richMarkdownPlugins.remark}
-                  rehypePlugins={richMarkdownPlugins.rehype}
-                  components={richMarkdownComponents}
-                >
-                  {turn.text}
-                </ReactMarkdown>
-              </div>
-            ) : (
-              <div className="terminal-history-user-text">{turn.text}</div>
-            )}
-          </div>
-        </div>
-      ))}
-    </div>
-  )
-}
-
 function WebTerminal({
   initialCwd,
   onClose,
@@ -3272,8 +3145,6 @@ function WebTerminal({
   appWorkspace,
   onStateChange,
   headerLeading,
-  topBar,
-  bodyOverlay,
 }: {
   initialCwd: string
   onClose: () => void
@@ -3298,14 +3169,6 @@ function WebTerminal({
    *  button — lets the card slot in extra controls (e.g. the File Browser
    *  toggle) that stay visible in both small and full-window modes. */
   headerLeading?: ReactNode
-  /** Rendered as a toolbar row above the header (e.g. Terminal/History tabs) —
-   *  lives inside this section's own box so it's still visible when the
-   *  section goes `position: fixed` in full-window mode. */
-  topBar?: ReactNode
-  /** Rendered as an opaque layer covering just the terminal screen/footer
-   *  (not the header/topBar, which stay clickable) — used for the History tab
-   *  so switching back to Terminal is always reachable. */
-  bodyOverlay?: ReactNode
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const terminalRef = useRef<XTermTerminal | null>(null)
@@ -3513,7 +3376,6 @@ function WebTerminal({
 
   return (
     <section className={`web-terminal ${terminalCollapsed ? 'collapsed' : ''} ${terminalFullWindow ? 'full-window' : ''}`} aria-label="Local Terminal">
-      {topBar}
       <div
         className={`terminal-head ${collapsible ? '' : 'static'}`}
         role={collapsible ? 'button' : undefined}
@@ -3581,8 +3443,6 @@ function WebTerminal({
             pasteIntoTerminal(filePath)
           }}
         />
-
-        {bodyOverlay}
 
         <div className="terminal-footer">
           <button

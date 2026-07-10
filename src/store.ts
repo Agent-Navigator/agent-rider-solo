@@ -368,26 +368,3 @@ export async function runTerminalCommand(command: string, cwd: string): Promise<
     timedOut: Boolean(data.timedOut),
   }
 }
-
-export interface TerminalHistoryTurn {
-  role: 'user' | 'assistant' | 'raw'
-  text: string
-  timestamp?: string | null
-}
-
-export interface TerminalHistory {
-  source: 'claude-jsonl' | 'codex-jsonl' | 'raw-log'
-  turns: TerminalHistoryTurn[]
-}
-
-export async function fetchTerminalHistory(session: string, agent: string, cwd: string): Promise<TerminalHistory | null> {
-  try {
-    const res = await fetch(
-      `/store/terminal/history?session=${encodeURIComponent(session)}&agent=${encodeURIComponent(agent)}&cwd=${encodeURIComponent(cwd)}`,
-    )
-    if (!res.ok) return null
-    return (await res.json()) as TerminalHistory
-  } catch {
-    return null
-  }
-}
