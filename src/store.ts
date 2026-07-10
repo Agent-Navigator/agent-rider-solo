@@ -263,6 +263,23 @@ export async function deleteFile(path: string): Promise<{ ok: true } | { error: 
   }
 }
 
+// Upload a file into a workspace directory. Sends the raw bytes as the body;
+// the target folder and filename ride along as query params.
+export async function uploadFile(dir: string, file: File): Promise<{ path: string; name: string } | { error: string }> {
+  try {
+    const res = await fetch(`/store/fs/upload?path=${encodeURIComponent(dir)}&name=${encodeURIComponent(file.name)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/octet-stream' },
+      body: file,
+    })
+    const data = (await res.json()) as { path?: string; name?: string; uploaded?: boolean; error?: string }
+    if (!res.ok || !data.uploaded || !data.path) return { error: data.error || 'Failed to upload file' }
+    return { path: data.path, name: data.name || file.name }
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : String(error) }
+  }
+}
+
 // ── Local Agent Apps ─────────────────────────────────────────────────────────
 
 export interface AgentApp {

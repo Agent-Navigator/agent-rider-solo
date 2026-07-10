@@ -1308,6 +1308,7 @@ button { cursor: pointer; }
 
 .file-browser-up,
 .file-browser-refresh,
+.file-browser-upload,
 .file-preview-close,
 .file-preview-icon-button {
   flex: 0 0 auto;
@@ -1323,13 +1324,15 @@ button { cursor: pointer; }
 }
 
 .file-browser-up:disabled,
-.file-browser-refresh:disabled {
+.file-browser-refresh:disabled,
+.file-browser-upload:disabled {
   opacity: 0.4;
   cursor: default;
 }
 
 .file-browser-up:not(:disabled):hover,
-.file-browser-refresh:not(:disabled):hover {
+.file-browser-refresh:not(:disabled):hover,
+.file-browser-upload:not(:disabled):hover {
   border-color: rgba(121, 185, 255, 0.42);
   background: rgba(121, 185, 255, 0.08);
 }

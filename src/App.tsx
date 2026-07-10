@@ -1,4 +1,4 @@
-import { type DragEvent, type FormEvent, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { type ChangeEvent, type DragEvent, type FormEvent, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import rehypeRaw from 'rehype-raw'
@@ -39,6 +39,7 @@ import {
   moveDir,
   fileDownloadUrl,
   deleteFile,
+  uploadFile,
   listApps,
   setAppOrder,
   renameApp,
@@ -994,6 +995,8 @@ function FileBrowser({
   const [previewError, setPreviewError] = useState<string | null>(null)
   const [pendingDelete, setPendingDelete] = useState<FsFileEntry | null>(null)
   const [deleting, setDeleting] = useState(false)
+  const [uploading, setUploading] = useState(false)
+  const uploadInputRef = useRef<HTMLInputElement | null>(null)
   const [typeFilter, setTypeFilter] = useState('all')
   const [searchInput, setSearchInput] = useState('')
   const [searchQuery, setSearchQuery] = useState('')
@@ -1052,6 +1055,22 @@ function FileBrowser({
       setPreviewFullWindow(false)
     }
     setPendingDelete(null)
+    void load(path)
+  }
+
+  async function handleUpload(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
+    // Reset the input so picking the same file again still fires onChange.
+    event.target.value = ''
+    if (!file) return
+    setUploading(true)
+    setError(null)
+    const result = await uploadFile(path, file)
+    setUploading(false)
+    if ('error' in result) {
+      setError(result.error)
+      return
+    }
     void load(path)
   }
 
@@ -1247,6 +1266,21 @@ function FileBrowser({
             >
               ⟳
             </button>
+            <button
+              type="button"
+              className="file-browser-upload"
+              disabled={loading || uploading || isSearching}
+              onClick={() => uploadInputRef.current?.click()}
+              title={isSearching ? 'Clear search to upload' : `Upload a file to this folder`}
+            >
+              {uploading ? '↑ …' : '↑ Upload'}
+            </button>
+            <input
+              ref={uploadInputRef}
+              type="file"
+              hidden
+              onChange={(event) => void handleUpload(event)}
+            />
           </div>
 
           <div className="file-browser-filters">

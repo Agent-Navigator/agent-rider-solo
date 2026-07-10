@@ -870,6 +870,37 @@ function deleteFile(input) {
   return { path, deleted: true }
 }
 
+// Maximum size for an uploaded file. Uploads stream raw bytes into the body,
+// unlike the JSON POST routes which cap at 100 KB.
+const UPLOAD_MAX_BYTES = 100 * 1024 * 1024
+
+// Write an uploaded file into a directory within the sandbox. Refuses to
+// overwrite an existing entry so an upload can't silently clobber a file.
+function uploadFile(dirInput, name, buffer) {
+  const cleanName = String(name || '').trim()
+  if (!cleanName || cleanName.includes('/') || cleanName === '.' || cleanName === '..') {
+    return { error: 'invalid file name', status: 400 }
+  }
+  const dirPath = safeResolve(dirInput)
+  if (!dirPath) return { error: 'directory outside allowed root', status: 403 }
+  let stat
+  try {
+    stat = statSync(dirPath)
+  } catch {
+    return { error: 'directory not found', status: 404 }
+  }
+  if (!stat.isDirectory()) return { error: 'not a directory', status: 400 }
+  const target = join(dirPath, cleanName)
+  if (!safeResolve(target)) return { error: 'target outside allowed root', status: 403 }
+  if (existsSync(target)) return { error: 'a file with that name already exists', status: 409 }
+  try {
+    writeFileSync(target, buffer)
+  } catch (error) {
+    return { error: String(error?.message || error), status: 400 }
+  }
+  return { path: target, name: basename(target), size: buffer.length, uploaded: true }
+}
+
 // ── Local Agent Apps ─────────────────────────────────────────────────────────
 // Apps are runtime data, not Agent Rider source code. They live under
 // AGENT_RIDER_APPS_DIR/<slug>/ (default: BROWSE_ROOT/.agent-rider/apps), build to
@@ -1435,6 +1466,33 @@ const server = createServer((req, res) => {
       try {
         const { parent, name } = JSON.parse(body || '{}')
         const result = makeDirectory(parent, name)
+        sendJson(res, result.error ? result.status : 200, result)
+      } catch (error) {
+        sendJson(res, 400, { error: String(error?.message || error) })
+      }
+    })
+    return
+  }
+
+  if (req.method === 'POST' && url === '/store/fs/upload') {
+    const query = new URL(req.url, 'http://localhost').searchParams
+    const chunks = []
+    let size = 0
+    let aborted = false
+    req.on('data', (chunk) => {
+      size += chunk.length
+      if (size > UPLOAD_MAX_BYTES) {
+        aborted = true
+        sendJson(res, 413, { error: 'file too large (max 100 MB)' })
+        req.destroy()
+        return
+      }
+      chunks.push(chunk)
+    })
+    req.on('end', () => {
+      if (aborted) return
+      try {
+        const result = uploadFile(query.get('path') || '', query.get('name') || '', Buffer.concat(chunks))
         sendJson(res, result.error ? result.status : 200, result)
       } catch (error) {
         sendJson(res, 400, { error: String(error?.message || error) })
