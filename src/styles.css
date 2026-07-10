@@ -2589,6 +2589,14 @@ button { cursor: pointer; }
   min-height: 0;
 }
 
+/* The 2-up canvas (unlike the tile grid) has a single row of columns: make
+   that row fill the viewport and stretch both columns so their cards can
+   grow to the full page height. */
+.ws-columns:not(.tile-grid) {
+  grid-template-rows: minmax(0, 1fr);
+  align-items: stretch;
+}
+
 .ws-column {
   display: flex;
   flex-direction: column;
@@ -2598,11 +2606,61 @@ button { cursor: pointer; }
   flex: 1;
 }
 
-/* Invisible spacer fills remaining height so the column extends to the
-   page bottom even when cards don't fill it naturally. */
-.ws-column::after {
-  content: '';
+/* Single & 2-up columns give each block a share of the viewport height (like
+   the tile presets): blocks fill their slot and scroll internally instead of
+   sizing to content. Cards are direct children; panels come wrapped in a
+   .plugin-panel drag shell. */
+.ws-column > .conv-card,
+.ws-column > .plugin-panel {
   flex: 1;
+  min-height: 0;
+}
+
+.ws-column > .plugin-panel {
+  display: flex;
+  flex-direction: column;
+}
+
+.ws-column > .plugin-panel > .web-terminal,
+.ws-column > .plugin-panel > .web-view,
+.ws-column > .plugin-panel > .app-builder-card {
+  flex: 1;
+  min-height: 0;
+}
+
+/* Fill contexts (single/2-up columns + every tile cell): an embedded TUI
+   terminal fills its card body, and its terminal screen fills the slot
+   instead of being capped at the default fixed height. */
+.ws-column .tui-content-shell,
+.tile-slot .tui-content-shell {
+  overflow: hidden;
+}
+
+.ws-column .conv-agent-terminal,
+.tile-slot .conv-agent-terminal {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.ws-column .conv-agent-terminal > .web-terminal,
+.tile-slot .conv-agent-terminal > .web-terminal {
+  flex: 1;
+  min-height: 0;
+}
+
+/* Uncap the terminal screen so it grows with the card. Web-views keep their
+   own sizing: `.web-view .terminal-body` (same specificity, later in the file)
+   still wins the cascade for embedded app frames. */
+.ws-column .terminal-body,
+.tile-slot .terminal-body {
+  grid-template-rows: minmax(0, 1fr) auto;
+}
+
+.ws-column .terminal-screen,
+.tile-slot .terminal-screen {
+  height: 100%;
   min-height: 0;
 }
 
