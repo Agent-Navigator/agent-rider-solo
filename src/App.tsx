@@ -5523,75 +5523,66 @@ export default function App() {
       <main className="main-stage">
         <div className={`main-layout ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
           <aside
-            className={`left-rail ${sidebarCollapsed ? 'collapsed' : ''} ${sidebarCollapsed && sidebarPeek ? 'peek' : ''}`}
+            className={`left-rail ${sidebarCollapsed ? 'collapsed' : 'pinned'} ${sidebarPeek ? 'peek' : ''}`}
             aria-label="Sidebar"
             onMouseEnter={() => {
               if (sidebarCollapsed) setSidebarPeek(true)
             }}
             onMouseLeave={() => setSidebarPeek(false)}
           >
-            <button
-              type="button"
-              className="rail-toggle-button"
-              aria-expanded={!sidebarCollapsed}
-              aria-label={sidebarCollapsed ? 'Pin sidebar open' : 'Collapse sidebar'}
-              title={sidebarCollapsed ? 'Pin sidebar open' : 'Collapse sidebar'}
-              onClick={() => {
-                setSidebarCollapsed((current) => !current)
-                setSidebarPeek(false)
-              }}
-            >
-              <span className="rail-toggle-icon" aria-hidden>
-                {sidebarCollapsed ? '›' : '‹'}
-              </span>
-              <span className="rail-toggle-text">{sidebarCollapsed ? 'Pin sidebar open' : 'Collapse sidebar'}</span>
-            </button>
-
-            {sidebarCollapsed && !sidebarPeek ? (
-              <div className="rail-collapsed-stack">
-                <button
-                  type="button"
-                  aria-label="Hover or click to show Navigator"
-                  title="Hover or click to show Navigator"
-                  onClick={() => setSidebarCollapsed(false)}
-                >
-                  NAV
-                </button>
-                <button
-                  type="button"
-                  aria-label="Hover or click to show Resources"
-                  title="Hover or click to show Resources"
-                  onClick={() => setSidebarCollapsed(false)}
-                >
-                  RES
-                </button>
+            {/* Always-visible 52px icon strip — the pin toggle lives here so it
+                stays reachable even while collapsed and only peeking. */}
+            <div className="rail-icon-strip">
+              <button
+                type="button"
+                className="rail-toggle-button"
+                aria-expanded={!sidebarCollapsed}
+                aria-label={sidebarCollapsed ? 'Pin sidebar open' : 'Collapse sidebar'}
+                title={sidebarCollapsed ? 'Pin sidebar open' : 'Collapse sidebar'}
+                onClick={() => {
+                  setSidebarCollapsed((current) => !current)
+                  setSidebarPeek(false)
+                }}
+              >
+                <svg width="17" height="17" viewBox="0 0 17 17" fill="none">
+                  <rect x="1.5" y="2.5" width="14" height="12" rx="2" stroke="currentColor" strokeWidth="1.4" />
+                  <line x1="6" y1="2.5" x2="6" y2="14.5" stroke="currentColor" strokeWidth="1.4" />
+                </svg>
+              </button>
+              <div className="rail-icon-divider" aria-hidden />
+              <div className="rail-icon-badge" aria-hidden title="Navigator">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                  <path d="M3 3h4M3 6.5h7M3 10h5M3 13.5h9" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+                </svg>
               </div>
-            ) : (
-              <>
-                <ConversationTreeSidebar
-                  tree={conversationTree}
-                  activeRunId={activeRunId}
-                  unreadRunIds={newDoneIds}
-                  onSelect={selectConversation}
-                  onDeleteRequest={requestDeleteConversation}
-                />
-                <ResourceSidebar
-                  terminalOpen={terminalOpen}
-                  onLaunchTerminal={() => openPanel('terminal')}
-                  openPluginIds={openPluginIds}
-                  onLaunchPlugin={launchPlugin}
-                  apps={appListing.apps}
-                  appWarnings={appListing.warnings}
-                  appBuilderOpen={appBuilderOpen}
-                  appBuilderTitle={runs.find((run) => run.id === APP_BUILDER_RUN_ID)?.task.trim() || 'App Builder'}
-                  onLaunchAppBuilder={launchAppBuilder}
-                  openAppSlugs={openAppSlugs}
-                  onLaunchApp={launchApp}
-                  onReorderApps={reorderApps}
-                  onRenameApp={renameAppLabel}
-                />
-              </>
-            )}
+            </div>
+
+            {/* Navigator/Resources content: reflows the workspace while pinned,
+                floats over it (no reflow) while only peeking on hover. */}
+            <div className="rail-content-panel">
+              <ConversationTreeSidebar
+                tree={conversationTree}
+                activeRunId={activeRunId}
+                unreadRunIds={newDoneIds}
+                onSelect={selectConversation}
+                onDeleteRequest={requestDeleteConversation}
+              />
+              <ResourceSidebar
+                terminalOpen={terminalOpen}
+                onLaunchTerminal={() => openPanel('terminal')}
+                openPluginIds={openPluginIds}
+                onLaunchPlugin={launchPlugin}
+                apps={appListing.apps}
+                appWarnings={appListing.warnings}
+                appBuilderOpen={appBuilderOpen}
+                appBuilderTitle={runs.find((run) => run.id === APP_BUILDER_RUN_ID)?.task.trim() || 'App Builder'}
+                onLaunchAppBuilder={launchAppBuilder}
+                openAppSlugs={openAppSlugs}
+                onLaunchApp={launchApp}
+                onReorderApps={reorderApps}
+                onRenameApp={renameAppLabel}
+              />
+            </div>
           </aside>
 
           <section className="conversation-workspace" aria-label="Conversation cards">

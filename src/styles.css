@@ -2082,120 +2082,133 @@ button { cursor: pointer; }
 .main-layout {
   position: relative;
   display: grid;
-  grid-template-columns: minmax(240px, 280px) minmax(0, 1fr);
+  grid-template-columns: 52px minmax(0, 1fr);
   gap: 16px;
   align-items: start;
 }
 
-.main-layout.sidebar-collapsed {
-  grid-template-columns: 48px minmax(0, 1fr);
+/* "Pinned" reserves room for the icon strip AND the content panel beside it
+   (reflowing the workspace); collapsed reserves just the icon strip, and the
+   content panel (if peeking) floats over the workspace instead. */
+.main-layout:not(.sidebar-collapsed) {
+  grid-template-columns: minmax(300px, 340px) minmax(0, 1fr);
 }
 
 .conversation-workspace {
   min-width: 0;
 }
 
+/* Matches the reference design: a permanent 52px icon strip (pin toggle +
+   Navigator indicator) plus a content panel that either reflows the
+   workspace (pinned) or floats over it without reflow (peek-on-hover while
+   collapsed). */
 .left-rail {
   position: sticky;
   top: 12px;
   align-self: start;
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr) minmax(0, 1fr);
-  gap: 10px;
+  display: flex;
+  /* Explicit (not just max-) height: the content panel is absolutely
+     positioned (out of normal flow), so nothing else here would stretch
+     the rail to fill the viewport without this. */
+  height: calc(100vh - 24px);
   max-height: calc(100vh - 24px);
   min-height: 0;
-  overflow: hidden;
+  /* The content panel's z-index only outranks its OWN siblings — without
+     this, the workspace (a later DOM sibling of the whole rail) paints on
+     top of the peek overlay regardless of the panel's own z-index. */
+  z-index: 45;
 }
 
-.left-rail.collapsed {
+.rail-icon-strip {
+  flex: 0 0 52px;
+  width: 52px;
+  height: 100%;
   display: flex;
   flex-direction: column;
-}
-
-/* Hovering the collapsed rail floats the full Navigator/Resources content as
- * an overlay (no reflow of the workspace beside it); moving away collapses
- * it again. Pinning (the toggle button) is the persisted, reflowing state. */
-.left-rail.collapsed.peek {
-  position: absolute;
-  top: 52px;
-  left: 0;
-  bottom: 0;
-  width: 300px;
-  z-index: 45;
-  display: grid;
-  grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 10px;
-  padding: 10px;
-  border-radius: 14px;
-  background: var(--panel-strong);
-  border: 1px solid var(--line-strong);
-  box-shadow: var(--shadow);
+  align-items: center;
+  padding: 12px 0;
+  gap: 6px;
+  background: rgba(255, 255, 255, 0.015);
+  border-right: 1px solid var(--line);
+  position: relative;
+  z-index: 41;
 }
 
 .rail-toggle-button {
+  width: 34px;
+  height: 34px;
   display: inline-flex;
-  width: 100%;
-  min-height: 34px;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  border-radius: 8px;
   border: 1px solid rgba(148, 163, 184, 0.18);
-  border-radius: 12px;
   background: rgba(255, 255, 255, 0.04);
-  color: var(--text);
-  font-size: 12px;
-  font-weight: 700;
+  color: var(--muted);
 }
 
 .rail-toggle-button:hover {
   border-color: rgba(121, 185, 255, 0.34);
   background: rgba(121, 185, 255, 0.08);
-}
-
-.rail-toggle-icon {
-  font-size: 18px;
-  line-height: 1;
-}
-
-.left-rail.collapsed .rail-toggle-button {
-  min-height: 42px;
-  padding: 0;
-}
-
-.left-rail.collapsed .rail-toggle-text {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip: rect(0 0 0 0);
-  white-space: nowrap;
-}
-
-.rail-collapsed-stack {
-  display: grid;
-  gap: 8px;
-}
-
-.rail-collapsed-stack button {
-  display: grid;
-  min-height: 78px;
-  width: 100%;
-  place-items: center;
-  border: 1px solid rgba(148, 163, 184, 0.16);
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.03);
-  color: var(--muted);
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  writing-mode: vertical-rl;
-  transform: rotate(180deg);
-}
-
-.rail-collapsed-stack button:hover {
-  border-color: rgba(121, 185, 255, 0.34);
-  background: rgba(121, 185, 255, 0.08);
   color: var(--text);
+}
+
+.left-rail.pinned .rail-toggle-button {
+  color: var(--accent);
+  border-color: rgba(121, 185, 255, 0.5);
+  background: rgba(121, 185, 255, 0.14);
+}
+
+.rail-icon-divider {
+  width: 26px;
+  height: 1px;
+  background: var(--line);
+  margin: 4px 0;
+}
+
+.rail-icon-badge {
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  color: var(--accent);
+  background: rgba(121, 185, 255, 0.12);
+}
+
+.rail-content-panel {
+  position: absolute;
+  top: 0;
+  left: 52px;
+  bottom: 0;
+  width: 280px;
+  z-index: 40;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+  padding: 4px;
+  border-radius: 14px;
+  opacity: 0;
+  transform: translateX(-6px);
+  pointer-events: none;
+  transition: opacity 0.16s ease, transform 0.16s ease;
+}
+
+.left-rail.pinned .rail-content-panel {
+  opacity: 1;
+  transform: translateX(0);
+  pointer-events: auto;
+}
+
+/* Peeking (collapsed + hovered) floats the panel over the workspace, backed
+   by its own surface/shadow since nothing reserved space for it. */
+.left-rail.collapsed.peek .rail-content-panel {
+  opacity: 1;
+  transform: translateX(0);
+  pointer-events: auto;
+  background: var(--panel-strong);
+  border: 1px solid var(--line-strong);
+  box-shadow: var(--shadow);
 }
 
 .conversation-sidebar,
@@ -3595,29 +3608,26 @@ button { cursor: pointer; }
     grid-template-columns: 1fr;
   }
 
-  .main-layout {
+  .main-layout,
+  .main-layout:not(.sidebar-collapsed) {
     grid-template-columns: 1fr;
-  }
-
-  .main-layout.sidebar-collapsed {
-    grid-template-columns: 48px minmax(0, 1fr);
   }
 
   .left-rail {
     position: static;
     max-height: none;
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    overflow: visible;
   }
 
-  .main-layout.sidebar-collapsed .left-rail {
-    position: sticky;
-    top: 12px;
-    display: flex;
-    grid-template-columns: none;
-    max-height: calc(100vh - 24px);
-    overflow: hidden;
+  /* No room to float/reflow a side panel at this width — pinned content
+     drops into normal flow above the workspace as a compact 2-col block. */
+  .left-rail.pinned .rail-content-panel {
+    position: static;
+    width: auto;
+    opacity: 1;
+    transform: none;
+    pointer-events: auto;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: none;
   }
 
   .conversation-sidebar,
@@ -3652,7 +3662,7 @@ button { cursor: pointer; }
     gap: 12px;
   }
 
-  .left-rail {
+  .left-rail.pinned .rail-content-panel {
     grid-template-columns: 1fr;
   }
 
@@ -3675,37 +3685,7 @@ button { cursor: pointer; }
   }
 
   .main-layout.sidebar-collapsed {
-    grid-template-columns: 1fr;
     grid-template-rows: auto minmax(0, 1fr);
-  }
-
-  .main-layout.sidebar-collapsed .left-rail {
-    position: sticky;
-    top: 8px;
-    z-index: 5;
-    max-height: none;
-  }
-
-  .left-rail.collapsed {
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr);
-    gap: 8px;
-  }
-
-  .left-rail.collapsed .rail-toggle-button {
-    min-width: 42px;
-    min-height: 38px;
-  }
-
-  .rail-collapsed-stack {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 8px;
-  }
-
-  .rail-collapsed-stack button {
-    min-height: 38px;
-    writing-mode: horizontal-tb;
-    transform: none;
   }
 
   .stack-toolbar {
