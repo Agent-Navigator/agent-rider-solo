@@ -2211,7 +2211,7 @@ function ConversationCard({
           size={Math.max(4, Math.min(28, (run.task || 'untitled').length + 1))}
         />
         <span className="win-meta" title={timeLabel(run.createdAt)}>
-          {run.category || '···'} | {run.project || '···'} | {run.task || 'untitled'}
+          {run.category || '···'} | {run.project || '···'}
         </span>
         <div className="win-spacer" />
         {isNewDone ? <span className="new-dot" title="New result" /> : null}
@@ -2261,14 +2261,18 @@ function ConversationCard({
           <button
             type="button"
             className="win-btn"
-            title={maximized ? 'Restore grid layout' : 'Maximize in grid'}
-            aria-label={maximized ? 'Restore grid layout' : 'Maximize in grid'}
+            title={maximized || agentTerminalState?.fullWindow ? 'Restore' : (tui ? 'Full window' : 'Maximize in grid')}
+            aria-label={maximized || agentTerminalState?.fullWindow ? 'Restore' : (tui ? 'Full window' : 'Maximize in grid')}
             onClick={(event) => {
               event.stopPropagation()
               onToggleMaximize()
             }}
           >
-            <WinMaximizeIcon active={maximized} />
+            {tui ? (
+              <WinFullscreenIcon active={agentTerminalState?.fullWindow} />
+            ) : (
+              <WinMaximizeIcon active={maximized} />
+            )}
           </button>
         ) : null}
         <button
@@ -2920,7 +2924,7 @@ function AppBuilderPanel({
           size={Math.max(4, Math.min(28, (run.task || 'untitled app').length + 1))}
         />
         <span className="win-meta">
-          {run.category || '···'} | {run.project || '···'} | {run.task || 'untitled app'}
+          {run.category || '···'} | {run.project || '···'}
         </span>
         <div className="win-spacer" />
         <span className="win-status" style={{ color: appAtWork?.hasDist ? '#5fd39b' : '#e6b25a' }}>
@@ -5378,7 +5382,14 @@ export default function App() {
       agentTerminalState={panelStates[agentTerminalStateKey(run.id)]}
       onAgentTerminalStateChange={(patch) => updatePanelState(agentTerminalStateKey(run.id), patch)}
       maximized={maximizedKey === run.id}
-      onToggleMaximize={() => setMaximizedKey((current) => (current === run.id ? null : run.id))}
+      onToggleMaximize={isTuiAgent(run.agentType)
+        ? () => {
+            const key = agentTerminalStateKey(run.id)
+            const current = panelStates[key]?.fullWindow ?? false
+            updatePanelState(key, { fullWindow: !current })
+          }
+        : () => setMaximizedKey((current) => (current === run.id ? null : run.id))
+      }
     />
   )
 
