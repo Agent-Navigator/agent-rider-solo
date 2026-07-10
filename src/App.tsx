@@ -2220,7 +2220,6 @@ function ConversationCard({
         </span>
         <div className="win-spacer" />
         {isNewDone ? <span className="new-dot" title="New result" /> : null}
-        <span className="win-status" style={{ color: tone.color }}>{tone.label}</span>
         <button
           type="button"
           className={`win-btn ${fileBrowserOpen ? 'active' : ''}`}
