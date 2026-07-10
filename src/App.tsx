@@ -5596,7 +5596,11 @@ export default function App() {
   // but rows auto-grow as more blocks open — closest to the old stack
   // behavior while giving each preset its distinctive shape.
   function tileGridStyle(): CSSProperties {
-    const base: CSSProperties = { display: 'grid', gap: '10px' }
+    // alignItems:stretch is set inline because `.ws-columns { align-items: start }`
+    // otherwise wins the cascade over `.tile-grid { align-items: stretch }` (same
+    // specificity, later in the file), leaving tile slots at content height so
+    // cards can't fill their (full-height) grid row.
+    const base: CSSProperties = { display: 'grid', gap: '10px', alignItems: 'stretch' }
     if (layoutPreset === 'quad') return { ...base, gridTemplateColumns: '1fr 1fr', gridAutoRows: 'minmax(280px, 1fr)' }
     if (layoutPreset === 'three-col') return { ...base, gridTemplateColumns: 'repeat(3, 1fr)', gridTemplateRows: 'minmax(0, 1fr)', gridAutoRows: 'minmax(240px, 1fr)' }
     if (layoutPreset === 'master-stack') return { ...base, gridTemplateColumns: '1.9fr 1fr', gridAutoRows: 'minmax(160px, 1fr)' }
