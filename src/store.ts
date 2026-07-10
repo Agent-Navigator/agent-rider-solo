@@ -15,13 +15,23 @@ export interface WorkspacePanelState {
   builderSplit?: number
 }
 
+/** Tiling layout presets for the workspace canvas. `single`/`two-up` keep the
+ *  original independent-column stack behavior; the rest are true auto-growing
+ *  CSS grids (more open blocks add rows, they don't overflow the preset). */
+export type LayoutPreset = 'single' | 'two-up' | 'quad' | 'three-col' | 'master-stack' | 'free'
+
 export interface WorkspaceLayout {
   /** Open tool/app panels, in launch order. */
   panelOrder?: string[]
   panelColumns?: Record<string, number>
   /** Unified display order of all blocks (card ids + panel ids). */
   layoutOrder?: string[]
+  /** @deprecated superseded by layoutPreset; still read for migration. */
   workspaceColumns?: 1 | 2
+  layoutPreset?: LayoutPreset
+  /** Row/column count for the 'free' preset. */
+  freeRows?: number
+  freeCols?: number
   /** Whole left sidebar rail collapsed to save horizontal space. */
   sidebarCollapsed?: boolean
   /** Conversation cards hidden via close, but still present in the Navigator. */

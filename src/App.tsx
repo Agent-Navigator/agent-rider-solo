@@ -1,4 +1,4 @@
-import { type ChangeEvent, type DragEvent, type FormEvent, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { type ChangeEvent, type CSSProperties, type DragEvent, type FormEvent, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import rehypeRaw from 'rehype-raw'
@@ -57,6 +57,7 @@ import {
   type AppWarning,
   type WorkspacePanelState,
   type PasswordStatus,
+  type LayoutPreset,
 } from './store'
 import { plugins, type AgentRiderPlugin } from '../plugins'
 import { WebView } from '../plugins/WebView'
@@ -1460,6 +1461,70 @@ function FileBrowser({
 // starting a drag (shared by cards and workspace panels).
 const DRAG_EXCLUDE = 'input, textarea, select, button, a, iframe, [contenteditable="true"], .bubble, .conv-agent-terminal, .terminal-screen, .file-browser, .file-preview'
 
+// Layout preset picker shown in the workspace toolbar. Icons are tiny inline
+// bars mirroring each grid shape (single / 2-up / quad / 3-col / master+stack
+// / free grid) rather than importing an icon set.
+const LAYOUT_PRESETS: { id: LayoutPreset; title: string; icon: ReactNode }[] = [
+  {
+    id: 'single', title: 'Single column',
+    icon: <div className="preset-icon-block" style={{ width: 15, height: 12 }} />,
+  },
+  {
+    id: 'two-up', title: '2-up columns',
+    icon: (
+      <div style={{ display: 'flex', gap: 2 }}>
+        <div className="preset-icon-block" style={{ width: 6.5, height: 12 }} />
+        <div className="preset-icon-block" style={{ width: 6.5, height: 12 }} />
+      </div>
+    ),
+  },
+  {
+    id: 'quad', title: '2×2 quad',
+    icon: (
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gridTemplateRows: '1fr 1fr', gap: 2 }}>
+        <div className="preset-icon-block" style={{ width: 6.5, height: 5.5 }} />
+        <div className="preset-icon-block" style={{ width: 6.5, height: 5.5 }} />
+        <div className="preset-icon-block" style={{ width: 6.5, height: 5.5 }} />
+        <div className="preset-icon-block" style={{ width: 6.5, height: 5.5 }} />
+      </div>
+    ),
+  },
+  {
+    id: 'three-col', title: '3-column dense',
+    icon: (
+      <div style={{ display: 'flex', gap: 2 }}>
+        <div className="preset-icon-block" style={{ width: 4, height: 12 }} />
+        <div className="preset-icon-block" style={{ width: 4, height: 12 }} />
+        <div className="preset-icon-block" style={{ width: 4, height: 12 }} />
+      </div>
+    ),
+  },
+  {
+    id: 'master-stack', title: 'Master + stack',
+    icon: (
+      <div style={{ display: 'flex', gap: 2 }}>
+        <div className="preset-icon-block" style={{ width: 9, height: 12 }} />
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+          <div className="preset-icon-block" style={{ width: 5, height: 3.3 }} />
+          <div className="preset-icon-block" style={{ width: 5, height: 3.3 }} />
+          <div className="preset-icon-block" style={{ width: 5, height: 3.3 }} />
+        </div>
+      </div>
+    ),
+  },
+  {
+    id: 'free', title: 'Free grid',
+    icon: (
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
+        <rect x="1.5" y="1.5" width="13" height="13" rx="2" stroke="currentColor" strokeWidth="1.3" />
+        <line x1="6" y1="1.5" x2="6" y2="14.5" stroke="currentColor" strokeWidth="1.1" />
+        <line x1="10.5" y1="1.5" x2="10.5" y2="14.5" stroke="currentColor" strokeWidth="1.1" />
+        <line x1="1.5" y1="8" x2="14.5" y2="8" stroke="currentColor" strokeWidth="1.1" />
+      </svg>
+    ),
+  },
+]
+
 // Start an HTML5 drag using an off-screen clone of `element` as the ghost, so
 // the ghost tracks the exact grab point (passing the live element is
 // unreliable) and carries no box-shadow (which would offset it).
@@ -1504,6 +1569,8 @@ function DraggablePanel({
   onDragStartPanel,
   onDragEndPanel,
   onDropOnPanel,
+  maximized = false,
+  onToggleMaximize,
   children,
 }: {
   panelId: string
@@ -1512,6 +1579,9 @@ function DraggablePanel({
   onDragStartPanel: () => void
   onDragEndPanel: () => void
   onDropOnPanel: (after: boolean) => void
+  /** Whether this panel is the single block currently filling the workspace. */
+  maximized?: boolean
+  onToggleMaximize?: () => void
   children: ReactNode
 }) {
   const ref = useRef<HTMLDivElement | null>(null)
@@ -1569,6 +1639,20 @@ function DraggablePanel({
         onDropOnPanel(dragOverAfterRef.current)
       }}
     >
+      {onToggleMaximize ? (
+        <button
+          type="button"
+          className="panel-maximize-btn"
+          title={maximized ? 'Restore grid layout' : 'Maximize this panel'}
+          aria-label={maximized ? 'Restore grid layout' : 'Maximize this panel'}
+          onClick={(event) => {
+            event.stopPropagation()
+            onToggleMaximize()
+          }}
+        >
+          {maximized ? '⤡' : '⤢'}
+        </button>
+      ) : null}
       {children}
     </div>
   )
@@ -1611,6 +1695,8 @@ function ConversationCard({
   onDropOnCard,
   agentTerminalState,
   onAgentTerminalStateChange,
+  maximized = false,
+  onToggleMaximize,
 }: {
   run: RunNode
   turns: TurnItem[]
@@ -1651,6 +1737,9 @@ function ConversationCard({
   onDropOnCard: (after: boolean) => void
   agentTerminalState?: WorkspacePanelState
   onAgentTerminalStateChange: (patch: WorkspacePanelState) => void
+  /** Whether this card is the single block currently filling the workspace. */
+  maximized?: boolean
+  onToggleMaximize?: () => void
 }) {
   const agentType: AgentType = run.agentType ?? 'hermes'
   const tui = isTuiAgent(agentType)
@@ -2067,6 +2156,20 @@ function ConversationCard({
           {isNewDone ? <span className="new-dot" title="New result" /> : null}
         </div>
         <span className={`conv-caret ${collapsed ? '' : 'open'}`} aria-hidden>▾</span>
+        {onToggleMaximize ? (
+          <button
+            type="button"
+            className="card-maximize"
+            title={maximized ? 'Restore grid layout' : 'Maximize this card'}
+            aria-label={maximized ? 'Restore grid layout' : 'Maximize this card'}
+            onClick={(event) => {
+              event.stopPropagation()
+              onToggleMaximize()
+            }}
+          >
+            {maximized ? '⤡' : '⤢'}
+          </button>
+        ) : null}
         <button
           type="button"
           className="card-close"
@@ -3829,8 +3932,20 @@ export default function App() {
   const [metaCollapsedIds, setMetaCollapsedIds] = useState<Set<string>>(new Set())
   const [newDoneIds, setNewDoneIds] = useState<Set<string>>(new Set())
   const [activeRunId, setActiveRunId] = useState<string | null>(null)
-  const [workspaceColumns, setWorkspaceColumns] = useState<1 | 2>(1)
+  // Tiling layout preset for the workspace canvas. 'single'/'two-up' behave like
+  // the original independent-column stacks; the rest are auto-growing CSS grids.
+  const [layoutPreset, setLayoutPreset] = useState<LayoutPreset>('single')
+  const [freeRows, setFreeRows] = useState(2)
+  const [freeCols, setFreeCols] = useState(3)
+  // Key of a single block (card or panel) temporarily blown up to fill the
+  // whole workspace canvas. Transient view state — not persisted.
+  const [maximizedKey, setMaximizedKey] = useState<string | null>(null)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  // Hovering the collapsed rail temporarily reveals it as a floating overlay
+  // without reflowing the workspace. Transient — not persisted.
+  const [sidebarPeek, setSidebarPeek] = useState(false)
+  // Bottom-left settings gear popover (Password, for now).
+  const [settingsOpen, setSettingsOpen] = useState(false)
   // Key of the block (card or panel) currently being dragged. Block keys: a
   // run id (`run-…`) for a card, or a panel id ('terminal' | 'plugin:…' |
   // 'app:…'). One drag system so cards and panels can be freely interleaved.
@@ -4196,6 +4311,12 @@ export default function App() {
     return [...placed, ...missing]
   }, [panelOrder, visibleRuns, layoutOrder])
 
+  // If a maximized block closes (or the layout preset changes), fall back to
+  // the normal grid instead of showing a stale maximize state.
+  useEffect(() => {
+    if (maximizedKey && !orderedKeys.includes(maximizedKey)) setMaximizedKey(null)
+  }, [maximizedKey, orderedKeys])
+
   function reorderKeys(keys: string[], draggedKey: string, targetKey: string | null, after: boolean) {
     const without = keys.filter((k) => k !== draggedKey)
     if (!targetKey) return [...without, draggedKey]
@@ -4206,10 +4327,11 @@ export default function App() {
   }
 
   // Drop the dragged block before/after a target block (any mix of card/panel),
-  // inheriting the target's column in two-column mode.
+  // inheriting the target's column in two-column mode. Tile presets ignore
+  // per-block columns — grid position is implicit from layoutOrder.
   function handleDropOnBlock(targetKey: string, after: boolean) {
     if (!draggingKey || draggingKey === targetKey) return
-    if (workspaceColumns === 2) setColumnOf(draggingKey, columnOf(targetKey))
+    if (layoutPreset === 'two-up') setColumnOf(draggingKey, columnOf(targetKey))
     setLayoutOrder(reorderKeys(orderedKeys, draggingKey, targetKey, after))
     setDraggingKey(null)
   }
@@ -4217,7 +4339,15 @@ export default function App() {
   // Drop onto a column's empty space → append to the end of that column.
   function handleDropToColumn(column: number) {
     if (!draggingKey) return
-    if (workspaceColumns === 2) setColumnOf(draggingKey, column)
+    if (layoutPreset === 'two-up') setColumnOf(draggingKey, column)
+    setLayoutOrder(reorderKeys(orderedKeys, draggingKey, null, false))
+    setDraggingKey(null)
+  }
+
+  // Drop onto the tile grid's empty space (not on a specific block) → append
+  // to the end of the shared order.
+  function handleDropToEnd() {
+    if (!draggingKey) return
     setLayoutOrder(reorderKeys(orderedKeys, draggingKey, null, false))
     setDraggingKey(null)
   }
@@ -4698,9 +4828,16 @@ export default function App() {
             const migratedLayout = [...new Set((layout.layoutOrder as string[]).map(migrateLegacyAppPanelId))]
             setLayoutOrder((current) => (current.length ? current : migratedLayout))
           }
-          if (layout.workspaceColumns === 1 || layout.workspaceColumns === 2) {
-            setWorkspaceColumns(layout.workspaceColumns)
+          const validPresets: LayoutPreset[] = ['single', 'two-up', 'quad', 'three-col', 'master-stack', 'free']
+          if (typeof layout.layoutPreset === 'string' && validPresets.includes(layout.layoutPreset)) {
+            setLayoutPreset(layout.layoutPreset)
+          } else if (layout.workspaceColumns === 2) {
+            setLayoutPreset('two-up')
+          } else if (layout.workspaceColumns === 1) {
+            setLayoutPreset('single')
           }
+          if (typeof layout.freeRows === 'number' && layout.freeRows > 0) setFreeRows(layout.freeRows)
+          if (typeof layout.freeCols === 'number' && layout.freeCols > 0) setFreeCols(layout.freeCols)
           if (typeof layout.sidebarCollapsed === 'boolean') {
             setSidebarCollapsed(layout.sidebarCollapsed)
           }
@@ -4724,7 +4861,9 @@ export default function App() {
         panelOrder,
         panelColumns,
         layoutOrder,
-        workspaceColumns,
+        layoutPreset,
+        freeRows,
+        freeCols,
         sidebarCollapsed,
         closedRunIds: [...closedRunIds],
         collapsedRunIds: [...collapsedIds],
@@ -4734,7 +4873,7 @@ export default function App() {
       })
     }, 700)
     return () => clearTimeout(handle)
-  }, [runs, turns, sessionId, panelOrder, panelColumns, layoutOrder, workspaceColumns, sidebarCollapsed, closedRunIds, collapsedIds, metaCollapsedIds, newDoneIds, panelStates, passwordStatus?.authenticated])
+  }, [runs, turns, sessionId, panelOrder, panelColumns, layoutOrder, layoutPreset, freeRows, freeCols, sidebarCollapsed, closedRunIds, collapsedIds, metaCollapsedIds, newDoneIds, panelStates, passwordStatus?.authenticated])
 
   async function flushQueue() {
     if (activeTurnRef.current) return
@@ -5053,6 +5192,8 @@ export default function App() {
       onRefreshTurn={refreshHermesTurn}
       agentTerminalState={panelStates[agentTerminalStateKey(run.id)]}
       onAgentTerminalStateChange={(patch) => updatePanelState(agentTerminalStateKey(run.id), patch)}
+      maximized={maximizedKey === run.id}
+      onToggleMaximize={() => setMaximizedKey((current) => (current === run.id ? null : run.id))}
     />
   )
 
@@ -5178,6 +5319,8 @@ export default function App() {
         onDragStartPanel={() => setDraggingKey(panelId)}
         onDragEndPanel={() => setDraggingKey(null)}
         onDropOnPanel={(after) => handleDropOnBlock(panelId, after)}
+        maximized={maximizedKey === panelId}
+        onToggleMaximize={() => setMaximizedKey((current) => (current === panelId ? null : panelId))}
       >
         {content}
       </DraggablePanel>
@@ -5218,8 +5361,54 @@ export default function App() {
     )
   }
 
+  // Grid template for the tile presets (quad / three-col / master-stack /
+  // free). These are true CSS grids: the column count is fixed by the preset,
+  // but rows auto-grow as more blocks open — closest to the old stack
+  // behavior while giving each preset its distinctive shape.
+  function tileGridStyle(): CSSProperties {
+    const base: CSSProperties = { display: 'grid', gap: '10px' }
+    if (layoutPreset === 'quad') return { ...base, gridTemplateColumns: '1fr 1fr', gridAutoRows: 'minmax(280px, 1fr)' }
+    if (layoutPreset === 'three-col') return { ...base, gridTemplateColumns: 'repeat(3, 1fr)', gridAutoRows: 'minmax(240px, 1fr)' }
+    if (layoutPreset === 'master-stack') return { ...base, gridTemplateColumns: '1.9fr 1fr', gridAutoRows: 'minmax(160px, 1fr)' }
+    return { ...base, gridTemplateColumns: `repeat(${freeCols}, 1fr)`, gridAutoRows: 'minmax(200px, 1fr)' }
+  }
+
+  // Master+stack gives the first block the whole left column (spanning every
+  // row); the rest queue up in the right column, one per row.
+  function tileSlotStyle(index: number): CSSProperties {
+    if (layoutPreset !== 'master-stack') return {}
+    return index === 0 ? { gridColumn: '1', gridRow: '1 / -1' } : { gridColumn: '2' }
+  }
+
+  // Tiling grid: every open block gets its own equally-sized slot, filled
+  // row-major in layoutOrder. Unlike the stack presets, position is purely
+  // order-driven — there's no per-block column assignment to maintain.
+  const renderTileGrid = () => {
+    const dragActive = draggingKey !== null
+    return (
+      <div
+        className={`ws-columns tile-grid tile-grid-${layoutPreset}`}
+        style={tileGridStyle()}
+        onDragOver={(event) => {
+          if (dragActive) event.preventDefault()
+        }}
+        onDrop={(event) => {
+          if (!dragActive) return
+          event.preventDefault()
+          handleDropToEnd()
+        }}
+      >
+        {orderedKeys.map((key, index) => (
+          <div key={key} className="tile-slot" style={{ display: 'flex', minWidth: 0, minHeight: 0, ...tileSlotStyle(index) }}>
+            {renderBlock(key)}
+          </div>
+        ))}
+      </div>
+    )
+  }
+
   return (
-    <div className={`app-shell ${hasContent ? 'has-content' : 'blank'} ${workspaceColumns === 2 ? 'full-width' : ''}`}>
+    <div className={`app-shell ${hasContent ? 'has-content' : 'blank'} ${layoutPreset !== 'single' ? 'full-width' : ''}`}>
       <header className="topbar card">
         <h1>
           Agent Rider
@@ -5240,6 +5429,44 @@ export default function App() {
           </div>
         </div>
       </header>
+
+      {settingsOpen ? <div className="settings-popover-backdrop" onClick={() => setSettingsOpen(false)} /> : null}
+
+      <div className="settings-gear-anchor">
+        <button
+          type="button"
+          className={`settings-gear-btn ${settingsOpen ? 'open' : ''}`}
+          title="Settings"
+          aria-label="Settings"
+          aria-expanded={settingsOpen}
+          onClick={() => setSettingsOpen((current) => !current)}
+        >
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none">
+            <circle cx="12" cy="12" r="3.2" stroke="currentColor" strokeWidth="1.7" />
+            <path
+              d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </button>
+        <div className={`settings-popover ${settingsOpen ? 'open' : ''}`}>
+          <div className="settings-popover-title">SETTINGS</div>
+          <button
+            type="button"
+            className="settings-popover-row"
+            onClick={() => {
+              setSettingsOpen(false)
+              setPasswordDialogOpen(true)
+            }}
+            disabled={!passwordStatus}
+          >
+            <span>Password</span>
+            <span aria-hidden>›</span>
+          </button>
+        </div>
+      </div>
 
       {passwordDialogOpen && passwordStatus ? (
         <PasswordDialog
@@ -5295,35 +5522,45 @@ export default function App() {
 
       <main className="main-stage">
         <div className={`main-layout ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
-          <aside className={`left-rail ${sidebarCollapsed ? 'collapsed' : ''}`} aria-label="Sidebar">
+          <aside
+            className={`left-rail ${sidebarCollapsed ? 'collapsed' : ''} ${sidebarCollapsed && sidebarPeek ? 'peek' : ''}`}
+            aria-label="Sidebar"
+            onMouseEnter={() => {
+              if (sidebarCollapsed) setSidebarPeek(true)
+            }}
+            onMouseLeave={() => setSidebarPeek(false)}
+          >
             <button
               type="button"
               className="rail-toggle-button"
               aria-expanded={!sidebarCollapsed}
-              aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-              title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-              onClick={() => setSidebarCollapsed((current) => !current)}
+              aria-label={sidebarCollapsed ? 'Pin sidebar open' : 'Collapse sidebar'}
+              title={sidebarCollapsed ? 'Pin sidebar open' : 'Collapse sidebar'}
+              onClick={() => {
+                setSidebarCollapsed((current) => !current)
+                setSidebarPeek(false)
+              }}
             >
               <span className="rail-toggle-icon" aria-hidden>
                 {sidebarCollapsed ? '›' : '‹'}
               </span>
-              <span className="rail-toggle-text">{sidebarCollapsed ? 'Open sidebar' : 'Collapse sidebar'}</span>
+              <span className="rail-toggle-text">{sidebarCollapsed ? 'Pin sidebar open' : 'Collapse sidebar'}</span>
             </button>
 
-            {sidebarCollapsed ? (
+            {sidebarCollapsed && !sidebarPeek ? (
               <div className="rail-collapsed-stack">
                 <button
                   type="button"
-                  aria-label="Expand sidebar to show Navigator"
-                  title="Expand sidebar to show Navigator"
+                  aria-label="Hover or click to show Navigator"
+                  title="Hover or click to show Navigator"
                   onClick={() => setSidebarCollapsed(false)}
                 >
                   NAV
                 </button>
                 <button
                   type="button"
-                  aria-label="Expand sidebar to show Resources"
-                  title="Expand sidebar to show Resources"
+                  aria-label="Hover or click to show Resources"
+                  title="Hover or click to show Resources"
                   onClick={() => setSidebarCollapsed(false)}
                 >
                   RES
@@ -5362,15 +5599,38 @@ export default function App() {
               <button type="button" className="send-button new-conversation-btn" onClick={startNewConversation}>
                 + New conversation
               </button>
-              <button
-                type="button"
-                className="layout-toggle-button"
-                title={workspaceColumns === 1 ? 'Switch to two columns' : 'Switch to one column'}
-                aria-label={workspaceColumns === 1 ? 'Switch to two columns' : 'Switch to one column'}
-                onClick={() => setWorkspaceColumns((current) => (current === 1 ? 2 : 1))}
-              >
-                {workspaceColumns === 1 ? '▥' : '▤'}
-              </button>
+
+              <div className="toolbar-divider" aria-hidden />
+              <span className="toolbar-label">LAYOUT</span>
+              <div className="preset-picker">
+                {LAYOUT_PRESETS.map((preset) => (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    className={`preset-button ${layoutPreset === preset.id ? 'active' : ''}`}
+                    title={preset.title}
+                    aria-label={preset.title}
+                    aria-pressed={layoutPreset === preset.id}
+                    onClick={() => setLayoutPreset(preset.id)}
+                  >
+                    {preset.icon}
+                  </button>
+                ))}
+              </div>
+
+              {layoutPreset === 'free' ? (
+                <div className="free-grid-controls">
+                  <span className="free-grid-label">ROWS</span>
+                  <button type="button" className="free-grid-step" onClick={() => setFreeRows((r) => Math.max(1, r - 1))}>–</button>
+                  <span className="free-grid-value">{freeRows}</span>
+                  <button type="button" className="free-grid-step" onClick={() => setFreeRows((r) => Math.min(6, r + 1))}>+</button>
+                  <span className="free-grid-label">COLS</span>
+                  <button type="button" className="free-grid-step" onClick={() => setFreeCols((c) => Math.max(1, c - 1))}>–</button>
+                  <span className="free-grid-value">{freeCols}</span>
+                  <button type="button" className="free-grid-step" onClick={() => setFreeCols((c) => Math.min(6, c + 1))}>+</button>
+                </div>
+              ) : null}
+
               {error ? <span className="error-text inline">{error}</span> : null}
             </div>
 
@@ -5386,17 +5646,31 @@ export default function App() {
               ))}
             </datalist>
 
-            <div className={`workspace-panels columns-${workspaceColumns}`}>
-              {panelOrder.length === 0 && visibleRuns.length === 0 ? (
+            <div className={`workspace-panels ${maximizedKey ? 'maximized' : `columns-${layoutPreset === 'two-up' ? 2 : 1}`}`}>
+              {maximizedKey ? (
+                <div className="maximized-block">
+                  <button
+                    type="button"
+                    className="maximize-restore-btn"
+                    onClick={() => setMaximizedKey(null)}
+                    title="Restore grid layout"
+                  >
+                    ⤡ Restore grid
+                  </button>
+                  {renderBlock(maximizedKey)}
+                </div>
+              ) : panelOrder.length === 0 && visibleRuns.length === 0 ? (
                 <div className="conv-empty">
                   {hasContent ? 'All cards closed — reopen one from the Navigator.' : 'Click “New conversation” to begin.'}
                 </div>
-              ) : workspaceColumns === 2 ? (
+              ) : layoutPreset === 'two-up' ? (
                 // Unified two-column canvas: panels and cards each carry a
                 // column, so a tool/app can sit left-right beside a card.
                 <div className="ws-columns">{[0, 1].map((col) => renderWorkspaceColumn(col))}</div>
-              ) : (
+              ) : layoutPreset === 'single' ? (
                 renderWorkspaceColumn(null)
+              ) : (
+                renderTileGrid()
               )}
             </div>
           </section>
