@@ -2260,7 +2260,7 @@ function ConversationCard({
             onToggle()
           }}
         >
-          <span className={`conv-caret ${collapsed ? '' : 'open'}`} aria-hidden>▾</span>
+          <span className={`conv-caret ${collapsed ? '' : 'open'}`} aria-hidden>{collapsed ? '▼' : '▲'}</span>
         </button>
         {onToggleMaximize ? (
           <button
@@ -2414,7 +2414,7 @@ function ConversationCard({
                       {isNewDone ? <span className="new-dot" title="New result" /> : null}
                       <button type="button" className={`win-btn ${fileBrowserOpen ? 'active' : ''}`} title={fileBrowserOpen ? 'Hide file browser' : 'Browse files'} aria-label={fileBrowserOpen ? 'Hide file browser' : 'Browse files'} aria-expanded={fileBrowserOpen} onClick={(event) => { event.stopPropagation(); setFileBrowserOpen((current) => !current) }}><WinFilesIcon /></button>
                       {hideContext ? null : <button type="button" className={`win-btn ${metaCollapsed ? '' : 'active'}`} title={metaCollapsed ? 'Show context' : 'Hide context'} aria-label="Toggle context fields" aria-expanded={!metaCollapsed} onClick={(event) => { event.stopPropagation(); onMetaCollapsedChange(!metaCollapsed) }}><WinContextIcon /></button>}
-                      <button type="button" className="win-btn" title={collapsed ? 'Expand window' : 'Collapse window'} aria-label={collapsed ? 'Expand window' : 'Collapse window'} aria-expanded={!collapsed} onClick={(event) => { event.stopPropagation(); onToggle() }}><span className={`conv-caret ${collapsed ? '' : 'open'}`} aria-hidden>▾</span></button>
+                      <button type="button" className="win-btn" title={collapsed ? 'Expand window' : 'Collapse window'} aria-label={collapsed ? 'Expand window' : 'Collapse window'} aria-expanded={!collapsed} onClick={(event) => { event.stopPropagation(); if (agentTerminalState?.fullWindow) { onToggleMaximize?.(); } onToggle() }}><span className={`conv-caret ${collapsed ? '' : 'open'}`} aria-hidden>{collapsed ? '▼' : '▲'}</span></button>
                       {onToggleMaximize ? <button type="button" className="win-btn" title={maximized || agentTerminalState?.fullWindow ? 'Restore' : 'Full window'} aria-label={maximized || agentTerminalState?.fullWindow ? 'Restore' : 'Full window'} onClick={(event) => { event.stopPropagation(); onToggleMaximize() }}><WinFullscreenIcon active={agentTerminalState?.fullWindow} /></button> : null}
                       <button type="button" className="win-btn win-btn-close" title="Close window" aria-label="Close window" onClick={(event) => { event.stopPropagation(); onClose() }}><WinCloseIcon /></button>
                     </div>
@@ -3728,7 +3728,7 @@ function WebTerminal({
             aria-expanded={!terminalCollapsed}
             onClick={() => setTerminalCollapsedState((current) => !current)}
           >
-            <span className={`conv-caret ${terminalCollapsed ? '' : 'open'}`} aria-hidden>▾</span>
+            <span className={`conv-caret ${terminalCollapsed ? '' : 'open'}`} aria-hidden>{terminalCollapsed ? '▼' : '▲'}</span>
           </button>
         ) : null}
         {onToggleMaximize ? (
@@ -5598,7 +5598,7 @@ export default function App() {
   function tileGridStyle(): CSSProperties {
     const base: CSSProperties = { display: 'grid', gap: '10px' }
     if (layoutPreset === 'quad') return { ...base, gridTemplateColumns: '1fr 1fr', gridAutoRows: 'minmax(280px, 1fr)' }
-    if (layoutPreset === 'three-col') return { ...base, gridTemplateColumns: 'repeat(3, 1fr)', gridAutoRows: 'minmax(240px, 1fr)' }
+    if (layoutPreset === 'three-col') return { ...base, gridTemplateColumns: 'repeat(3, 1fr)', gridTemplateRows: 'minmax(0, 1fr)', gridAutoRows: 'minmax(240px, 1fr)' }
     if (layoutPreset === 'master-stack') return { ...base, gridTemplateColumns: '1.9fr 1fr', gridAutoRows: 'minmax(160px, 1fr)' }
     return { ...base, gridTemplateColumns: `repeat(${freeCols}, 1fr)`, gridAutoRows: 'minmax(200px, 1fr)' }
   }

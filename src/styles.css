@@ -787,7 +787,7 @@ button { cursor: pointer; }
 
 /* TUI agent running in an embedded terminal inside the card. */
 .conv-agent-terminal {
-  margin-top: 4px;
+  margin-top: 0;
 }
 
 .conv-content-shell {
@@ -3885,9 +3885,12 @@ button { cursor: pointer; }
    titlebar like the reference windows. */
 .conv-meta ~ .conv-content-shell .win-body,
 .conv-meta ~ .conv-content-shell .conv-agent-terminal,
-.file-browser.open ~ .win-body,
-.file-browser.open ~ .conv-agent-terminal {
+.file-browser.open ~ .win-body {
   margin-top: 10px;
+}
+/* The TUI terminal sits flush against the file browser — no gap needed. */
+.file-browser.open ~ .conv-agent-terminal {
+  margin-top: 0;
 }
 
 .win-body-empty {
