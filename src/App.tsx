@@ -2197,12 +2197,13 @@ function ConversationCard({
         onDropOnCard(dragOverAfterRef.current)
       }}
     >
-      {hideHeader ? null : (
+      {/* In full-window mode the titlebar is rendered inside the WebTerminal
+          overlay so the two stay visually connected as one element. */}
+      {tui && agentTerminalState?.fullWindow ? null : (
       <div
-        className={`win-titlebar${tui && agentTerminalState?.fullWindow ? ' full-window-fixed' : ''}`}
+        className="win-titlebar"
         onDoubleClick={onToggle}
         title="Drag to reorder · double-click to collapse"
-        style={tui && agentTerminalState?.fullWindow ? { position: 'fixed', top: 14, left: 14, right: 14, zIndex: 51 } : undefined}
       >
         <WinGrip />
         <span className="win-dot" style={{ background: tone.dot }} aria-hidden />
@@ -2403,6 +2404,21 @@ function ConversationCard({
                   onClose={() => {}}
                   collapsible={false}
                   frameless
+                  titleBar={tui && !hideHeader ? (
+                    <div className="win-titlebar" onDoubleClick={onToggle} title="Drag to reorder · double-click to collapse">
+                      <WinGrip />
+                      <span className="win-dot" style={{ background: tone.dot }} aria-hidden />
+                      <input className="win-title-input" value={run.task} onChange={(event) => onTitleChange(event.target.value)} onClick={(event) => event.stopPropagation()} placeholder="untitled" aria-label="Conversation title" size={Math.max(4, Math.min(28, (run.task || 'untitled').length + 1))} />
+                      <span className="win-meta" title={timeLabel(run.createdAt)}>{run.category || '···'} | {run.project || '···'}</span>
+                      <div className="win-spacer" />
+                      {isNewDone ? <span className="new-dot" title="New result" /> : null}
+                      <button type="button" className={`win-btn ${fileBrowserOpen ? 'active' : ''}`} title={fileBrowserOpen ? 'Hide file browser' : 'Browse files'} aria-label={fileBrowserOpen ? 'Hide file browser' : 'Browse files'} aria-expanded={fileBrowserOpen} onClick={(event) => { event.stopPropagation(); setFileBrowserOpen((current) => !current) }}><WinFilesIcon /></button>
+                      {hideContext ? null : <button type="button" className={`win-btn ${metaCollapsed ? '' : 'active'}`} title={metaCollapsed ? 'Show context' : 'Hide context'} aria-label="Toggle context fields" aria-expanded={!metaCollapsed} onClick={(event) => { event.stopPropagation(); onMetaCollapsedChange(!metaCollapsed) }}><WinContextIcon /></button>}
+                      <button type="button" className="win-btn" title={collapsed ? 'Expand window' : 'Collapse window'} aria-label={collapsed ? 'Expand window' : 'Collapse window'} aria-expanded={!collapsed} onClick={(event) => { event.stopPropagation(); onToggle() }}><span className={`conv-caret ${collapsed ? '' : 'open'}`} aria-hidden>▾</span></button>
+                      {onToggleMaximize ? <button type="button" className="win-btn" title={maximized || agentTerminalState?.fullWindow ? 'Restore' : 'Full window'} aria-label={maximized || agentTerminalState?.fullWindow ? 'Restore' : 'Full window'} onClick={(event) => { event.stopPropagation(); onToggleMaximize() }}><WinFullscreenIcon active={agentTerminalState?.fullWindow} /></button> : null}
+                      <button type="button" className="win-btn win-btn-close" title="Close window" aria-label="Close window" onClick={(event) => { event.stopPropagation(); onClose() }}><WinCloseIcon /></button>
+                    </div>
+                  ) : undefined}
                   fullWindow={agentTerminalState?.fullWindow}
                   promptContext={run.cardKind === 'app-builder' ? 'app-builder' : undefined}
                   appWorkspace={run.cardKind === 'app-builder' ? run.workspacePath : undefined}
@@ -3451,6 +3467,7 @@ function WebTerminal({
   onStateChange,
   headerLeading,
   frameless = false,
+  titleBar,
   maximized,
   onToggleMaximize,
 }: {
@@ -3478,9 +3495,12 @@ function WebTerminal({
    *  toggle) that stay visible in both small and full-window modes. */
   headerLeading?: ReactNode
   /** Embedded inside another window (e.g. a TUI conversation window): the
-   *  terminal skips its own titlebar except in full-window mode, where the
-   *  host titlebar is covered and the exit control must live here. */
+   *  terminal skips its own titlebar. In full-window mode the host card's
+   *  titlebar is rendered inside the overlay via the `titleBar` prop so
+   *  the two stay visually connected. */
   frameless?: boolean
+  /** Host card's titlebar rendered inside the full-window overlay. */
+  titleBar?: ReactNode
   /** True while this panel is the single block filling the workspace grid. */
   maximized?: boolean
   /** Toggles this panel as the single block filling the workspace grid. */
@@ -3688,7 +3708,9 @@ function WebTerminal({
 
   return (
     <section className={`web-terminal ${terminalCollapsed ? 'collapsed' : ''} ${terminalFullWindow ? 'full-window' : ''} ${frameless ? 'frameless' : ''}`} aria-label="Local Terminal">
-      {frameless ? null : (
+      {frameless && terminalFullWindow && titleBar ? (
+        titleBar
+      ) : frameless ? null : (
       <div className="win-titlebar">
         <WinGrip />
         <span className="win-dot" style={{ background: stateTone.dot }} aria-hidden />
