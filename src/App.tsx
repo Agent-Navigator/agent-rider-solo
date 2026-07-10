@@ -2211,9 +2211,7 @@ function ConversationCard({
           size={Math.max(4, Math.min(28, (run.task || 'untitled').length + 1))}
         />
         <span className="win-meta" title={timeLabel(run.createdAt)}>
-          {agentLabel(agentType)}
-          {run.category ? ` · ${run.category}` : ''}
-          {tui ? '' : isDraft ? ' · draft' : ` · ${turns.length} ${turns.length === 1 ? 'turn' : 'turns'}`}
+          {run.category || '···'} | {run.project || '···'} | {run.task || 'untitled'}
         </span>
         <div className="win-spacer" />
         {isNewDone ? <span className="new-dot" title="New result" /> : null}
@@ -2311,6 +2309,15 @@ function ConversationCard({
                 value={run.project}
                 onChange={(event) => onProjectChange(event.target.value)}
                 placeholder="Auto from prompt — or type / pick"
+              />
+            </div>
+            <div className="conv-meta-row">
+              <span className="tree-label">Title</span>
+              <input
+                className="conv-input"
+                value={run.task}
+                onChange={(event) => onTitleChange(event.target.value)}
+                placeholder="Conversation title"
               />
             </div>
             <div className="conv-meta-row">
@@ -2912,11 +2919,26 @@ function AppBuilderPanel({
           aria-label="App title"
           size={Math.max(4, Math.min(28, (run.task || 'untitled app').length + 1))}
         />
-        <span className="win-meta">Resource · App Builder</span>
+        <span className="win-meta">
+          {run.category || '···'} | {run.project || '···'} | {run.task || 'untitled app'}
+        </span>
         <div className="win-spacer" />
         <span className="win-status" style={{ color: appAtWork?.hasDist ? '#5fd39b' : '#e6b25a' }}>
           {appAtWork?.hasDist ? 'ready' : appAtWork ? 'building' : 'no build'}
         </span>
+        <button
+          type="button"
+          className={`win-btn ${isContextCollapsed ? '' : 'active'}`}
+          title={isContextCollapsed ? 'Show context' : 'Hide context'}
+          aria-label="Toggle context"
+          aria-expanded={!isContextCollapsed}
+          onClick={(event) => {
+            event.stopPropagation()
+            setContextCollapsedState(!isContextCollapsed)
+          }}
+        >
+          <WinContextIcon />
+        </button>
         <button
           type="button"
           className="win-btn"
@@ -2982,7 +3004,7 @@ function AppBuilderPanel({
               <span className="conv-meta-toggle-label">Context</span>
               {isContextCollapsed ? (
                 <span className="conv-meta-summary">
-                  {[run.category, run.project, agentLabel(run.agentType)].filter(Boolean).join(' · ') || 'Category · Project · Agent'}
+                  {[run.category, run.project, run.task, agentLabel(run.agentType)].filter(Boolean).join(' · ') || 'Category · Project · Title · Agent'}
                 </span>
               ) : null}
             </button>
@@ -3006,6 +3028,15 @@ function AppBuilderPanel({
                   value={run.project}
                   onChange={(event) => onProjectChange(event.target.value)}
                   placeholder="App project"
+                />
+              </div>
+              <div className="conv-meta-row">
+                <span className="tree-label">Title</span>
+                <input
+                  className="conv-input"
+                  value={run.task}
+                  onChange={(event) => onTitleChange(event.target.value)}
+                  placeholder="App title"
                 />
               </div>
               <div className="conv-meta-row">
@@ -5593,7 +5624,7 @@ export default function App() {
   }
 
   return (
-    <div className={`app-shell ${hasContent ? 'has-content' : 'blank'} ${layoutPreset !== 'single' ? 'full-width' : ''}`}>
+    <div className={`app-shell ${hasContent ? 'has-content' : 'blank'}`}>
       <div className="floating-status" aria-label="Hermes connection status">
         <StatusPill state={connectionState} detail={headerStatusText(connectionState, connectionDetail)} />
       </div>
