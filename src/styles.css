@@ -2628,6 +2628,13 @@ button { cursor: pointer; }
   min-height: 0;
 }
 
+/* A collapsed block has no body to fill — keep it at header height instead of
+   letting it claim an equal share and show empty space below its titlebar. */
+.ws-column > .conv-card.collapsed,
+.ws-column > .plugin-panel:has(> .collapsed) {
+  flex: 0 0 auto;
+}
+
 /* Fill contexts (single/2-up columns + every tile cell): an embedded TUI
    terminal fills its card body, and its terminal screen fills the slot
    instead of being capped at the default fixed height. */
