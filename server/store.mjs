@@ -104,7 +104,19 @@ try {
     [
       'set -g status off', // no status bar — embed cleanly in the card
       'set -g window-size latest', // follow the most recently attached client
-      'set -g mouse off',
+      // Mouse on so the wheel can scroll back. tmux attaches on the outer
+      // terminal's alternate screen, so xterm's own scrollback is useless —
+      // the real history lives in tmux (history-limit below). With mouse on,
+      // wheel-up over a normal-buffer TUI (e.g. the agy CLI) enters copy-mode
+      // and scrolls that history; apps that report the mouse (claude) get the
+      // events forwarded and scroll themselves.
+      'set -g mouse on',
+      // Full-screen TUIs on the alternate screen that do NOT report the mouse
+      // have no tmux history either — translate the wheel into PageUp/PageDown
+      // so they page their own transcript (previous behavior, kept for codex-
+      // style TUIs).
+      "bind -n WheelUpPane if -F '#{||:#{pane_in_mode},#{mouse_any_flag}}' 'send -M' \"if -F '#{alternate_on}' 'send PPage' 'copy-mode -e'\"",
+      "bind -n WheelDownPane if -F '#{||:#{pane_in_mode},#{mouse_any_flag}}' 'send -M' \"if -F '#{alternate_on}' 'send NPage' ''\"",
       'set -g set-clipboard external',
       'set -g history-limit 10000',
       'set -g destroy-unattached off', // keep sessions alive while detached

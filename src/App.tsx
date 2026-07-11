@@ -3837,10 +3837,16 @@ function WebTerminal({
   function pageThroughTuiFromWheel(event: WheelEvent) {
     if (!agentTerminal || terminalCollapsed) return
 
-    // TUI agents run inside tmux and often use the alternate screen, where the
-    // browser/xterm scrollback is not the useful history. Treat the mouse wheel
-    // as PageUp/PageDown input so Hermes/Codex/Claude/custom TUIs can scroll
-    // their own transcript instead of cycling prompt history with arrow keys.
+    // tmux runs with `mouse on` (see server/store.mjs), which enables mouse
+    // reporting on this outer xterm. Let xterm translate the wheel into mouse
+    // sequences for tmux: tmux then scrolls its own history for normal-buffer
+    // TUIs (agy), forwards to mouse-aware apps (claude), or pages alt-screen
+    // apps via its WheelUpPane binding. Hijacking the wheel here instead is
+    // what made agy unable to scroll back. The PageUp/PageDown fallback below
+    // only remains for the no-mouse-reporting case (e.g. tmux mouse off).
+    const terminal = terminalRef.current
+    if (terminal && terminal.modes.mouseTrackingMode !== 'none') return
+
     event.preventDefault()
     event.stopPropagation()
     event.stopImmediatePropagation()
