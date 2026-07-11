@@ -272,7 +272,12 @@ export class HermesBridge {
     this.activeSource = source
     this.activeStreamId = streamId
 
+    let connectionTimeout: number | undefined
+    let statusPollInterval: number | undefined
+
     const closeSource = () => {
+      if (connectionTimeout !== undefined) window.clearTimeout(connectionTimeout)
+      if (statusPollInterval !== undefined) window.clearInterval(statusPollInterval)
       source.close()
       if (this.activeSource === source) {
         this.activeSource = null
@@ -281,11 +286,52 @@ export class HermesBridge {
     }
 
     const finishStream = (state: HermesConnectionState, detail: string, event: HermesRpcEvent) => {
+      if (connectionTimeout !== undefined) window.clearTimeout(connectionTimeout)
+      if (statusPollInterval !== undefined) window.clearInterval(statusPollInterval)
       this.clearStreamRecovery(streamId)
       closeSource()
       this.setStatus(state, detail)
       this.emit(event)
     }
+
+    // Watchdog for connection hang (Vite proxy / backend waiting for headers)
+    connectionTimeout = window.setTimeout(() => {
+      if (source.readyState === EventSource.CONNECTING) {
+        console.warn('EventSource connection timeout - still CONNECTING after 8s. Forcing recovery.');
+        if (this.activeSource === source) {
+          this.recoverClosedStream(source, streamId, closeSource)
+        }
+      }
+    }, 8000)
+
+    // Watchdog for silent drops or completed stream without terminal event
+    statusPollInterval = window.setInterval(async () => {
+      if (this.activeSource !== source) return
+      try {
+        const controller = new AbortController()
+        const abortTimeout = window.setTimeout(() => controller.abort(), 4000)
+        const res = await fetch(`/api/chat/stream/status?stream_id=${encodeURIComponent(streamId)}`, {
+          cache: 'no-store',
+          credentials: 'include',
+          signal: controller.signal,
+        })
+        window.clearTimeout(abortTimeout)
+        if (!res.ok) return
+        const data = (await res.json()) as { active?: boolean; replay_available?: boolean }
+        if (this.activeSource !== source) return
+
+        if (!data.active) {
+          console.warn('Status poll detected inactive stream on server. Forcing recovery/completion.');
+          this.recoverClosedStream(source, streamId, closeSource)
+        }
+      } catch {
+        // Ignore polling errors to avoid false alarms during transient network issues
+      }
+    }, 12000)
+
+    source.addEventListener('open', () => {
+      if (connectionTimeout !== undefined) window.clearTimeout(connectionTimeout)
+    })
 
     source.addEventListener('token', (raw) => {
       // Live data means the transport recovered on its own — abandon any pending
@@ -374,7 +420,7 @@ export class HermesBridge {
       const recoverable = await this.isStreamRecoverable(streamId).catch(() => attempt < 3)
       if (this.activeSource !== source) return
 
-      if (recoverable) {
+      if (recoverable && attempt < 5) {
         this.reconnectStream(streamId)
         return
       }
@@ -394,13 +440,22 @@ export class HermesBridge {
   }
 
   private async isStreamRecoverable(streamId: string) {
-    const res = await fetch(`/api/chat/stream/status?stream_id=${encodeURIComponent(streamId)}`, {
-      cache: 'no-store',
-      credentials: 'include',
-    })
-    if (!res.ok) return false
-    const data = (await res.json()) as { active?: unknown; replay_available?: unknown }
-    return Boolean(data.active || data.replay_available)
+    const controller = new AbortController()
+    const timeoutId = window.setTimeout(() => controller.abort(), 4000)
+    try {
+      const res = await fetch(`/api/chat/stream/status?stream_id=${encodeURIComponent(streamId)}`, {
+        cache: 'no-store',
+        credentials: 'include',
+        signal: controller.signal,
+      })
+      window.clearTimeout(timeoutId)
+      if (!res.ok) return false
+      const data = (await res.json()) as { active?: unknown; replay_available?: unknown }
+      return Boolean(data.active || data.replay_available)
+    } catch (error) {
+      window.clearTimeout(timeoutId)
+      throw error
+    }
   }
 
   private clearStreamRecovery(streamId: string) {
