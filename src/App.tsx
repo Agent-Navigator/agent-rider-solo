@@ -4915,19 +4915,21 @@ export default function App() {
         assistantBufferRef.current += delta
         const turnId = activeTurnRef.current
         if (!turnId) return
+        const currentText = assistantBufferRef.current
         setTurns((current) =>
-          current.map((turn) => (turn.id === turnId ? { ...turn, response: assistantBufferRef.current, status: 'running' } : turn)),
+          current.map((turn) => (turn.id === turnId ? { ...turn, response: currentText, status: 'running' } : turn)),
         )
         return
       }
 
       if (event.type === 'message.complete') {
         const turnId = activeTurnRef.current
+        const currentText = assistantBufferRef.current.trim()
         if (turnId) {
           setTurns((current) =>
             current.map((turn) =>
               turn.id === turnId
-                ? { ...turn, response: assistantBufferRef.current.trim() || turn.response, status: 'done' }
+                ? { ...turn, response: currentText || turn.response, status: 'done' }
                 : turn,
             ),
           )
@@ -4963,11 +4965,12 @@ export default function App() {
         const message = String(event.payload?.error ?? 'Hermes stream error')
         const turnId = activeTurnRef.current
         const runId = activeRunRef.current
+        const currentText = assistantBufferRef.current.trim()
         if (turnId) {
           setTurns((current) =>
             current.map((turn) =>
               turn.id === turnId
-                ? { ...turn, response: assistantBufferRef.current.trim() || message, status: 'error' }
+                ? { ...turn, response: currentText || message, status: 'error' }
                 : turn,
             ),
           )
@@ -4994,13 +4997,14 @@ export default function App() {
         const hint = event.payload?.hint ? String(event.payload.hint) : ''
         const turnId = activeTurnRef.current
         const runId = activeRunRef.current
-        const hasContent = assistantBufferRef.current.trim().length > 0
+        const currentText = assistantBufferRef.current.trim()
+        const hasContent = currentText.length > 0
         if (turnId) {
           setTurns((current) =>
             current.map((turn) =>
               turn.id === turnId
                 ? hasContent
-                  ? { ...turn, response: assistantBufferRef.current.trim(), status: 'done' }
+                  ? { ...turn, response: currentText, status: 'done' }
                   : { ...turn, response: [message, hint].filter(Boolean).join('\n\n'), status: 'error' }
                 : turn,
             ),
