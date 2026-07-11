@@ -79,6 +79,18 @@ const TUI_AGENTS = {
   claude: { label: 'claude', file: resolveCommandFile('claude'), argv: ['--permission-mode', 'auto'] },
   codex: { label: 'codex', file: resolveCommandFile('codex'), argv: ['--yolo'] },
   agy: { label: 'agy', file: resolveCommandFile('agy'), argv: ['--dangerously-skip-permissions'] },
+  devin: { label: 'devin', file: resolveCommandFile('devin'), argv: ['--permission-mode', 'auto'] },
+}
+
+// Which TUI agent CLIs are actually installed. Resolved fresh on each call so
+// an agent installed after the server started is picked up without a restart.
+function detectAgentAvailability() {
+  const agents = {}
+  for (const name of Object.keys(TUI_AGENTS)) {
+    const file = resolveCommandFile(name)
+    agents[name] = file.includes('/') && existsSync(file)
+  }
+  return agents
 }
 const TMUX_SOCKET = 'agent-rider' // private server (`tmux -L agent-rider`)
 const TMUX_CONF = join(tmpdir(), 'agent-rider-tmux.conf')
@@ -1379,6 +1391,11 @@ const server = createServer((req, res) => {
         sendJson(res, 400, { error: String(error?.message || error) })
       }
     })
+    return
+  }
+
+  if (req.method === 'GET' && url === '/store/agents') {
+    sendJson(res, 200, { agents: detectAgentAvailability() })
     return
   }
 

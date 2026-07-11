@@ -70,7 +70,7 @@ type ChatRole = 'user' | 'assistant'
 // Which agent backend drives a conversation card. 'hermes' streams turns over
 // /api (the default); the others run an interactive TUI CLI in an embedded
 // terminal (see WebTerminal + the /store/terminal/ws `agent` param).
-type AgentType = 'hermes' | 'claude' | 'codex' | 'agy' | 'custom'
+type AgentType = 'hermes' | 'claude' | 'codex' | 'agy' | 'devin' | 'custom'
 type TuiAgentType = Exclude<AgentType, 'hermes'>
 type AppBuilderMode = 'chat' | 'app' | 'split'
 
@@ -103,18 +103,65 @@ interface HermesModelCatalog {
 
 const AGENT_OPTIONS: { value: AgentType; label: string }[] = [
   { value: 'hermes', label: 'Hermes Agent' },
-  { value: 'claude', label: 'claude (CLI)' },
+  { value: 'claude', label: 'Claude (CLI)' },
   { value: 'codex', label: 'Codex (CLI)' },
   { value: 'agy', label: 'Agy (CLI)' },
+  { value: 'devin', label: 'Devin (CLI)' },
   { value: 'custom', label: 'Custom command' },
 ]
 
 function isTuiAgent(agent: AgentType): agent is TuiAgentType {
-  return agent === 'claude' || agent === 'codex' || agent === 'agy' || agent === 'custom'
+  return agent === 'claude' || agent === 'codex' || agent === 'agy' || agent === 'devin' || agent === 'custom'
 }
 
 function agentLabel(agent: AgentType) {
   return AGENT_OPTIONS.find((option) => option.value === agent)?.label ?? agent
+}
+
+// Which TUI agent CLIs are installed on the host (from /store/agents), so the
+// Agent dropdown can grey out the ones that aren't. Cached module-wide: every
+// card shares one fetch. Fails open — if the endpoint is unavailable nothing
+// gets disabled.
+let agentAvailabilityCache: Record<string, boolean> | null = null
+let agentAvailabilityPromise: Promise<Record<string, boolean>> | null = null
+function useAgentAvailability(): Record<string, boolean> | null {
+  const [availability, setAvailability] = useState(agentAvailabilityCache)
+  useEffect(() => {
+    if (agentAvailabilityCache) return
+    agentAvailabilityPromise ??= fetch('/store/agents')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => ((data as { agents?: Record<string, boolean> } | null)?.agents ?? null))
+      .catch(() => null)
+    let cancelled = false
+    void agentAvailabilityPromise.then((agents) => {
+      if (!agents) {
+        // Failed (e.g. fetched while the page was still locked) — don't cache,
+        // so a later mount retries instead of never disabling anything.
+        agentAvailabilityPromise = null
+        return
+      }
+      agentAvailabilityCache = agents
+      if (!cancelled) setAvailability(agents)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+  return availability
+}
+
+function renderAgentOptions(availability: Record<string, boolean> | null) {
+  return AGENT_OPTIONS.map((option) => {
+    // Only explicit false disables: hermes/custom aren't in the map, and a
+    // missing/failed endpoint must not lock the dropdown.
+    const notInstalled = availability?.[option.value] === false
+    return (
+      <option key={option.value} value={option.value} disabled={notInstalled}>
+        {option.label}
+        {notInstalled ? ' — not installed' : ''}
+      </option>
+    )
+  })
 }
 
 function scrollToFocusTarget(target: HTMLElement | null) {
@@ -1947,6 +1994,7 @@ function ConversationCard({
   onToggleMaximize?: () => void
 }) {
   const agentType: AgentType = run.agentType ?? 'hermes'
+  const agentAvailability = useAgentAvailability()
   const tui = isTuiAgent(agentType)
   const customAgentCommand = (run.agentCommand ?? '').trim()
   const selectedModelValue = run.model ? modelSelectValue(run.model, run.modelProvider ?? null) : ''
@@ -2313,11 +2361,7 @@ function ConversationCard({
           onChange={(event) => onAgentChange(event.target.value as AgentType)}
           aria-label="Conversation agent"
         >
-          {AGENT_OPTIONS.map((option) => (
-            <option key={option.value} value={option.value}>
-              {option.label}
-            </option>
-          ))}
+          {renderAgentOptions(agentAvailability)}
         </select>
       </div>
       {agentType === 'custom' ? (
@@ -2958,6 +3002,7 @@ function AppBuilderPanel({
   const activeMode = mode ?? internalMode
   const isContextCollapsed = contextCollapsed ?? internalContextCollapsed
   const splitValue = dragSplit ?? splitRatio ?? internalSplit
+  const agentAvailability = useAgentAvailability()
   // Full-window App View drops the builder chrome (header/context/tabs) so the
   // app truly fills the screen.
   const appViewOnly = isFullWindow && activeMode === 'app'
@@ -3228,11 +3273,7 @@ function AppBuilderPanel({
                   onChange={(event) => onAgentChange(event.target.value as AgentType)}
                   aria-label="App Builder agent"
                 >
-                  {AGENT_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
+                  {renderAgentOptions(agentAvailability)}
                 </select>
               </div>
               {run.agentType === 'custom' ? (
