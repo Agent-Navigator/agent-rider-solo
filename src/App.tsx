@@ -2268,6 +2268,91 @@ function ConversationCard({
     )
   }
 
+  // In full-window TUI mode the terminal is a fixed overlay covering the card,
+  // so the context fields rendered in the card body sit hidden behind it. Render
+  // them inside the overlay (below its titlebar) instead so "Show context" works.
+  const isTuiFullWindow = Boolean(tui && agentTerminalState?.fullWindow)
+  const contextFields = (
+    <div className="conv-meta-fields">
+      <div className="conv-meta-row">
+        <span className="tree-label">Category</span>
+        <input
+          className="conv-input"
+          list="known-categories"
+          value={run.category}
+          onChange={(event) => onCategoryChange(event.target.value)}
+          placeholder="Auto from prompt — or type / pick"
+        />
+      </div>
+      <div className="conv-meta-row">
+        <span className="tree-label">Project</span>
+        <input
+          className="conv-input"
+          list="known-projects"
+          value={run.project}
+          onChange={(event) => onProjectChange(event.target.value)}
+          placeholder="Auto from prompt — or type / pick"
+        />
+      </div>
+      <div className="conv-meta-row">
+        <span className="tree-label">Title</span>
+        <input
+          className="conv-input"
+          value={run.task}
+          onChange={(event) => onTitleChange(event.target.value)}
+          placeholder="Conversation title"
+        />
+      </div>
+      <div className="conv-meta-row">
+        <span className="tree-label">Agent</span>
+        <select
+          className="conv-input conv-agent-select"
+          value={agentType}
+          onChange={(event) => onAgentChange(event.target.value as AgentType)}
+          aria-label="Conversation agent"
+        >
+          {AGENT_OPTIONS.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      </div>
+      {agentType === 'custom' ? (
+        <div className="conv-meta-row">
+          <span className="tree-label">Command</span>
+          <div className="conv-agent-command-editor">
+            <input
+              className="conv-input conv-agent-command"
+              value={customCommandDraft}
+              onChange={(event) => setCustomCommandDraft(event.target.value)}
+              onKeyDown={handleCustomAgentCommandKeyDown}
+              placeholder="bash command, e.g. claude --permission-mode auto"
+              spellCheck={false}
+              autoCapitalize="off"
+              autoCorrect="off"
+            />
+            <button
+              type="button"
+              className="conv-agent-command-apply"
+              disabled={customCommandDraft.trim() === (run.agentCommand ?? '').trim()}
+              onClick={commitCustomAgentCommand}
+            >
+              Apply
+            </button>
+          </div>
+        </div>
+      ) : null}
+      <div className="conv-meta-row">
+        <span className="tree-label">Workspace</span>
+        <button type="button" className="conv-workspace-btn" onClick={onOpenPicker} title={run.workspacePath}>
+          <span className="conv-workspace-path">{run.workspacePath}</span>
+          <span className="conv-workspace-action">Change…</span>
+        </button>
+      </div>
+    </div>
+  )
+
   return (
     <article
       id={`conversation-${run.id}`}
@@ -2434,86 +2519,9 @@ function ConversationCard({
 
       {!collapsed ? (
         <div className="conv-card-body">
-          {hideContext || metaCollapsed ? null : (
+          {hideContext || metaCollapsed || isTuiFullWindow ? null : (
           <div className="conv-meta">
-            <div className="conv-meta-fields">
-            <div className="conv-meta-row">
-              <span className="tree-label">Category</span>
-              <input
-                className="conv-input"
-                list="known-categories"
-                value={run.category}
-                onChange={(event) => onCategoryChange(event.target.value)}
-                placeholder="Auto from prompt — or type / pick"
-              />
-            </div>
-            <div className="conv-meta-row">
-              <span className="tree-label">Project</span>
-              <input
-                className="conv-input"
-                list="known-projects"
-                value={run.project}
-                onChange={(event) => onProjectChange(event.target.value)}
-                placeholder="Auto from prompt — or type / pick"
-              />
-            </div>
-            <div className="conv-meta-row">
-              <span className="tree-label">Title</span>
-              <input
-                className="conv-input"
-                value={run.task}
-                onChange={(event) => onTitleChange(event.target.value)}
-                placeholder="Conversation title"
-              />
-            </div>
-            <div className="conv-meta-row">
-              <span className="tree-label">Agent</span>
-              <select
-                className="conv-input conv-agent-select"
-                value={agentType}
-                onChange={(event) => onAgentChange(event.target.value as AgentType)}
-                aria-label="Conversation agent"
-              >
-                {AGENT_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-            {agentType === 'custom' ? (
-              <div className="conv-meta-row">
-                <span className="tree-label">Command</span>
-                <div className="conv-agent-command-editor">
-                  <input
-                    className="conv-input conv-agent-command"
-                    value={customCommandDraft}
-                    onChange={(event) => setCustomCommandDraft(event.target.value)}
-                    onKeyDown={handleCustomAgentCommandKeyDown}
-                    placeholder="bash command, e.g. claude --permission-mode auto"
-                    spellCheck={false}
-                    autoCapitalize="off"
-                    autoCorrect="off"
-                  />
-                  <button
-                    type="button"
-                    className="conv-agent-command-apply"
-                    disabled={customCommandDraft.trim() === (run.agentCommand ?? '').trim()}
-                    onClick={commitCustomAgentCommand}
-                  >
-                    Apply
-                  </button>
-                </div>
-              </div>
-            ) : null}
-            <div className="conv-meta-row">
-              <span className="tree-label">Workspace</span>
-              <button type="button" className="conv-workspace-btn" onClick={onOpenPicker} title={run.workspacePath}>
-                <span className="conv-workspace-path">{run.workspacePath}</span>
-                <span className="conv-workspace-action">Change…</span>
-              </button>
-            </div>
-            </div>
+            {contextFields}
           </div>
           )}
 
@@ -2542,6 +2550,7 @@ function ConversationCard({
                   collapsible={false}
                   frameless
                   titleBar={tui && !hideHeader ? (
+                    <>
                     <div className="win-titlebar" onDoubleClick={onToggle} title="Drag to reorder · double-click to collapse">
                       <WinGrip />
                       <span className="win-dot" style={{ background: tone.dot }} aria-hidden />
@@ -2555,6 +2564,12 @@ function ConversationCard({
                       {onToggleMaximize ? <button type="button" className="win-btn" title={maximized || agentTerminalState?.fullWindow ? 'Restore' : 'Full window'} aria-label={maximized || agentTerminalState?.fullWindow ? 'Restore' : 'Full window'} onClick={(event) => { event.stopPropagation(); onToggleMaximize() }}><WinFullscreenIcon active={agentTerminalState?.fullWindow} /></button> : null}
                       <button type="button" className="win-btn win-btn-close" title="Close window" aria-label="Close window" onClick={(event) => { event.stopPropagation(); onClose() }}><WinCloseIcon /></button>
                     </div>
+                    {hideContext || metaCollapsed ? null : (
+                      <div className="conv-meta conv-meta-overlay">
+                        {contextFields}
+                      </div>
+                    )}
+                    </>
                   ) : undefined}
                   fullWindow={agentTerminalState?.fullWindow}
                   promptContext={run.cardKind === 'app-builder' ? 'app-builder' : undefined}

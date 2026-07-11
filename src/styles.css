@@ -656,6 +656,19 @@ button { cursor: pointer; }
   padding: 8px 12px;
 }
 
+/* Context box rendered inside the full-window terminal overlay (below its
+ * titlebar). The card body copy sits hidden behind the fixed overlay, so this
+ * is what "Show context" actually reveals in full-window mode. Flush margin
+ * (the overlay's flex gap handles spacing) and cap height so tall content
+ * scrolls instead of squeezing the terminal. */
+.conv-meta.conv-meta-overlay {
+  margin-bottom: 0;
+  flex-shrink: 0;
+  max-height: 40vh;
+  overflow-y: auto;
+  background: rgba(5, 10, 18, 0.6);
+}
+
 /* Collapsible "Context" header for the Category / Project / Agent / Workspace box. */
 .conv-meta-toggle {
   display: flex;
