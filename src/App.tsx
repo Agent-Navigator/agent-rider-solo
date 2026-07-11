@@ -1,4 +1,4 @@
-import { type ChangeEvent, type CSSProperties, type DragEvent, type FormEvent, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { type ChangeEvent, type CSSProperties, type DragEvent, type FormEvent, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import rehypeRaw from 'rehype-raw'
@@ -721,11 +721,14 @@ function conversationTitle(run: RunNode) {
   return run.task.trim() || run.project.trim() || compactText(run.prompt, 48) || 'Untitled conversation'
 }
 
+// Chronological order: oldest at the top, newest at the bottom (like a chat
+// log), so it reads top-to-bottom with the prompt bar pinned below it. Within a
+// thread the parent comes before its follow-ups.
 function buildLinearTurns(turns: TurnItem[]) {
   const byId = new Map(turns.map((turn) => [turn.id, turn]))
   const childrenByParent = new Map<string, TurnItem[]>()
   const roots: TurnItem[] = []
-  const newestFirst = (a: TurnItem, b: TurnItem) => b.createdAt.localeCompare(a.createdAt)
+  const oldestFirst = (a: TurnItem, b: TurnItem) => a.createdAt.localeCompare(b.createdAt)
 
   for (const turn of turns) {
     const parentId = turn.parentTurnId ?? null
@@ -738,8 +741,8 @@ function buildLinearTurns(turns: TurnItem[]) {
     }
   }
 
-  for (const children of childrenByParent.values()) children.sort(newestFirst)
-  roots.sort(newestFirst)
+  for (const children of childrenByParent.values()) children.sort(oldestFirst)
+  roots.sort(oldestFirst)
 
   const ordered: TurnItem[] = []
   const visited = new Set<string>()
@@ -747,12 +750,12 @@ function buildLinearTurns(turns: TurnItem[]) {
   function appendWithFollowUps(turn: TurnItem) {
     if (visited.has(turn.id)) return
     visited.add(turn.id)
-    for (const child of childrenByParent.get(turn.id) ?? []) appendWithFollowUps(child)
     ordered.push(turn)
+    for (const child of childrenByParent.get(turn.id) ?? []) appendWithFollowUps(child)
   }
 
   for (const root of roots) appendWithFollowUps(root)
-  for (const turn of [...turns].sort(newestFirst)) appendWithFollowUps(turn)
+  for (const turn of [...turns].sort(oldestFirst)) appendWithFollowUps(turn)
 
   return ordered
 }
@@ -1858,11 +1861,23 @@ function ConversationCard({
   const status = run.jobStatus
   const isDraft = turns.length === 0
   const tone = windowStatusTone(status, isDraft)
-  const topVisibleTurnId = linearTurns[0]?.id ?? null
-  const focusedTurnId = focusTurnId && linearTurns.some((turn) => turn.id === focusTurnId) ? focusTurnId : topVisibleTurnId
+  // Turns now render oldest→newest, so the newest (default focus) is the last.
+  const newestTurnId = linearTurns[linearTurns.length - 1]?.id ?? null
+  const focusedTurnId = focusTurnId && linearTurns.some((turn) => turn.id === focusTurnId) ? focusTurnId : newestTurnId
   const focusedTurnRef = useRef<HTMLDivElement | null>(null)
   const askMoreFormRef = useRef<HTMLFormElement | null>(null)
   const askMoreTextareaRef = useRef<HTMLTextAreaElement | null>(null)
+  const promptTextareaRef = useRef<HTMLTextAreaElement | null>(null)
+
+  // Grow the prompt box to fit its content (typed or pasted), capped by the CSS
+  // max-height (past which it scrolls). Done in JS so it works in browsers
+  // without CSS `field-sizing`. Runs whenever the draft changes.
+  useLayoutEffect(() => {
+    const el = promptTextareaRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${el.scrollHeight}px`
+  }, [draft])
 
   useEffect(() => {
     setCustomCommandDraft(run.agentCommand ?? '')
@@ -2477,6 +2492,7 @@ function ConversationCard({
                 <form className="win-promptbar" onSubmit={submit}>
                   <span className="win-prompt-mark" aria-hidden>›</span>
                   <textarea
+                    ref={promptTextareaRef}
                     value={draft}
                     rows={1}
                     onChange={(event) => setDraft(event.target.value)}

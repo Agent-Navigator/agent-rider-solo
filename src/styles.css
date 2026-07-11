@@ -2684,6 +2684,21 @@ button { cursor: pointer; }
   min-height: 0;
 }
 
+/* The card must be a flex column here (as it already is in tile slots) or its
+   .conv-card-body's flex:1 never resolves — the transcript then sizes to its
+   content and pushes the prompt bar/footer down instead of scrolling
+   internally with the input pinned to the bottom. */
+.ws-column > .conv-card {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Only the transcript body scrolls; the prompt bar + footer stay pinned. */
+.ws-column .conv-card .conv-content-shell {
+  overflow: hidden;
+}
+
 .ws-column > .plugin-panel {
   display: flex;
   flex-direction: column;
@@ -4127,7 +4142,7 @@ button { cursor: pointer; }
 
 .win-promptbar {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   gap: 8px;
   padding: 7px 14px;
   background: var(--win-foot-bg);
@@ -4155,8 +4170,11 @@ button { cursor: pointer; }
   line-height: 1.5;
   color: var(--win-body-text);
   padding: 0;
+  /* Height is auto-grown in JS up to this cap, then it scrolls. box-sizing
+     keeps scrollHeight and the set height in the same (content) box. */
+  box-sizing: content-box;
   max-height: 96px;
-  field-sizing: content;
+  overflow-y: auto;
 }
 
 .win-promptbar textarea::placeholder { color: var(--win-dim); }
