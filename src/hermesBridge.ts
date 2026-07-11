@@ -321,13 +321,25 @@ export class HermesBridge {
         if (this.activeSource !== source) return
 
         if (!data.active) {
-          console.warn('Status poll detected inactive stream on server. Forcing recovery/completion.');
-          this.recoverClosedStream(source, streamId, closeSource)
+          if (data.replay_available) {
+            // Server finished but a replay buffer is still around — reconnect and
+            // replay so we get the real terminal event (and its final text).
+            console.warn('Status poll detected inactive stream with replay available. Reconnecting to replay.');
+            this.recoverClosedStream(source, streamId, closeSource)
+          } else {
+            // Server authoritatively says the stream is done and there is nothing
+            // left to replay. Retrying can't recover anything, and it strands the
+            // card on a spinning "working…" the whole time. Finish gracefully:
+            // App.tsx keeps any tokens already streamed as a completed turn, and
+            // only falls back to an error when nothing streamed at all.
+            console.warn('Status poll detected finished stream with no replay. Finishing gracefully.');
+            this.finishInactiveStream(streamId, closeSource)
+          }
         }
       } catch {
         // Ignore polling errors to avoid false alarms during transient network issues
       }
-    }, 12000)
+    }, 5000)
 
     source.addEventListener('open', () => {
       if (connectionTimeout !== undefined) window.clearTimeout(connectionTimeout)
@@ -430,13 +442,23 @@ export class HermesBridge {
         return
       }
 
-      this.clearStreamRecovery(streamId)
-      closeSource()
-      this.setStatus('error', 'Hermes stream disconnected')
-      this.emit({ type: 'message.error', payload: { error: 'Hermes stream disconnected' } })
+      // Reconnect attempts are exhausted. Rather than clobbering a possibly-good
+      // reply with a hard error, finish gracefully: App.tsx keeps whatever tokens
+      // already streamed as a completed turn and only errors when nothing did.
+      this.finishInactiveStream(streamId, closeSource, 'Hermes stream disconnected')
     }, Math.min(750 * attempt, 2500))
 
     this.streamReconnectTimers.set(streamId, timer)
+  }
+
+  // Terminate a stream the server has confirmed is no longer active (or that we've
+  // given up reconnecting to) without a terminal SSE event. Emitted as apperror so
+  // App.tsx treats already-streamed content as done and only errors when empty.
+  private finishInactiveStream(streamId: string, closeSource: () => void, message = 'Hermes stream ended') {
+    this.clearStreamRecovery(streamId)
+    closeSource()
+    this.setStatus('ready', 'Assistant response complete')
+    this.emit({ type: 'message.apperror', payload: { error: message } })
   }
 
   private async isStreamRecoverable(streamId: string) {
