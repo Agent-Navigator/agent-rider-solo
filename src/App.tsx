@@ -1080,6 +1080,115 @@ function CodeFilePreview({ preview }: { preview: FsFilePreview }) {
   )
 }
 
+// ── Floating file preview ────────────────────────────────────────────────
+
+interface FloatingPreviewProps {
+  preview: FsFilePreview
+  onClose: () => void
+}
+
+/**
+ * A draggable, resizable floating window that portals to the document body so
+ * it always renders on top of other UI. Drag by the titlebar, resize via the
+ * bottom-right corner grab handle.
+ */
+function FloatingPreview({ preview, onClose }: FloatingPreviewProps) {
+  const [position, setPosition] = useState({ x: 160, y: 80 })
+  const [size, setSize] = useState({ width: 640, height: 520 })
+  const draggingRef = useRef(false)
+  const resizingRef = useRef(false)
+  const dragOffset = useRef({ x: 0, y: 0 })
+  const minW = 320, minH = 240
+
+  const onPointerDownTitle = useCallback((event: ReactPointerEvent) => {
+    // Only start dragging from the titlebar itself (not child buttons).
+    const target = event.target as HTMLElement
+    if (target.closest('button')) return
+    event.preventDefault()
+    draggingRef.current = true
+    dragOffset.current = { x: event.clientX - position.x, y: event.clientY - position.y }
+    ;(event.target as HTMLElement).setPointerCapture(event.pointerId)
+  }, [position])
+
+  const onPointerDownResize = useCallback((event: ReactPointerEvent) => {
+    event.preventDefault()
+    event.stopPropagation()
+    resizingRef.current = true
+    dragOffset.current = { x: event.clientX - size.width, y: event.clientY - size.height }
+    ;(event.target as HTMLElement).setPointerCapture(event.pointerId)
+  }, [size])
+
+  const onPointerMove = useCallback((event: ReactPointerEvent) => {
+    if (draggingRef.current) {
+      setPosition({ x: event.clientX - dragOffset.current.x, y: event.clientY - dragOffset.current.y })
+    } else if (resizingRef.current) {
+      setSize({
+        width: Math.max(minW, event.clientX - dragOffset.current.x),
+        height: Math.max(minH, event.clientY - dragOffset.current.y),
+      })
+    }
+  }, [])
+
+  const onPointerUp = useCallback(() => {
+    draggingRef.current = false
+    resizingRef.current = false
+  }, [])
+
+  return createPortal(
+    <div
+      className="floating-preview"
+      style={{ left: position.x, top: position.y, width: size.width, height: size.height }}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+    >
+      <div className="floating-preview-titlebar" onPointerDown={onPointerDownTitle}>
+        <div className="floating-preview-title">
+          <strong>{preview.name}</strong>
+          <span>{preview.kind} · {formatBytes(preview.size)}</span>
+        </div>
+        <button
+          type="button"
+          className="floating-preview-close"
+          onClick={onClose}
+          aria-label="Close file preview"
+        >
+          ×
+        </button>
+      </div>
+      <div className="floating-preview-body">
+        {preview.kind === 'image' ? (
+          <div className="floating-preview-media">
+            <img src={preview.dataUrl} alt={preview.name} />
+          </div>
+        ) : preview.kind === 'html' ? (
+          <iframe
+            className="floating-preview-html"
+            title={preview.name}
+            sandbox="allow-scripts allow-forms allow-popups allow-downloads allow-modals"
+            referrerPolicy="no-referrer"
+            src={preview.viewUrl}
+            srcDoc={preview.viewUrl ? undefined : preview.content ?? ''}
+          />
+        ) : preview.kind === 'markdown' ? (
+          <div className="floating-preview-markdown md-body">
+            <ReactMarkdown
+              remarkPlugins={richMarkdownPlugins.remark}
+              rehypePlugins={richMarkdownPlugins.rehype}
+              components={richMarkdownComponents}
+            >
+              {preview.content ?? ''}
+            </ReactMarkdown>
+          </div>
+        ) : (
+          <CodeFilePreview preview={preview} />
+        )}
+      </div>
+      <div className="floating-preview-resize-handle" onPointerDown={onPointerDownResize} />
+    </div>,
+    document.body,
+  )
+}
+
 /**
  * Read-only file browser scoped to a conversation's workspace. Collapsed by default
  * and lazy-loaded on first expand. Navigation is bounded to the workspace subtree
@@ -1105,7 +1214,6 @@ function FileBrowser({
   const [effectiveRootPath, setEffectiveRootPath] = useState(rootPath)
   const [listing, setListing] = useState<FsListing | null>(null)
   const [preview, setPreview] = useState<FsFilePreview | null>(null)
-  const [previewFullWindow, setPreviewFullWindow] = useState(false)
   const [loading, setLoading] = useState(false)
   const [previewLoading, setPreviewLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -1169,7 +1277,6 @@ function FileBrowser({
     // Close a preview of the file we just removed, then refresh the listing.
     if (preview?.path === pendingDelete.path) {
       setPreview(null)
-      setPreviewFullWindow(false)
     }
     setPendingDelete(null)
     void load(path)
@@ -1195,7 +1302,6 @@ function FileBrowser({
     setLoading(true)
     setError(null)
     setPreview(null)
-    setPreviewFullWindow(false)
     setPreviewError(null)
     setSearchInput('')
     setSearchQuery('')
@@ -1225,7 +1331,6 @@ function FileBrowser({
     const result = await readFilePreview(filePath)
     if ('error' in result) {
       setPreview(null)
-      setPreviewFullWindow(false)
       setPreviewError(result.error)
     } else {
       setPreview(result)
@@ -1239,7 +1344,6 @@ function FileBrowser({
     setEffectiveRootPath(rootPath)
     setListing(null)
     setPreview(null)
-    setPreviewFullWindow(false)
     setPreviewError(null)
     setSearchInput('')
     setSearchQuery('')
@@ -1276,66 +1380,14 @@ function FileBrowser({
         .map((entry) => ({ name: entry.name, path: entry.path, size: entry.size ?? null }))
     : visibleFiles
   const previewNode = preview ? (
-    <div className={`file-preview ${previewFullWindow ? 'full-window' : ''}`}>
-      <div className="file-preview-head">
-        <div className="file-preview-title">
-          <strong>{preview.name}</strong>
-          <span>{preview.kind} · {formatBytes(preview.size)}</span>
-        </div>
-        <div className="file-preview-actions">
-          <button
-            type="button"
-            className="file-preview-icon-button"
-            title={previewFullWindow ? 'Exit full window' : 'Expand to full window'}
-            aria-label={previewFullWindow ? 'Exit full window' : 'Expand to full window'}
-            onClick={() => setPreviewFullWindow((current) => !current)}
-          >
-            {previewFullWindow ? '↙' : '⛶'}
-          </button>
-          <button
-            type="button"
-            className="file-preview-close"
-            onClick={() => {
-              setPreview(null)
-              setPreviewFullWindow(false)
-            }}
-            aria-label="Close file preview"
-          >
-            ×
-          </button>
-        </div>
-      </div>
-      {preview.kind === 'image' ? (
-        <div className="file-preview-media">
-          <img src={preview.dataUrl} alt={preview.name} />
-        </div>
-      ) : preview.kind === 'html' ? (
-        <iframe
-          className="file-preview-html"
-          title={preview.name}
-          sandbox="allow-scripts allow-forms allow-popups allow-downloads allow-modals"
-          referrerPolicy="no-referrer"
-          src={preview.viewUrl}
-          srcDoc={preview.viewUrl ? undefined : preview.content ?? ''}
-        />
-      ) : preview.kind === 'markdown' ? (
-        <div className="file-preview-markdown md-body">
-          <ReactMarkdown
-            remarkPlugins={richMarkdownPlugins.remark}
-            rehypePlugins={richMarkdownPlugins.rehype}
-            components={richMarkdownComponents}
-          >
-            {preview.content ?? ''}
-          </ReactMarkdown>
-        </div>
-      ) : (
-        <CodeFilePreview preview={preview} />
-      )}
-    </div>
+    <FloatingPreview
+      preview={preview}
+      onClose={() => setPreview(null)}
+    />
   ) : null
 
   return (
-    <div className={`file-browser ${open ? 'open' : ''} ${preview ? 'has-preview' : 'list-only'}`}>
+    <div className={`file-browser ${open ? 'open' : ''} list-only`}>
       {showOwnToggle ? (
         <button type="button" className="file-browser-toggle" onClick={onToggle} aria-expanded={open}>
           <span className={`file-browser-caret ${open ? 'open' : ''}`} aria-hidden>▾</span>
@@ -1521,7 +1573,7 @@ function FileBrowser({
 
           {previewLoading ? <div className="file-browser-empty">Opening file…</div> : null}
           {previewError ? <p className="error-text">{previewError}</p> : null}
-          {previewFullWindow && previewNode ? createPortal(previewNode, document.body) : previewNode}
+          {previewNode}
         </div>
       ) : null}
 
