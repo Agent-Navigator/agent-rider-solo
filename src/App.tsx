@@ -1357,8 +1357,11 @@ function FileBrowser({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
 
-  // Nothing to render — the parent owns the toggle trigger and the panel is closed.
-  if (!open && !showOwnToggle) return null
+  // Nothing to render — the parent owns the toggle trigger and the panel is
+  // closed. But if a floating preview is open, keep the component alive so the
+  // preview stays visible (it portals to document.body, so it doesn't need the
+  // browser panel to be rendered).
+  if (!open && !showOwnToggle && !preview) return null
 
   // Only allow walking up while staying within the workspace subtree.
   const canGoUp = path !== effectiveRootPath && pathWithinRoot(path, effectiveRootPath)
@@ -1573,9 +1576,13 @@ function FileBrowser({
 
           {previewLoading ? <div className="file-browser-empty">Opening file…</div> : null}
           {previewError ? <p className="error-text">{previewError}</p> : null}
-          {previewNode}
         </div>
       ) : null}
+
+      {/* The floating preview portals to document.body, so it lives outside
+          the file browser's open/close toggle — closing the browser panel
+          no longer kills an open preview. */}
+      {previewNode}
 
       {pendingDelete ? (
         <div className="confirm-overlay" onClick={() => !deleting && setPendingDelete(null)}>
