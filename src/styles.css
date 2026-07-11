@@ -1889,6 +1889,12 @@ button { cursor: pointer; }
   position: relative;
   display: grid;
   grid-template-columns: 52px minmax(0, 1fr);
+  /* Pin the row to the flex container's height so the workspace column always
+     gets a definite, viewport-bounded height. Without this the row is `auto`
+     (content-driven) and only happened to fill because the rail's fixed height
+     propped it up — which fails whenever the transcript is taller than the
+     rail, letting the card grow and push its input bar off-screen. */
+  grid-template-rows: minmax(0, 1fr);
   gap: 16px;
   /* Breathing room on the right edge so the panes don't run flush against the
      viewport — mirrors the left inset the sidebar rail + gap already give. */
@@ -1924,9 +1930,11 @@ button { cursor: pointer; }
   display: flex;
   /* Explicit (not just max-) height: the content panel is absolutely
      positioned (out of normal flow), so nothing else here would stretch
-     the rail to fill the viewport without this. */
-  height: calc(100vh - 24px);
-  max-height: calc(100vh - 24px);
+     the rail. Fill the grid row (now a definite 1fr track) rather than the
+     raw viewport, so the rail can't be taller than the row and force the
+     grid to overflow. */
+  height: 100%;
+  max-height: 100%;
   min-height: 0;
   /* The content panel's z-index only outranks its OWN siblings — without
      this, the workspace (a later DOM sibling of the whole rail) paints on
@@ -2553,6 +2561,7 @@ button { cursor: pointer; }
   flex: 1;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 /* True full-screen: the maximized block covers the entire viewport,
@@ -2672,6 +2681,7 @@ button { cursor: pointer; }
   min-width: 0;
   min-height: 0;
   flex: 1;
+  overflow: hidden;
 }
 
 /* Single & 2-up columns give each block a share of the viewport height (like
@@ -2691,6 +2701,7 @@ button { cursor: pointer; }
 .ws-column > .conv-card {
   display: flex;
   flex-direction: column;
+  max-height: 100%;
   overflow: hidden;
 }
 
@@ -3507,10 +3518,14 @@ button { cursor: pointer; }
   .main-layout,
   .main-layout:not(.sidebar-collapsed) {
     grid-template-columns: 1fr;
+    /* Stacked: rail on top at its own height, workspace fills the rest so its
+       card still gets a bounded height and scrolls internally. */
+    grid-template-rows: auto minmax(0, 1fr);
   }
 
   .left-rail {
     position: static;
+    height: auto;
     max-height: none;
   }
 
@@ -3893,6 +3908,11 @@ button { cursor: pointer; }
   flex-direction: column;
 }
 
+.conv-card:not(.app-builder-card) {
+  min-height: 0;
+  overflow: hidden;
+}
+
 .conv-card.active {
   border-color: rgba(124, 140, 255, 0.55);
   box-shadow: 0 0 0 1px rgba(124, 140, 255, 0.35), 0 8px 30px rgba(0, 0, 0, 0.4);
@@ -3917,6 +3937,7 @@ button { cursor: pointer; }
   flex-direction: column;
   flex: 1;
   min-height: 0;
+  overflow: hidden;
   padding: 0;
   border-top: 0;
 }
@@ -3936,6 +3957,7 @@ button { cursor: pointer; }
   flex-direction: column;
   flex: 1;
   min-height: 0;
+  overflow: hidden;
 }
 
 .conv-content-shell > .file-browser {
