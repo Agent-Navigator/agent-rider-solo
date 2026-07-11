@@ -82,11 +82,13 @@ const TUI_AGENTS = {
   devin: { label: 'devin', file: resolveCommandFile('devin'), argv: ['--permission-mode', 'auto'] },
 }
 
-// Which TUI agent CLIs are actually installed. Resolved fresh on each call so
-// an agent installed after the server started is picked up without a restart.
+// Which agent CLIs are actually installed. Resolved fresh on each call so an
+// agent installed after the server started is picked up without a restart.
+// `hermes` isn't a TUI agent (the UI talks to its gateway via /api), but the
+// dropdown greys the Hermes option out too when the command is missing.
 function detectAgentAvailability() {
   const agents = {}
-  for (const name of Object.keys(TUI_AGENTS)) {
+  for (const name of ['hermes', ...Object.keys(TUI_AGENTS)]) {
     const file = resolveCommandFile(name)
     agents[name] = file.includes('/') && existsSync(file)
   }

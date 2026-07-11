@@ -152,7 +152,7 @@ function useAgentAvailability(): Record<string, boolean> | null {
 
 function renderAgentOptions(availability: Record<string, boolean> | null) {
   return AGENT_OPTIONS.map((option) => {
-    // Only explicit false disables: hermes/custom aren't in the map, and a
+    // Only explicit false disables: custom isn't in the map, and a
     // missing/failed endpoint must not lock the dropdown.
     const notInstalled = availability?.[option.value] === false
     return (
