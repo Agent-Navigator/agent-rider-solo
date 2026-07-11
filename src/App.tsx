@@ -4883,6 +4883,12 @@ export default function App() {
 
     for (const run of runs) {
       if (run.cardKind === 'app-builder') continue
+      // Blank drafts (category, project AND title all unfilled) stay out of the
+      // tree — they'd pile up as "Uncategorized / No project" noise. They join
+      // it as soon as the user fills any of the three fields, or sends the
+      // first prompt (which auto-derives them). The card itself still lives in
+      // the workspace and is persisted as usual.
+      if (!run.category.trim() && !run.project.trim() && !run.task.trim()) continue
       const category = run.category.trim() || 'Uncategorized'
       const project = run.project.trim() || 'No project'
       let projectMap = categoryMap.get(category)
