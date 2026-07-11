@@ -796,6 +796,22 @@ function TreeRow({ label, value, depth }: { label: string; value: string; depth:
   )
 }
 
+// A tiny ASCII spinner so a running/queued turn reads as "alive" even when no
+// output is streaming yet. Cycles the classic |/-\ frames on a fixed interval.
+const ASCII_SPINNER_FRAMES = ['|', '/', '-', '\\']
+function AsciiSpinner() {
+  const [frame, setFrame] = useState(0)
+  useEffect(() => {
+    const id = window.setInterval(() => setFrame((n) => (n + 1) % ASCII_SPINNER_FRAMES.length), 120)
+    return () => window.clearInterval(id)
+  }, [])
+  return (
+    <span className="ascii-spinner" aria-hidden="true">
+      {ASCII_SPINNER_FRAMES[frame]}
+    </span>
+  )
+}
+
 function turnRoleLabel(status: JobStatus) {
   return status === 'queued'
     ? 'Queued'
@@ -2198,6 +2214,12 @@ function ConversationCard({
               >
                 {turn.response || '…'}
               </ReactMarkdown>
+              {turn.status === 'running' || turn.status === 'queued' ? (
+                <div className="term-response-wait">
+                  <AsciiSpinner />
+                  <span>{turn.status === 'queued' ? 'waiting in queue' : 'working'}…</span>
+                </div>
+              ) : null}
             </div>
             {askParentId === turn.id ? (
               <form ref={askMoreFormRef} className="ask-more-form" onSubmit={(event) => submitAskMore(event, turn.id)}>

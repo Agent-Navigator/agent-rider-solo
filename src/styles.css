@@ -3643,6 +3643,24 @@ button { cursor: pointer; }
   }
 }
 
+/* ASCII spinner shown on the last line of a running/queued chat bubble */
+.term-response-wait {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 12px;
+  color: #e6b25a;
+  opacity: 0.9;
+}
+.term-response-wait .ascii-spinner {
+  display: inline-block;
+  width: 1ch;
+  text-align: center;
+  font-weight: 700;
+}
+
 /* Running spinner */
 .spinner {
   width: 16px;
