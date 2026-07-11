@@ -1089,19 +1089,21 @@ interface FloatingPreviewProps {
 
 /**
  * A draggable, resizable floating window that portals to the document body so
- * it always renders on top of other UI. Drag by the titlebar, resize via the
- * bottom-right corner grab handle.
+ * it always renders on top of other UI. Drag by the titlebar; resize via the
+ * right, bottom, and bottom-right corner grab handles; expand to full screen
+ * via the titlebar button.
  */
 function FloatingPreview({ preview, onClose }: FloatingPreviewProps) {
   const [position, setPosition] = useState({ x: 160, y: 80 })
   const [size, setSize] = useState({ width: 640, height: 520 })
+  const [fullScreen, setFullScreen] = useState(false)
+  const savedGeom = useRef({ x: 160, y: 80, w: 640, h: 520 })
   const draggingRef = useRef(false)
-  const resizingRef = useRef(false)
+  const resizingRef = useRef<'e' | 's' | 'se' | null>(null)
   const dragOffset = useRef({ x: 0, y: 0 })
   const minW = 320, minH = 240
 
   const onPointerDownTitle = useCallback((event: ReactPointerEvent) => {
-    // Only start dragging from the titlebar itself (not child buttons).
     const target = event.target as HTMLElement
     if (target.closest('button')) return
     event.preventDefault()
@@ -1110,10 +1112,10 @@ function FloatingPreview({ preview, onClose }: FloatingPreviewProps) {
     ;(event.target as HTMLElement).setPointerCapture(event.pointerId)
   }, [position])
 
-  const onPointerDownResize = useCallback((event: ReactPointerEvent) => {
+  const onPointerDownResize = useCallback((dir: 'e' | 's' | 'se') => (event: ReactPointerEvent) => {
     event.preventDefault()
     event.stopPropagation()
-    resizingRef.current = true
+    resizingRef.current = dir
     dragOffset.current = { x: event.clientX - size.width, y: event.clientY - size.height }
     ;(event.target as HTMLElement).setPointerCapture(event.pointerId)
   }, [size])
@@ -1122,21 +1124,39 @@ function FloatingPreview({ preview, onClose }: FloatingPreviewProps) {
     if (draggingRef.current) {
       setPosition({ x: event.clientX - dragOffset.current.x, y: event.clientY - dragOffset.current.y })
     } else if (resizingRef.current) {
+      const dir = resizingRef.current
       setSize({
-        width: Math.max(minW, event.clientX - dragOffset.current.x),
-        height: Math.max(minH, event.clientY - dragOffset.current.y),
+        width: dir === 's' ? size.width : Math.max(minW, event.clientX - dragOffset.current.x),
+        height: dir === 'e' ? size.height : Math.max(minH, event.clientY - dragOffset.current.y),
       })
     }
-  }, [])
+  }, [size])
 
   const onPointerUp = useCallback(() => {
     draggingRef.current = false
-    resizingRef.current = false
+    resizingRef.current = null
   }, [])
+
+  const toggleFullScreen = useCallback(() => {
+    setFullScreen((prev) => {
+      if (prev) {
+        // Restore previous geometry.
+        const g = savedGeom.current
+        setPosition({ x: g.x, y: g.y })
+        setSize({ width: g.w, height: g.h })
+      } else {
+        // Save current geometry, then fill viewport with small inset.
+        savedGeom.current = { x: position.x, y: position.y, w: size.width, h: size.height }
+        setPosition({ x: 8, y: 8 })
+        setSize({ width: window.innerWidth - 16, height: window.innerHeight - 16 })
+      }
+      return !prev
+    })
+  }, [position, size])
 
   return createPortal(
     <div
-      className="floating-preview"
+      className={`floating-preview ${fullScreen ? 'full-screen' : ''}`}
       style={{ left: position.x, top: position.y, width: size.width, height: size.height }}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
@@ -1146,6 +1166,15 @@ function FloatingPreview({ preview, onClose }: FloatingPreviewProps) {
           <strong>{preview.name}</strong>
           <span>{preview.kind} · {formatBytes(preview.size)}</span>
         </div>
+        <button
+          type="button"
+          className="floating-preview-icon-btn"
+          onClick={toggleFullScreen}
+          title={fullScreen ? 'Exit full screen' : 'Expand to full screen'}
+          aria-label={fullScreen ? 'Exit full screen' : 'Expand to full screen'}
+        >
+          {fullScreen ? '↙' : '⛶'}
+        </button>
         <button
           type="button"
           className="floating-preview-close"
@@ -1183,7 +1212,9 @@ function FloatingPreview({ preview, onClose }: FloatingPreviewProps) {
           <CodeFilePreview preview={preview} />
         )}
       </div>
-      <div className="floating-preview-resize-handle" onPointerDown={onPointerDownResize} />
+      <div className="floating-preview-resize-right" onPointerDown={onPointerDownResize('e')} />
+      <div className="floating-preview-resize-bottom" onPointerDown={onPointerDownResize('s')} />
+      <div className="floating-preview-resize-corner" onPointerDown={onPointerDownResize('se')} />
     </div>,
     document.body,
   )

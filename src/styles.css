@@ -1434,6 +1434,13 @@ button { cursor: pointer; }
   user-select: none;
 }
 
+/* Full-screen: the window fills the viewport (with a small inset so the
+   resize handles remain reachable). Drag and resize still work. */
+.floating-preview.full-screen {
+  border-radius: 0;
+  z-index: 210;
+}
+
 .floating-preview-titlebar {
   display: flex;
   align-items: center;
@@ -1470,7 +1477,8 @@ button { cursor: pointer; }
   font-size: 10px;
 }
 
-.floating-preview-close {
+.floating-preview-close,
+.floating-preview-icon-btn {
   flex-shrink: 0;
   padding: 3px 10px;
   border: 1px solid rgba(148, 163, 184, 0.2);
@@ -1481,6 +1489,12 @@ button { cursor: pointer; }
   font-weight: 700;
   line-height: 1.2;
   cursor: pointer;
+}
+
+.floating-preview-icon-btn:hover {
+  border-color: rgba(121, 185, 255, 0.4);
+  color: var(--accent);
+  background: rgba(121, 185, 255, 0.08);
 }
 
 .floating-preview-close:hover {
@@ -1523,7 +1537,27 @@ button { cursor: pointer; }
   overflow: auto;
 }
 
-.floating-preview-resize-handle {
+/* Three resize handles: right edge (horizontal), bottom edge (vertical),
+   and bottom-right corner (diagonal). Each has a 6px hit area. */
+.floating-preview-resize-right {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: ew-resize;
+}
+
+.floating-preview-resize-bottom {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 6px;
+  cursor: ns-resize;
+}
+
+.floating-preview-resize-corner {
   position: absolute;
   right: 0;
   bottom: 0;
