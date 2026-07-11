@@ -1620,6 +1620,66 @@ button { cursor: pointer; }
 
 .picker-cancel:hover { border-color: var(--accent); }
 
+/* Open-window picker: pick an existing conversation (from the Navigator tree)
+   to place in an empty tile slot, instead of always starting a new one. */
+.open-window-picker-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.open-window-picker-category {
+  margin: 12px 0 4px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.open-window-picker-category:first-child {
+  margin-top: 0;
+}
+
+.open-window-picker-project {
+  margin: 6px 0 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+/* Give the trailing cell room for the "open" pill (the base tree run reserves
+   only 8px for a status dot, which would clip the badge). Doubled class raises
+   specificity over `.tree-nav-run`, which is defined later in this file. */
+.open-window-picker-run.open-window-picker-run {
+  grid-template-columns: minmax(0, 1fr) auto;
+  cursor: pointer;
+}
+
+.open-window-picker-run.is-open {
+  opacity: 0.72;
+}
+
+.open-window-picker-badge {
+  flex-shrink: 0;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.open-window-picker-empty {
+  margin: 0;
+  padding: 18px 4px;
+  color: var(--muted);
+  text-align: center;
+}
+
 .danger-button {
   background: linear-gradient(135deg, #f87171, #ef4444);
   color: #fff;
@@ -1830,6 +1890,9 @@ button { cursor: pointer; }
   display: grid;
   grid-template-columns: 52px minmax(0, 1fr);
   gap: 16px;
+  /* Breathing room on the right edge so the panes don't run flush against the
+     viewport — mirrors the left inset the sidebar rail + gap already give. */
+  padding-right: 16px;
   align-items: stretch;
   flex: 1;
   min-height: 0;
@@ -2482,6 +2545,11 @@ button { cursor: pointer; }
 
 .workspace-panels {
   min-width: 0;
+  /* min-height:0 is essential: without it this flex child can't shrink below
+     its content, so the tile grid's `1fr` rows size to content and overflow
+     the viewport (each pane grows tall + the page scrolls) instead of sharing
+     the available height. */
+  min-height: 0;
   flex: 1;
   display: flex;
   flex-direction: column;

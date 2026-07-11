@@ -4161,6 +4161,8 @@ export default function App() {
   const [sidebarPeek, setSidebarPeek] = useState(false)
   // Bottom-left settings gear popover (Password, for now).
   const [settingsOpen, setSettingsOpen] = useState(false)
+  // Empty tile placeholder → conversation picker overlay. Transient view state.
+  const [openWindowPickerOpen, setOpenWindowPickerOpen] = useState(false)
   // Key of the block (card or panel) currently being dragged. Block keys: a
   // run id (`run-…`) for a card, or a panel id ('terminal' | 'plugin:…' |
   // 'app:…'). One drag system so cards and panels can be freely interleaved.
@@ -5601,9 +5603,15 @@ export default function App() {
     // specificity, later in the file), leaving tile slots at content height so
     // cards can't fill their (full-height) grid row.
     const base: CSSProperties = { display: 'grid', gap: '10px', alignItems: 'stretch' }
-    if (layoutPreset === 'quad') return { ...base, gridTemplateColumns: '1fr 1fr', gridAutoRows: 'minmax(280px, 1fr)' }
+    // quad: the 4 canonical slots live in two explicit rows that split the
+    // viewport 50/50 (no scroll); any blocks beyond 4 spill into auto rows
+    // (fixed min → the page scrolls, preserving the auto-grow overflow model).
+    if (layoutPreset === 'quad') return { ...base, gridTemplateColumns: '1fr 1fr', gridTemplateRows: 'repeat(2, minmax(0, 1fr))', gridAutoRows: 'minmax(280px, 1fr)' }
     if (layoutPreset === 'three-col') return { ...base, gridTemplateColumns: 'repeat(3, 1fr)', gridTemplateRows: 'minmax(0, 1fr)', gridAutoRows: 'minmax(240px, 1fr)' }
-    if (layoutPreset === 'master-stack') return { ...base, gridTemplateColumns: '1.9fr 1fr', gridAutoRows: 'minmax(160px, 1fr)' }
+    // master+stack: three explicit rows so the three stack panes each take a
+    // third of the viewport height (master spans all three); extra stack panes
+    // spill into auto rows and scroll.
+    if (layoutPreset === 'master-stack') return { ...base, gridTemplateColumns: '1.9fr 1fr', gridTemplateRows: 'repeat(3, minmax(0, 1fr))', gridAutoRows: 'minmax(160px, 1fr)' }
     return { ...base, gridTemplateColumns: `repeat(${freeCols}, 1fr)`, gridAutoRows: 'minmax(200px, 1fr)' }
   }
 
@@ -5654,7 +5662,7 @@ export default function App() {
             className="tile-slot"
             style={{ display: 'flex', minWidth: 0, minHeight: 0, ...tileSlotStyle(orderedKeys.length + index) }}
           >
-            <button type="button" className="tile-empty" onClick={startNewConversation} title="Open a new conversation window">
+            <button type="button" className="tile-empty" onClick={() => setOpenWindowPickerOpen(true)} title="Open a conversation window in this slot">
               <span className="tile-empty-plus" aria-hidden>+</span>
               <span>open window</span>
             </button>
@@ -5750,6 +5758,90 @@ export default function App() {
                 onClick={() => setAppFolderConflict(null)}
               >
                 Retry
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {openWindowPickerOpen ? (
+        <div
+          className="confirm-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Open a conversation window"
+          onClick={() => setOpenWindowPickerOpen(false)}
+        >
+          <div className="picker open-window-picker" onClick={(event) => event.stopPropagation()}>
+            <div className="picker-head">
+              <div>
+                <div className="eyebrow">Navigator</div>
+                <h3>Open a conversation window</h3>
+              </div>
+              <button
+                type="button"
+                className="picker-close"
+                aria-label="Close"
+                onClick={() => setOpenWindowPickerOpen(false)}
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="open-window-picker-body">
+              {conversationTree.length ? (
+                <div className="tree-nav">
+                  {conversationTree.map((category) => (
+                    <section key={category.category} className="tree-nav-category">
+                      <h3 className="open-window-picker-category">{category.category}</h3>
+                      {category.projects.map((project) => (
+                        <div key={`${category.category}-${project.project}`} className="tree-nav-project">
+                          <div className="tree-nav-label open-window-picker-project">{project.project}</div>
+                          <div className="tree-nav-runs">
+                            {project.runs.map((run) => {
+                              const isOpen = !closedRunIds.has(run.id)
+                              return (
+                                <button
+                                  key={run.id}
+                                  type="button"
+                                  className={`tree-nav-run open-window-picker-run ${isOpen ? 'is-open' : ''}`}
+                                  onClick={() => {
+                                    selectConversation(run.id)
+                                    setOpenWindowPickerOpen(false)
+                                  }}
+                                >
+                                  <span className="tree-run-main">
+                                    <span className="tree-run-title">{conversationTitle(run)}</span>
+                                  </span>
+                                  {isOpen ? (
+                                    <span className="open-window-picker-badge">open</span>
+                                  ) : (
+                                    <span className={`tree-run-status ${run.jobStatus}`} aria-hidden />
+                                  )}
+                                </button>
+                              )
+                            })}
+                          </div>
+                        </div>
+                      ))}
+                    </section>
+                  ))}
+                </div>
+              ) : (
+                <p className="open-window-picker-empty">No conversations yet — start a new one below.</p>
+              )}
+            </div>
+
+            <div className="picker-actions">
+              <button
+                type="button"
+                className="send-button"
+                onClick={() => {
+                  setOpenWindowPickerOpen(false)
+                  startNewConversation()
+                }}
+              >
+                + New conversation
               </button>
             </div>
           </div>
