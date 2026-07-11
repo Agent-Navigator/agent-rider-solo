@@ -13,6 +13,10 @@ export interface WorkspacePanelState {
   contextCollapsed?: boolean
   /** App Builder Chat+App mode: chat pane width as a fraction of the split (0.15–0.85). */
   builderSplit?: number
+  /** TUI cards: a scratch draft the user composes safely (IME-friendly, no
+   *  accidental Enter) before inserting it into the terminal. Persisted so it
+   *  can also hold useful notes across sessions. */
+  notepad?: string
 }
 
 /** Tiling layout presets for the workspace canvas. `single`/`two-up` keep the

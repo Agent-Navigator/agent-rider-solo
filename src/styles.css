@@ -3179,6 +3179,11 @@ button { cursor: pointer; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* Conversation-card terminals: push the cwd/file path to the right edge of the
+ * bottom bar (Reset stays left, Refresh far right). */
+.web-terminal.frameless .terminal-footer .terminal-cwd {
+  text-align: right;
+}
 
 /* Embedded web service view (e.g. Hermes WebUI) — reuses the terminal window chrome. */
 .web-view .terminal-body {
@@ -4525,6 +4530,83 @@ button { cursor: pointer; }
   color: var(--win-text);
   border-color: rgba(124, 140, 255, 0.4);
   background: var(--win-accent-soft);
+}
+
+.terminal-footer .terminal-clear.active {
+  color: var(--win-text);
+  border-color: rgba(124, 140, 255, 0.4);
+  background: var(--win-accent-soft);
+}
+.terminal-clear:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* TUI notepad: a scratch area to compose prompts safely (IME-friendly, no
+ * accidental Enter) before inserting into the terminal. Sits between the
+ * terminal screen and the footer. */
+.terminal-notepad {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid rgba(124, 140, 255, 0.28);
+  border-radius: 8px;
+  background: rgba(5, 10, 18, 0.5);
+}
+.terminal-notepad-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+.terminal-notepad-title {
+  font-family: var(--win-mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--win-text);
+}
+.terminal-notepad-hint {
+  font-size: 10px;
+  color: var(--win-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.terminal-notepad-input {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  min-height: 64px;
+  max-height: 40vh;
+  padding: 8px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  background: var(--win-body-bg);
+  color: var(--win-text);
+  font-family: var(--win-mono);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.terminal-notepad-input:focus {
+  outline: none;
+  border-color: rgba(124, 140, 255, 0.5);
+}
+.terminal-notepad-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.terminal-notepad-spacer {
+  flex: 1;
+}
+.terminal-clear.accent {
+  color: var(--win-text);
+  border-color: rgba(124, 140, 255, 0.5);
+  background: var(--win-accent-soft);
+}
+.terminal-clear.accent:hover:not(:disabled) {
+  border-color: rgba(124, 140, 255, 0.8);
 }
 
 .web-view-frame {

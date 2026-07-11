@@ -547,6 +547,7 @@ function normalizePanelStates(value: unknown): Record<string, WorkspacePanelStat
     if (source.builderMode === 'chat' || source.builderMode === 'app' || source.builderMode === 'split') state.builderMode = source.builderMode
     if (typeof source.contextCollapsed === 'boolean') state.contextCollapsed = source.contextCollapsed
     if (typeof source.builderSplit === 'number' && Number.isFinite(source.builderSplit)) state.builderSplit = clampBuilderSplit(source.builderSplit)
+    if (typeof source.notepad === 'string') state.notepad = source.notepad
     const migratedKey = migrateLegacyAppPanelId(key)
     // A legacy app panel was showing the app itself, so its builder starts on App View.
     if (migratedKey !== key && !state.builderMode) state.builderMode = 'app'
@@ -1398,9 +1399,10 @@ function FileBrowser({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rootPath])
 
-  // Load the listing the first time the panel opens.
+  // Refresh the listing every time the panel opens (not just the first time),
+  // so files created/changed while it was closed show up without a manual reload.
   useEffect(() => {
-    if (open && !listing) void load(path)
+    if (open) void load(path)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
 
@@ -2575,6 +2577,8 @@ function ConversationCard({
                   promptContext={run.cardKind === 'app-builder' ? 'app-builder' : undefined}
                   appWorkspace={run.cardKind === 'app-builder' ? run.workspacePath : undefined}
                   onStateChange={onAgentTerminalStateChange}
+                  notepad={agentTerminalState?.notepad}
+                  onNotepadChange={(text) => onAgentTerminalStateChange({ notepad: text })}
                   // Rendered inside WebTerminal's own box (not a sibling) so it
                   // stays visible/clickable in full-window mode, where the section
                   // becomes `position: fixed` and covers any sibling elements.
@@ -3623,6 +3627,8 @@ function WebTerminal({
   titleBar,
   maximized,
   onToggleMaximize,
+  notepad,
+  onNotepadChange,
 }: {
   initialCwd: string
   onClose: () => void
@@ -3658,6 +3664,9 @@ function WebTerminal({
   maximized?: boolean
   /** Toggles this panel as the single block filling the workspace grid. */
   onToggleMaximize?: () => void
+  /** TUI cards only: persisted scratch draft (see WorkspacePanelState.notepad). */
+  notepad?: string
+  onNotepadChange?: (text: string) => void
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const terminalRef = useRef<XTermTerminal | null>(null)
@@ -3672,6 +3681,9 @@ function WebTerminal({
   const terminalCollapsed = collapsible ? (collapsed ?? internalCollapsed) : false
   const terminalFullWindow = fullWindow ?? internalFullWindow
   const agentTerminal = Boolean(agent)
+  const notepadEnabled = agentTerminal && typeof onNotepadChange === 'function'
+  const [notepadOpen, setNotepadOpen] = useState(false)
+  const [notepadCopied, setNotepadCopied] = useState(false)
 
   useEffect(() => {
     const container = containerRef.current
@@ -3946,6 +3958,64 @@ function WebTerminal({
           }}
         />
 
+        {notepadEnabled && notepadOpen ? (
+          <div className="terminal-notepad">
+            <div className="terminal-notepad-head">
+              <span className="terminal-notepad-title">Notepad</span>
+              <span className="terminal-notepad-hint">Draft safely — Enter adds a line, nothing is sent until you Insert.</span>
+            </div>
+            <textarea
+              className="terminal-notepad-input"
+              value={notepad ?? ''}
+              onChange={(event) => onNotepadChange?.(event.target.value)}
+              // Keep every keystroke (Enter, IME composition, shortcuts) inside the
+              // textarea so it never reaches the TUI until the user explicitly inserts.
+              onKeyDown={(event) => event.stopPropagation()}
+              placeholder="Compose a prompt or jot notes here, then Insert into the terminal…"
+              spellCheck={false}
+              rows={4}
+            />
+            <div className="terminal-notepad-actions">
+              <button
+                type="button"
+                className="terminal-clear accent"
+                disabled={!(notepad ?? '').length}
+                title="Type this text into the terminal (without pressing Enter — you review, then send)"
+                onClick={() => {
+                  if (notepad) pasteIntoTerminal(notepad)
+                }}
+              >
+                Insert to terminal
+              </button>
+              <button
+                type="button"
+                className="terminal-clear"
+                disabled={!(notepad ?? '').length}
+                title="Copy the draft to the clipboard"
+                onClick={() => {
+                  if (!notepad) return
+                  void navigator.clipboard?.writeText(notepad).then(() => {
+                    setNotepadCopied(true)
+                    window.setTimeout(() => setNotepadCopied(false), 1200)
+                  })
+                }}
+              >
+                {notepadCopied ? 'Copied' : 'Copy'}
+              </button>
+              <div className="terminal-notepad-spacer" />
+              <button
+                type="button"
+                className="terminal-clear"
+                disabled={!(notepad ?? '').length}
+                title="Clear the draft"
+                onClick={() => onNotepadChange?.('')}
+              >
+                Clear
+              </button>
+            </div>
+          </div>
+        ) : null}
+
         <div className="terminal-footer">
           <button
             type="button"
@@ -3958,10 +4028,18 @@ function WebTerminal({
           >
             Reset
           </button>
-          {frameless ? (
-            <span className="win-status" style={{ color: stateTone.color }}>{stateTone.label}</span>
+          {notepadEnabled ? (
+            <button
+              type="button"
+              className={`terminal-clear ${notepadOpen ? 'active' : ''}`}
+              title={notepadOpen ? 'Hide the notepad' : 'Open a notepad to draft prompts safely (IME-friendly, no accidental Enter)'}
+              aria-expanded={notepadOpen}
+              onClick={() => setNotepadOpen((current) => !current)}
+            >
+              Notepad{(notepad ?? '').trim().length ? ' •' : ''}
+            </button>
           ) : null}
-          <span>{initialCwd === DEFAULT_TERMINAL_CWD ? '~/' : initialCwd}</span>
+          <span className="terminal-cwd">{initialCwd === DEFAULT_TERMINAL_CWD ? '~/' : initialCwd}</span>
           <button
             type="button"
             className="terminal-clear"
@@ -4560,6 +4638,7 @@ export default function App() {
       if (nextState.builderMode === 'chat' || nextState.builderMode === 'app' || nextState.builderMode === 'split') normalized.builderMode = nextState.builderMode
       if (typeof nextState.contextCollapsed === 'boolean') normalized.contextCollapsed = nextState.contextCollapsed
       if (typeof nextState.builderSplit === 'number' && Number.isFinite(nextState.builderSplit)) normalized.builderSplit = clampBuilderSplit(nextState.builderSplit)
+      if (typeof nextState.notepad === 'string') normalized.notepad = nextState.notepad
       return { ...current, [panelId]: normalized }
     })
   }
