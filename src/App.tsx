@@ -2218,6 +2218,16 @@ function ConversationCard({
                 <div className="term-response-wait">
                   <AsciiSpinner />
                   <span>{turn.status === 'queued' ? 'waiting in queue' : 'working'}…</span>
+                  {canRefresh ? (
+                    <button
+                      type="button"
+                      className="term-response-wait-refresh"
+                      onClick={() => onRefreshTurn(turn.id)}
+                      title="Hermes may have finished — reconnect to pull the latest"
+                    >
+                      refresh
+                    </button>
+                  ) : null}
                 </div>
               ) : null}
             </div>

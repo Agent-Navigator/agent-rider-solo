@@ -3660,6 +3660,21 @@ button { cursor: pointer; }
   text-align: center;
   font-weight: 700;
 }
+.term-response-wait-refresh {
+  margin-left: 4px;
+  padding: 1px 8px;
+  border: 1px solid rgba(230, 178, 90, 0.5);
+  border-radius: 4px;
+  background: transparent;
+  color: #e6b25a;
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 1.6;
+}
+.term-response-wait-refresh:hover {
+  background: rgba(230, 178, 90, 0.14);
+  border-color: rgba(230, 178, 90, 0.8);
+}
 
 /* Running spinner */
 .spinner {
