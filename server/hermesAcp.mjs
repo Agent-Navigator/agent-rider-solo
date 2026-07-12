@@ -13,6 +13,8 @@
 //   GET  /api/chat/stream/status    ?stream_id= → {active, replay_available}
 //   POST /api/chat/cancel           ?stream_id= → {cancelled}
 //   GET  /api/models                → {groups, default_model, active_provider}
+//                                    ?refresh=1 re-asks hermes (the CLI may have
+//                                    been pointed at a different provider since)
 //   GET/POST /api/reasoning         → degrade-soft (ACP has no effort control)
 //
 // One `hermes acp` child serves all sessions (ACP is session-multiplexed).
@@ -310,6 +312,26 @@ export function createHermesAcp({ command = 'hermes', args = ['acp'], env = {}, 
     }
   }
 
+  /** Re-ask hermes what models it offers. The catalog only rides along on
+   *  session/{new,load}, so a cached one goes stale the moment the hermes CLI
+   *  is pointed at another provider — and nothing here would ever notice.
+   *  Prefer reloading a session we already know over minting a throwaway one. */
+  async function refreshModelCatalog(workspace) {
+    await ensureChild()
+    const [sessionId, session] = sessions.entries().next().value ?? []
+    if (sessionId) {
+      const result = await rpcRequest('session/load', {
+        sessionId,
+        cwd: session.cwd || workspace,
+        mcpServers: [],
+      })
+      captureModelCatalog(result)
+      return
+    }
+    if (!workspace) throw new Error('workspace is required to refresh the model catalog')
+    await createSession(workspace)
+  }
+
   // ── Sessions ───────────────────────────────────────────────────────────────
   async function createSession(workspace) {
     await ensureChild()
@@ -336,7 +358,8 @@ export function createHermesAcp({ command = 'hermes', args = ['acp'], env = {}, 
     if (known?.loaded) return sessionId
     const cwd = known?.cwd || workspace
     try {
-      await rpcRequest('session/load', { sessionId, cwd, mcpServers: [] })
+      const result = await rpcRequest('session/load', { sessionId, cwd, mcpServers: [] })
+      captureModelCatalog(result)
       sessions.set(sessionId, { ...(known ?? { createdAt: Date.now() }), cwd, loaded: true })
       return sessionId
     } catch (error) {
@@ -645,6 +668,16 @@ export function createHermesAcp({ command = 'hermes', args = ['acp'], env = {}, 
     }
 
     if (req.method === 'GET' && pathname === '/api/models') {
+      // ?refresh=1 re-asks hermes, so switching the CLI to another provider is
+      // one click away in the card instead of stuck behind a stale cache.
+      if (requestUrl.searchParams.get('refresh') === '1') {
+        try {
+          await refreshModelCatalog(String(requestUrl.searchParams.get('workspace') ?? '').trim())
+        } catch (error) {
+          sendJson(res, 502, { error: `hermes acp: ${error.message}` })
+          return
+        }
+      }
       if (modelCatalog) {
         sendJson(res, 200, modelCatalog)
         return

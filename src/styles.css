@@ -4804,3 +4804,7 @@ button { cursor: pointer; }
 }
 .win-attach:hover { color: var(--text); }
 .win-attach input { display: none; }
+.win-models-refresh {
+  padding: 2px 6px;
+  line-height: 1;
+}

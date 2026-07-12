@@ -192,8 +192,11 @@ function parseModelSelectValue(value: string) {
   }
 }
 
-async function fetchHermesModelCatalog(): Promise<HermesModelCatalog> {
-  const res = await fetch('/api/models')
+/** `refresh` makes the server re-ask hermes instead of serving its cached
+ *  catalog — the way to pick up a provider switch made in the hermes CLI. */
+async function fetchHermesModelCatalog(refresh = false, workspace = ''): Promise<HermesModelCatalog> {
+  const query = refresh ? `?refresh=1${workspace ? `&workspace=${encodeURIComponent(workspace)}` : ''}` : ''
+  const res = await fetch(`/api/models${query}`)
   if (!res.ok) throw new Error(`models failed (${res.status})`)
   const data = (await res.json()) as Record<string, unknown>
   const rawGroups = Array.isArray(data.groups) ? data.groups : []
@@ -2099,6 +2102,8 @@ function ConversationCard({
   onAgentChange,
   onAgentCommandChange,
   modelCatalog,
+  modelsRefreshing,
+  onRefreshModels,
   reasoningEfforts,
   onModelChange,
   onReasoningEffortChange,
@@ -2138,6 +2143,8 @@ function ConversationCard({
   onAgentChange: (value: AgentType) => void
   onAgentCommandChange: (value: string) => void
   modelCatalog: HermesModelCatalog
+  modelsRefreshing: boolean
+  onRefreshModels: () => void
   reasoningEfforts: string[]
   onModelChange: (model: string, modelProvider: string | null) => void
   onReasoningEffortChange: (effort: string) => void
@@ -2970,6 +2977,15 @@ function ConversationCard({
                       ))}
                     </select>
                   </label>
+                  <button
+                    type="button"
+                    className="term-action win-models-refresh"
+                    disabled={modelsRefreshing}
+                    title="Reload the model list from hermes (after switching provider in the CLI)"
+                    onClick={() => onRefreshModels()}
+                  >
+                    {modelsRefreshing ? '…' : '↻'}
+                  </button>
                   <label className="win-footer-control" title="Reasoning effort">
                     <select
                       value={selectedReasoningEffort}
@@ -4660,6 +4676,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null)
   const [workspaceRoot, setWorkspaceRoot] = useState(DEFAULT_WORKSPACE_CWD)
   const [modelCatalog, setModelCatalog] = useState<HermesModelCatalog>(EMPTY_MODEL_CATALOG)
+  const [modelsRefreshing, setModelsRefreshing] = useState(false)
   const [reasoningEfforts, setReasoningEfforts] = useState<string[]>(DEFAULT_REASONING_EFFORTS)
   const [passwordStatus, setPasswordStatus] = useState<PasswordStatus | null>(null)
   const [passwordDialogOpen, setPasswordDialogOpen] = useState(false)
@@ -5759,6 +5776,19 @@ export default function App() {
     void flushQueue()
   }
 
+  /** Pull the model list from hermes again. The hermes CLI can be repointed at
+   *  another provider at any time, and nothing tells the running server. */
+  async function refreshModelCatalog(workspace: string) {
+    setModelsRefreshing(true)
+    try {
+      setModelCatalog(await fetchHermesModelCatalog(true, workspace))
+    } catch (error) {
+      setError(`Could not refresh the model list: ${error instanceof Error ? error.message : String(error)}`)
+    } finally {
+      setModelsRefreshing(false)
+    }
+  }
+
   async function startTurn(entry: QueuedPromptEntry) {
     const bridge = bridgeRef.current
     if (!bridge) return
@@ -5776,6 +5806,9 @@ export default function App() {
         session = await bridge.createSession(workspace)
         sessionByRunRef.current.set(runId, session)
         setRuns((current) => current.map((item) => (item.id === runId ? { ...item, sessionId: session ?? null } : item)))
+        // session/new is when hermes re-reports its models, so this is the free
+        // moment to notice that the CLI was pointed at a different provider.
+        void fetchHermesModelCatalog().then(setModelCatalog).catch(() => {})
       }
       setSessionId(session)
       setSessionInfoText(`Hermes session ${session}`)
@@ -6010,6 +6043,8 @@ export default function App() {
       onAgentChange={(value) => updateRunContext(run.id, { agentType: value })}
       onAgentCommandChange={(value) => updateRunContext(run.id, { agentCommand: value })}
       modelCatalog={modelCatalog}
+      modelsRefreshing={modelsRefreshing}
+      onRefreshModels={() => void refreshModelCatalog(run.workspacePath)}
       reasoningEfforts={reasoningEfforts}
       onModelChange={(model, modelProvider) => updateRunHermesModel(run.id, model, modelProvider)}
       onReasoningEffortChange={(reasoningEffort) => updateRunReasoningEffort(run.id, reasoningEffort)}
@@ -6062,6 +6097,8 @@ export default function App() {
         onAgentChange={(value) => updateRunContext(run.id, { agentType: value })}
         onAgentCommandChange={(value) => updateRunContext(run.id, { agentCommand: value })}
         modelCatalog={modelCatalog}
+        modelsRefreshing={modelsRefreshing}
+        onRefreshModels={() => void refreshModelCatalog(run.workspacePath)}
         reasoningEfforts={reasoningEfforts}
         onModelChange={(model, modelProvider) => updateRunHermesModel(run.id, model, modelProvider)}
         onReasoningEffortChange={(reasoningEffort) => updateRunReasoningEffort(run.id, reasoningEffort)}
