@@ -4757,6 +4757,7 @@ export default function App() {
   )
 
   function openPanel(panelId: string) {
+    if (!panelOrder.includes(panelId)) placeNewBlock(panelId)
     setPanelOrder((current) => (current.includes(panelId) ? current : [...current, panelId]))
     setPanelStates((current) => {
       const state = current[panelId]
@@ -5005,6 +5006,7 @@ export default function App() {
       createdAt: new Date().toISOString(),
     }
     setRuns((current) => [run, ...current])
+    placeNewBlock(run.id)
     setActiveRunId(run.id)
   }
 
@@ -5073,6 +5075,32 @@ export default function App() {
   useEffect(() => {
     if (maximizedKey && !orderedKeys.includes(maximizedKey)) setMaximizedKey(null)
   }, [maximizedKey, orderedKeys])
+
+  // Where a block that's just been opened (new card, re-launched card, Tool or
+  // App panel) lands. Blocks fill the grid densely in layoutOrder, so the first
+  // pane without a window is always the slot right after the last live block.
+  // Rewriting layoutOrder to "the blocks on screen now, then this one" is what
+  // keeps the newcomer from shoving anyone aside: a block that was open before
+  // still has a stale layoutOrder entry, and honoring it would re-insert the
+  // block mid-grid and push every later window one slot along.
+  function placeNewBlock(key: string) {
+    const live = orderedKeys.filter((k) => k !== key)
+    setLayoutOrder([...live, key])
+    // The stack presets have no implicit slots, so the emptier column stands in
+    // for "the pane with no window".
+    if (layoutPreset === 'two-up') {
+      const left = live.filter((k) => columnOf(k) === 0).length
+      const right = live.filter((k) => columnOf(k) === 1).length
+      setColumnOf(key, right < left ? 1 : 0)
+    }
+    // Free grid is the one preset with a fixed capacity — a full grid grows a
+    // row so the newcomer opens its own pane at the bottom instead of
+    // overflowing an unslotted one. The rest auto-grow rows on their own.
+    if (layoutPreset === 'free') {
+      const count = live.length + 1
+      if (count > freeRows * freeCols) setFreeRows(Math.ceil(count / freeCols))
+    }
+  }
 
   function reorderKeys(keys: string[], draggedKey: string, targetKey: string | null, after: boolean) {
     const without = keys.filter((k) => k !== draggedKey)
@@ -5284,6 +5312,9 @@ export default function App() {
 
   function selectConversation(runId: string) {
     setActiveRunId(runId)
+    // Re-launching a closed card gives it the first free pane; a card that's
+    // already on screen keeps its slot and is only focused.
+    if (closedRunIds.has(runId)) placeNewBlock(runId)
     // Clicking a card in the Navigator re-launches it if it was closed.
     setClosedRunIds((current) => {
       if (!current.has(runId)) return current
