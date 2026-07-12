@@ -4,11 +4,12 @@ set -Eeuo pipefail
 usage() {
   cat <<'USAGE'
 Usage:
-  SOURCE_GIT=root@YOUR-SOURCE-TAILNET-HOST:/srv/git/agent-rider.git bash scripts/pull-update.sh
-  SOURCE_GIT=root@YOUR-SOURCE-TAILNET-HOST:/srv/git/agent-rider.git SOURCE_REF=master APP_DIR=/opt/agent-rider bash scripts/pull-update.sh
+  SOURCE_GIT=git@github.com:ytk77/agent-rider-dev.git bash scripts/pull-update.sh
+  SOURCE_GIT=git@github.com:ytk77/agent-rider-dev.git SOURCE_REF=master APP_DIR=/opt/agent-rider bash scripts/pull-update.sh
 
 Environment:
   SOURCE_GIT          SSH git remote for Agent Rider. Required, or pass as arg 1.
+                      Default source of truth: git@github.com:ytk77/agent-rider-dev.git
   SOURCE_REF          Branch, tag, or commit to deploy. Default: master.
   APP_DIR             Remote install root. Default: /opt/agent-rider
   GIT_CACHE           Local mirror cache. Default: ~/.cache/agent-rider/source.git

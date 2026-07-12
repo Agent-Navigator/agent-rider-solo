@@ -4597,6 +4597,13 @@ button { cursor: pointer; }
   align-items: center;
   gap: 8px;
 }
+.terminal-notepad-actions .terminal-clear {
+  border-radius: 5px;
+  font-family: var(--win-mono);
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 8px;
+}
 .terminal-notepad-spacer {
   flex: 1;
 }
