@@ -36,3 +36,6 @@ __pycache__/
 
 # Claude Code local settings (machine-specific)
 .claude/settings.local.json
+
+# Local scratch notes
+todo.md
