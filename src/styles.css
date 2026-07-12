@@ -2153,15 +2153,33 @@ button { cursor: pointer; }
   margin: 4px 0;
 }
 
-.rail-icon-badge {
+/* Activity-bar icons: one per rail menu (Navigator, Resources) plus the
+   Local Terminal launcher. `active` = the menu the content panel is showing,
+   or (for Terminal) the panel already being open in the workspace. */
+.rail-icon-button {
   width: 34px;
   height: 34px;
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
   border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: color 0.14s ease, background 0.14s ease, border-color 0.14s ease;
+}
+
+.rail-icon-button:hover {
+  border-color: rgba(121, 185, 255, 0.34);
+  background: rgba(121, 185, 255, 0.08);
+  color: var(--text);
+}
+
+.rail-icon-button.active {
   color: var(--accent);
-  background: rgba(121, 185, 255, 0.12);
+  border-color: rgba(121, 185, 255, 0.5);
+  background: rgba(121, 185, 255, 0.14);
 }
 
 .rail-content-panel {
@@ -2172,7 +2190,9 @@ button { cursor: pointer; }
   width: 280px;
   z-index: 40;
   display: grid;
-  grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+  /* One menu at a time — it gets the rail's full height (top:0/bottom:0 above),
+     rather than the 50/50 split from back when both menus stacked here. */
+  grid-template-rows: minmax(0, 1fr);
   gap: 10px;
   padding: 4px;
   border-radius: 14px;
@@ -3736,14 +3756,14 @@ button { cursor: pointer; }
   }
 
   /* No room to float/reflow a side panel at this width — pinned content
-     drops into normal flow above the workspace as a compact 2-col block. */
+     drops into normal flow above the workspace. */
   .left-rail.pinned .rail-content-panel {
     position: static;
     width: auto;
     opacity: 1;
     transform: none;
     pointer-events: auto;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: 1fr;
     grid-template-rows: none;
   }
 
@@ -3777,10 +3797,6 @@ button { cursor: pointer; }
 
   .main-layout {
     gap: 12px;
-  }
-
-  .left-rail.pinned .rail-content-panel {
-    grid-template-columns: 1fr;
   }
 
   .file-browser {

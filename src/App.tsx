@@ -3629,8 +3629,6 @@ function AppBuilderPanel({
 }
 
 function ResourceSidebar({
-  terminalOpen,
-  onLaunchTerminal,
   openPluginIds,
   onLaunchPlugin,
   apps,
@@ -3643,8 +3641,6 @@ function ResourceSidebar({
   onReorderApps,
   onRenameApp,
 }: {
-  terminalOpen: boolean
-  onLaunchTerminal: () => void
   openPluginIds: Set<string>
   onLaunchPlugin: (pluginId: string) => void
   apps: AgentApp[]
@@ -3693,28 +3689,23 @@ function ResourceSidebar({
 
       <div className="sidebar-body">
         <div className="tree-nav">
-          <section className="tree-nav-category">
-            <h3>Tools</h3>
-            <div className="tree-nav-runs">
-              <button
-                type="button"
-                className={`tree-nav-run resource-tool ${terminalOpen ? 'active' : ''}`}
-                onClick={onLaunchTerminal}
-                title={terminalOpen ? 'Local Terminal is open' : 'Launch Local Terminal'}
-              >
-                <span className="tree-run-title">Local Terminal</span>
-                <LaunchIcon open={terminalOpen} />
-              </button>
-              {pluginTools.map((plugin) => (
-                <PluginTool
-                  key={plugin.id}
-                  plugin={plugin}
-                  open={openPluginIds.has(plugin.id)}
-                  onLaunch={() => onLaunchPlugin(plugin.id)}
-                />
-              ))}
-            </div>
-          </section>
+          {/* Local Terminal now lives in the icon rail, so Tools only lists
+              plugins — and disappears entirely when there are none. */}
+          {pluginTools.length > 0 ? (
+            <section className="tree-nav-category">
+              <h3>Tools</h3>
+              <div className="tree-nav-runs">
+                {pluginTools.map((plugin) => (
+                  <PluginTool
+                    key={plugin.id}
+                    plugin={plugin}
+                    open={openPluginIds.has(plugin.id)}
+                    onLaunch={() => onLaunchPlugin(plugin.id)}
+                  />
+                ))}
+              </div>
+            </section>
+          ) : null}
 
           {extraGroups.map(([group, groupPlugins]) => (
             <section key={group} className="tree-nav-category">
@@ -4698,6 +4689,29 @@ export default function App() {
   // Hovering the collapsed rail temporarily reveals it as a floating overlay
   // without reflowing the workspace. Transient — not persisted.
   const [sidebarPeek, setSidebarPeek] = useState(false)
+  // Which menu the rail's content panel shows. The icon rail is an activity bar
+  // now: one icon per menu, and only the selected one is mounted (so it gets the
+  // panel's full height instead of a 50/50 split).
+  const [railPanel, setRailPanel] = useState<'navigator' | 'resources'>('navigator')
+  // Hovering a rail icon previews its menu: switches the panel, and (while
+  // collapsed) floats it out on peek.
+  const showRailPanel = useCallback(
+    (panel: 'navigator' | 'resources') => {
+      setRailPanel(panel)
+      if (sidebarCollapsed) setSidebarPeek(true)
+    },
+    [sidebarCollapsed],
+  )
+  // Clicking pins the menu open — or collapses the rail if it's already the
+  // pinned menu, so the same icon toggles.
+  const openRailPanel = useCallback(
+    (panel: 'navigator' | 'resources') => {
+      setRailPanel(panel)
+      setSidebarPeek(false)
+      setSidebarCollapsed((current) => (current ? false : railPanel === panel))
+    },
+    [railPanel],
+  )
   // Bottom-left settings gear popover (Password, for now).
   const [settingsOpen, setSettingsOpen] = useState(false)
   // Empty tile placeholder → conversation picker overlay. Transient view state.
@@ -6534,13 +6548,13 @@ export default function App() {
           <aside
             className={`left-rail ${sidebarCollapsed ? 'collapsed' : 'pinned'} ${sidebarPeek ? 'peek' : ''}`}
             aria-label="Sidebar"
-            onMouseEnter={() => {
-              if (sidebarCollapsed) setSidebarPeek(true)
-            }}
+            /* Peek is opened per-icon (each icon knows which menu it shows), so
+               there's no rail-wide mouseenter — only the leave that closes it. */
             onMouseLeave={() => setSidebarPeek(false)}
           >
             {/* Always-visible 52px icon strip — the pin toggle lives here so it
-                stays reachable even while collapsed and only peeking. */}
+                stays reachable even while collapsed and only peeking. Each menu
+                icon both selects which menu the panel shows and reveals it. */}
             <div className="rail-icon-strip">
               <button
                 type="button"
@@ -6548,6 +6562,7 @@ export default function App() {
                 aria-expanded={!sidebarCollapsed}
                 aria-label={sidebarCollapsed ? 'Pin sidebar open' : 'Collapse sidebar'}
                 title={sidebarCollapsed ? 'Pin sidebar open' : 'Collapse sidebar'}
+                onMouseEnter={() => showRailPanel('navigator')}
                 onClick={() => {
                   setSidebarCollapsed((current) => !current)
                   setSidebarPeek(false)
@@ -6559,38 +6574,84 @@ export default function App() {
                 </svg>
               </button>
               <div className="rail-icon-divider" aria-hidden />
-              <div className="rail-icon-badge" aria-hidden title="Navigator">
+
+              <button
+                type="button"
+                className={`rail-icon-button ${railPanel === 'navigator' ? 'active' : ''}`}
+                aria-label="Navigator"
+                title="Navigator"
+                onMouseEnter={() => showRailPanel('navigator')}
+                onClick={() => openRailPanel('navigator')}
+              >
                 <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
                   <path d="M3 3h4M3 6.5h7M3 10h5M3 13.5h9" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
                 </svg>
-              </div>
+              </button>
+
+              <button
+                type="button"
+                className={`rail-icon-button ${railPanel === 'resources' ? 'active' : ''}`}
+                aria-label="Resources"
+                title="Resources"
+                onMouseEnter={() => showRailPanel('resources')}
+                onClick={() => openRailPanel('resources')}
+              >
+                {/* Toolbox */}
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                  <path
+                    d="M1.5 6.5h13v6a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1v-6Z"
+                    stroke="currentColor"
+                    strokeWidth="1.3"
+                    strokeLinejoin="round"
+                  />
+                  <path d="M5.5 6.5V4a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v2.5" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
+                  <path d="M1.5 9.5h4m5 0h4M6.5 8.5h3v2h-3z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
+                </svg>
+              </button>
+
+              <div className="rail-icon-divider" aria-hidden />
+
+              <button
+                type="button"
+                className={`rail-icon-button ${terminalOpen ? 'active' : ''}`}
+                aria-label={terminalOpen ? 'Local Terminal is open' : 'Launch Local Terminal'}
+                title={terminalOpen ? 'Local Terminal is open' : 'Launch Local Terminal'}
+                onClick={() => openPanel('terminal')}
+              >
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                  <rect x="1.5" y="2.5" width="13" height="11" rx="1.5" stroke="currentColor" strokeWidth="1.3" />
+                  <path d="M4.3 6l2 2-2 2M8.4 10.2h3.4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </button>
             </div>
 
-            {/* Navigator/Resources content: reflows the workspace while pinned,
-                floats over it (no reflow) while only peeking on hover. */}
+            {/* One menu at a time: whichever icon is selected gets the panel's
+                full height. Reflows the workspace while pinned, floats over it
+                (no reflow) while only peeking on hover. */}
             <div className="rail-content-panel">
-              <ConversationTreeSidebar
-                tree={conversationTree}
-                activeRunId={activeRunId}
-                unreadRunIds={newDoneIds}
-                onSelect={selectConversation}
-                onDeleteRequest={requestDeleteConversation}
-              />
-              <ResourceSidebar
-                terminalOpen={terminalOpen}
-                onLaunchTerminal={() => openPanel('terminal')}
-                openPluginIds={openPluginIds}
-                onLaunchPlugin={launchPlugin}
-                apps={appListing.apps}
-                appWarnings={appListing.warnings}
-                appBuilderOpen={appBuilderOpen}
-                appBuilderTitle={runs.find((run) => run.id === APP_BUILDER_RUN_ID)?.task.trim() || 'App Builder'}
-                onLaunchAppBuilder={launchAppBuilder}
-                openAppSlugs={openAppSlugs}
-                onLaunchApp={launchApp}
-                onReorderApps={reorderApps}
-                onRenameApp={renameAppLabel}
-              />
+              {railPanel === 'navigator' ? (
+                <ConversationTreeSidebar
+                  tree={conversationTree}
+                  activeRunId={activeRunId}
+                  unreadRunIds={newDoneIds}
+                  onSelect={selectConversation}
+                  onDeleteRequest={requestDeleteConversation}
+                />
+              ) : (
+                <ResourceSidebar
+                  openPluginIds={openPluginIds}
+                  onLaunchPlugin={launchPlugin}
+                  apps={appListing.apps}
+                  appWarnings={appListing.warnings}
+                  appBuilderOpen={appBuilderOpen}
+                  appBuilderTitle={runs.find((run) => run.id === APP_BUILDER_RUN_ID)?.task.trim() || 'App Builder'}
+                  onLaunchAppBuilder={launchAppBuilder}
+                  openAppSlugs={openAppSlugs}
+                  onLaunchApp={launchApp}
+                  onReorderApps={reorderApps}
+                  onRenameApp={renameAppLabel}
+                />
+              )}
             </div>
           </aside>
 
