@@ -14,7 +14,8 @@ Environment:
   STORE_PORT          Local store backend port. Default: 5174
   BROWSE_ROOT         File browser root. Default: APP_USER home
   AGENT_RIDER_APPS_DIR Local Agent Apps root. Default: APP_DIR/shared/plugins
-  HERMES_TARGET       Hermes proxy target. Default: http://127.0.0.1:8789
+  HERMES_TARGET       External Hermes WebUI to serve /api from. Default: unset,
+                      so /api is served by the store backend's embedded ACP server
   VITE_ALLOWED_HOSTS  Comma-separated hosts, or "all". Default: all
 USAGE
 }
@@ -67,7 +68,14 @@ existing_allowed_hosts=$(read_env_value VITE_ALLOWED_HOSTS || true)
 WEB_HOST=${WEB_HOST:-${existing_web_host:-127.0.0.1}}
 WEB_PORT=${WEB_PORT:-${existing_web_port:-5173}}
 STORE_PORT=${STORE_PORT:-${existing_store_port:-5174}}
-HERMES_TARGET=${HERMES_TARGET:-${existing_hermes_target:-http://127.0.0.1:8789}}
+# /api is served by the store backend's embedded ACP server (server/hermesAcp.mjs);
+# HERMES_TARGET is now only for pointing it at an external Hermes WebUI instead.
+# Older installs have the retired default baked into their env file, which would
+# otherwise keep proxying /api at a hermes-webui that is no longer deployed.
+if [[ "${existing_hermes_target:-}" == "http://127.0.0.1:8789" ]]; then
+  existing_hermes_target=''
+fi
+HERMES_TARGET=${HERMES_TARGET:-${existing_hermes_target:-}}
 VITE_ALLOWED_HOSTS=${VITE_ALLOWED_HOSTS:-${existing_allowed_hosts:-all}}
 
 if ! id "$APP_USER" >/dev/null 2>&1; then

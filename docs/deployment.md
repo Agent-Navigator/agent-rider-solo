@@ -126,7 +126,9 @@ WEB_HOST=127.0.0.1
 STORE_PORT=5174
 BROWSE_ROOT=/root
 AGENT_RIDER_APPS_DIR=/opt/agent-rider/shared/plugins
-HERMES_TARGET=http://127.0.0.1:8789
+# 留空：/api 由 store 後端內建的 ACP server 服務（server/hermesAcp.mjs）。
+# 只有要改用外部 Hermes WebUI 後端時才填，例如 http://127.0.0.1:8789。
+HERMES_TARGET=
 VITE_ALLOWED_HOSTS=all
 ```
 
