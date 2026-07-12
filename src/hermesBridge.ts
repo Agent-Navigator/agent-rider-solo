@@ -18,11 +18,21 @@ export interface CreateSessionOptions {
   source?: string
 }
 
+/** An image attached to a prompt. `dataUrl` is what the card renders and what
+ *  the server splits into an ACP image content block. */
+export interface PromptImage {
+  id: string
+  name: string
+  mimeType: string
+  dataUrl: string
+}
+
 export interface SubmitPromptOptions {
   model?: string
   modelProvider?: string | null
   promptContext?: PromptContext
   appWorkspace?: string
+  images?: PromptImage[]
 }
 
 export type PromptContext = 'agent-rider' | 'app-builder'
@@ -189,6 +199,9 @@ export class HermesBridge {
       body.explicit_model_pick = true
     }
     if (cleanProvider) body.model_provider = cleanProvider
+    if (options.images?.length) {
+      body.images = options.images.map((image) => ({ mimeType: image.mimeType, data: image.dataUrl }))
+    }
 
     const res = await fetch('/api/chat/start', {
       method: 'POST',

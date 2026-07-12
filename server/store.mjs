@@ -1346,6 +1346,8 @@ const hermesAcp = createHermesAcp({
   command: resolveCommandFile('hermes'),
   getKv,
   setKv: (key, value) => upsertKv.run(key, value, nowIso()),
+  // Lets it resolve image files Hermes reports by path into /store/fs/view/ URLs.
+  browseRoot: BROWSE_ROOT,
   log: console,
 })
 

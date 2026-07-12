@@ -4744,3 +4744,63 @@ button { cursor: pointer; }
 }
 .term-tool-output { font-size: 11px; line-height: 1.6; }
 .term-thinking-body { font-style: italic; line-height: 1.7; }
+
+/* Images: the ones Hermes produced (served from the workspace by path) and the
+   ones the user attached (inline data URLs, echoed back in their own bubble). */
+.term-tool-images,
+.term-prompt-images,
+.win-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  list-style: none;
+}
+.term-tool-images { padding: 6px 8px 8px 25px; }
+.term-prompt-images { padding: 0 12px 10px 26px; }
+.win-attachments { padding: 8px 12px 0; }
+.term-tool-images img,
+.term-prompt-images img,
+.win-attachment img {
+  display: block;
+  max-width: 260px;
+  max-height: 200px;
+  width: auto;
+  height: auto;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+}
+.win-attachment {
+  position: relative;
+  line-height: 0;
+}
+.win-attachment img {
+  max-width: 92px;
+  max-height: 72px;
+}
+.win-attachment-remove {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+.win-attachment-remove:hover { color: var(--text); }
+.win-attach {
+  display: flex;
+  align-items: center;
+  padding: 0 6px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.win-attach:hover { color: var(--text); }
+.win-attach input { display: none; }

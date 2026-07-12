@@ -1,4 +1,4 @@
-import { type ChangeEvent, type CSSProperties, type DragEvent, type FormEvent, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { type ChangeEvent, type ClipboardEvent, type CSSProperties, type DragEvent, type FormEvent, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import rehypeRaw from 'rehype-raw'
@@ -28,7 +28,7 @@ import typescript from 'highlight.js/lib/languages/typescript'
 import xml from 'highlight.js/lib/languages/xml'
 import yaml from 'highlight.js/lib/languages/yaml'
 import '@xterm/xterm/css/xterm.css'
-import { HermesActiveStreamError, HermesBridge, type HermesConnectionState, type PromptContext } from './hermesBridge'
+import { HermesActiveStreamError, HermesBridge, type HermesConnectionState, type PromptContext, type PromptImage } from './hermesBridge'
 import {
   loadPersistedState,
   persistState,
@@ -311,6 +311,61 @@ interface ToolActivity {
   status: 'pending' | 'completed' | 'failed'
   locations?: string[]
   output?: string
+  // Image files the tool produced (screenshots, generated images), as paths the
+  // store can serve. Hermes reports these as text, never as image blocks.
+  images?: string[]
+}
+
+// Anthropic's vision guidance: a long edge past ~1568px buys no accuracy and
+// only costs tokens. Downscaling here also keeps the prompt body — and the
+// saved conversation state — from ballooning with raw camera-sized captures.
+const MAX_IMAGE_EDGE = 1568
+const MAX_PROMPT_IMAGES = 8
+
+function workspaceFileUrl(path: string) {
+  return `/store/fs/view/${path.split('/').map(encodeURIComponent).join('/')}`
+}
+
+/** Read an image file into a downscaled data URL. PNGs stay PNG so screenshots
+ *  keep their crisp text; anything else re-encodes as JPEG. */
+async function toPromptImage(file: File): Promise<PromptImage | null> {
+  if (!file.type.startsWith('image/')) return null
+  const dataUrl = await new Promise<string>((done, fail) => {
+    const reader = new FileReader()
+    reader.onload = () => done(String(reader.result ?? ''))
+    reader.onerror = () => fail(reader.error ?? new Error('could not read file'))
+    reader.readAsDataURL(file)
+  })
+
+  const image = await new Promise<HTMLImageElement | null>((done) => {
+    const element = new Image()
+    element.onload = () => done(element)
+    element.onerror = () => done(null)
+    element.src = dataUrl
+  })
+
+  const base = { id: makeId('img'), name: file.name || 'pasted image' }
+  // SVG has no intrinsic raster size to scale, and an unreadable image is still
+  // worth sending as-is rather than dropping silently.
+  const scale = image ? Math.min(1, MAX_IMAGE_EDGE / Math.max(image.width, image.height)) : 1
+  if (!image || file.type === 'image/svg+xml' || scale === 1) {
+    return { ...base, mimeType: file.type, dataUrl }
+  }
+
+  const canvas = document.createElement('canvas')
+  canvas.width = Math.round(image.width * scale)
+  canvas.height = Math.round(image.height * scale)
+  const context = canvas.getContext('2d')
+  if (!context) return { ...base, mimeType: file.type, dataUrl }
+  context.drawImage(image, 0, 0, canvas.width, canvas.height)
+  const mimeType = file.type === 'image/png' ? 'image/png' : 'image/jpeg'
+  return { ...base, mimeType, dataUrl: canvas.toDataURL(mimeType, 0.85) }
+}
+
+/** Images carried by a paste or drop, if any. */
+function imageFilesFrom(transfer: DataTransfer | null): File[] {
+  if (!transfer) return []
+  return Array.from(transfer.files ?? []).filter((file) => file.type.startsWith('image/'))
 }
 
 interface PlanEntry {
@@ -348,6 +403,8 @@ interface TurnItem {
   thinking?: string
   tools?: ToolActivity[]
   plan?: PlanEntry[]
+  // Images the user attached to `prompt`, shown back in their own bubble.
+  images?: PromptImage[]
 }
 
 interface QueuedPromptEntry {
@@ -359,6 +416,7 @@ interface QueuedPromptEntry {
   modelProvider?: string | null
   reasoningEffort?: string
   promptContext?: PromptContext
+  images?: PromptImage[]
 }
 
 interface AppFolderConflict {
@@ -1995,6 +2053,15 @@ function TurnActivity({ turn }: { turn: TurnItem }) {
           {tool.locations?.length ? (
             <div className="term-tool-locations">{tool.locations.join('\n')}</div>
           ) : null}
+          {tool.images?.length ? (
+            <div className="term-tool-images">
+              {tool.images.map((path) => (
+                <a key={path} href={workspaceFileUrl(path)} target="_blank" rel="noreferrer">
+                  <img src={workspaceFileUrl(path)} alt={path} loading="lazy" />
+                </a>
+              ))}
+            </div>
+          ) : null}
           {tool.output ? <pre className="term-tool-output">{tool.output}</pre> : null}
         </details>
       ))}
@@ -2064,7 +2131,7 @@ function ConversationCard({
   onMarkRead: (runId: string) => void
   onToggle: () => void
   onMetaCollapsedChange: (collapsed: boolean) => void
-  onSend: (text: string, parentTurnId?: string | null) => string | null
+  onSend: (text: string, parentTurnId?: string | null, images?: PromptImage[]) => string | null
   onTitleChange: (value: string) => void
   onCategoryChange: (value: string) => void
   onProjectChange: (value: string) => void
@@ -2109,6 +2176,7 @@ function ConversationCard({
   const [dragOverAfter, setDragOverAfter] = useState(false)
   const dragOverAfterRef = useRef(false)
   const [draft, setDraft] = useState('')
+  const [attachments, setAttachments] = useState<PromptImage[]>([])
   const [customCommandDraft, setCustomCommandDraft] = useState(run.agentCommand ?? '')
   const [askParentId, setAskParentId] = useState<string | null>(null)
   const [askDraft, setAskDraft] = useState('')
@@ -2187,6 +2255,15 @@ function ConversationCard({
     event: DragEvent<HTMLTextAreaElement>,
     setValue: (value: string) => void,
   ) {
+    // Image files dropped from the desktop become attachments; a path dragged
+    // from the built-in file browser still inserts as text.
+    const images = imageFilesFrom(event.dataTransfer)
+    if (images.length) {
+      event.preventDefault()
+      event.stopPropagation()
+      void attachImages(images)
+      return
+    }
     const filePath = filePathFromDrag(event)
     if (!filePath) return
     event.preventDefault()
@@ -2194,12 +2271,32 @@ function ConversationCard({
     setValue(insertIntoTextarea(event.currentTarget, filePath))
   }
 
+  async function attachImages(files: File[]) {
+    if (!files.length) return
+    const room = MAX_PROMPT_IMAGES - attachments.length
+    if (room <= 0) return
+    const added = (await Promise.all(files.slice(0, room).map(toPromptImage))).filter(
+      (image): image is PromptImage => image !== null,
+    )
+    if (added.length) setAttachments((current) => [...current, ...added].slice(0, MAX_PROMPT_IMAGES))
+  }
+
+  function pasteIntoPrompt(event: ClipboardEvent<HTMLTextAreaElement>) {
+    const images = imageFilesFrom(event.clipboardData)
+    if (!images.length) return // plain text paste: leave it to the browser
+    event.preventDefault()
+    void attachImages(images)
+  }
+
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const text = draft.trim()
-    if (!text) return
+    // An image on its own is a legitimate prompt ("what is this?" is implied).
+    if (!text && !attachments.length) return
+    const images = attachments
     setDraft('')
-    const turnId = onSend(text)
+    setAttachments([])
+    const turnId = onSend(text, null, images)
     if (turnId) setFocusTurnId(turnId)
   }
 
@@ -2321,6 +2418,15 @@ function ConversationCard({
             </button>
           </span>
         </div>
+        {turn.images?.length && !isTurnCollapsed ? (
+          <div className="term-prompt-images">
+            {turn.images.map((image) => (
+              <a key={image.id} href={image.dataUrl} target="_blank" rel="noreferrer">
+                <img src={image.dataUrl} alt={image.name} loading="lazy" />
+              </a>
+            ))}
+          </div>
+        ) : null}
         {!isTurnCollapsed ? (
           <div className="term-response">
             <div className="term-response-head">
@@ -2777,6 +2883,24 @@ function ConversationCard({
                   )}
                 </div>
 
+                {attachments.length ? (
+                  <ul className="win-attachments">
+                    {attachments.map((image) => (
+                      <li key={image.id} className="win-attachment">
+                        <img src={image.dataUrl} alt={image.name} />
+                        <button
+                          type="button"
+                          className="win-attachment-remove"
+                          title={`Remove ${image.name}`}
+                          onClick={() => setAttachments((current) => current.filter((item) => item.id !== image.id))}
+                        >
+                          ×
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+
                 <form className="win-promptbar" onSubmit={submit}>
                   <span className="win-prompt-mark" aria-hidden>›</span>
                   <textarea
@@ -2790,14 +2914,30 @@ function ConversationCard({
                         event.currentTarget.form?.requestSubmit()
                       }
                     }}
+                    onPaste={pasteIntoPrompt}
                     onDragOver={(event) => {
-                      if (event.dataTransfer.types.includes('application/x-agent-rider-file-path')) event.preventDefault()
+                      if (
+                        event.dataTransfer.types.includes('application/x-agent-rider-file-path')
+                        || event.dataTransfer.types.includes('Files')
+                      ) event.preventDefault()
                     }}
                     onDrop={(event) => dropFilePathIntoTextarea(event, setDraft)}
                     placeholder={isDraft ? 'Describe the task to start this conversation…' : `Reply to ${conversationTitle(run)}…`}
                     aria-label="Message"
                   />
-                  {draft ? (
+                  <label className="win-attach" title="Attach an image (or paste one)">
+                    <input
+                      type="file"
+                      accept="image/*"
+                      multiple
+                      onChange={(event) => {
+                        void attachImages(Array.from(event.target.files ?? []))
+                        event.target.value = ''
+                      }}
+                    />
+                    <span aria-hidden>▣</span>
+                  </label>
+                  {draft || attachments.length ? (
                     <button type="submit" className="term-action accent win-send" title="Send (Enter)">
                       send ↵
                     </button>
@@ -5237,6 +5377,7 @@ export default function App() {
               status: normalizeToolStatus(patch.status, existing?.status),
               locations: (patch.locations as string[] | undefined) ?? existing?.locations,
               output: String(patch.output ?? '') || existing?.output,
+              images: (patch.images as string[] | undefined) ?? existing?.images,
             }
             return {
               ...turn,
@@ -5622,7 +5763,7 @@ export default function App() {
     const bridge = bridgeRef.current
     if (!bridge) return
 
-    const { turnId, runId, prompt, workspace, model, modelProvider, reasoningEffort, promptContext } = entry
+    const { turnId, runId, prompt, workspace, model, modelProvider, reasoningEffort, promptContext, images } = entry
 
     activeTurnRef.current = turnId
     activeRunRef.current = runId
@@ -5643,6 +5784,7 @@ export default function App() {
         modelProvider,
         promptContext,
         appWorkspace: promptContext === 'app-builder' ? workspace : undefined,
+        images,
       }
       if (reasoningEffort?.trim()) await bridge.setReasoningEffort(reasoningEffort, promptOptions)
       await bridge.submitPrompt(session, prompt, workspace, promptOptions)
@@ -5757,7 +5899,12 @@ export default function App() {
     void startTurn(entry)
   }
 
-  function newTurn(runId: string, prompt: string, parentTurnId: string | null = null): { turn: TurnItem; turnId: string } {
+  function newTurn(
+    runId: string,
+    prompt: string,
+    parentTurnId: string | null = null,
+    images: PromptImage[] = [],
+  ): { turn: TurnItem; turnId: string } {
     const turnId = makeId('turn')
     return {
       turnId,
@@ -5769,13 +5916,19 @@ export default function App() {
         runId,
         parentTurnId,
         createdAt: new Date().toISOString(),
+        images: images.length ? images : undefined,
       },
     }
   }
 
   // Send a message inside a conversation card. The first turn derives the
   // card's metadata from the prompt (honoring any context the user set).
-  function sendInConversation(runId: string, prompt: string, parentTurnId: string | null = null) {
+  function sendInConversation(
+    runId: string,
+    prompt: string,
+    parentTurnId: string | null = null,
+    images: PromptImage[] = [],
+  ) {
     if (!bridgeRef.current) {
       setError('Hermes bridge is not ready yet.')
       return null
@@ -5816,7 +5969,7 @@ export default function App() {
       )))
     }
 
-    const { turn, turnId } = newTurn(runId, prompt, parentTurnId)
+    const { turn, turnId } = newTurn(runId, prompt, parentTurnId, images)
     setTurns((current) => [turn, ...current])
     setError(null)
     enqueueOrStart({
@@ -5827,6 +5980,7 @@ export default function App() {
       model,
       modelProvider,
       reasoningEffort,
+      images,
       promptContext: run.cardKind === 'app-builder' ? 'app-builder' : 'agent-rider',
     })
     return turnId
@@ -5849,7 +6003,7 @@ export default function App() {
       onDropOnCard={(after) => handleDropOnBlock(run.id, after)}
       onToggle={() => toggleCollapse(run.id)}
       onMetaCollapsedChange={(collapsed) => setMetaCollapsed(run.id, collapsed)}
-      onSend={(text, parentTurnId) => sendInConversation(run.id, text, parentTurnId ?? null)}
+      onSend={(text, parentTurnId, images) => sendInConversation(run.id, text, parentTurnId ?? null, images)}
       onTitleChange={(value) => updateRunContext(run.id, { task: value })}
       onCategoryChange={(value) => updateRunContext(run.id, { category: value, categoryTags: tagsForCategory(value) })}
       onProjectChange={(value) => updateRunProject(run.id, value)}
@@ -5901,7 +6055,7 @@ export default function App() {
         onDropOnCard={() => {}}
         onToggle={() => {}}
         onMetaCollapsedChange={(collapsed) => setMetaCollapsed(run.id, collapsed)}
-        onSend={(text, parentTurnId) => sendInConversation(run.id, text, parentTurnId ?? null)}
+        onSend={(text, parentTurnId, images) => sendInConversation(run.id, text, parentTurnId ?? null, images)}
         onTitleChange={(value) => updateRunContext(run.id, { task: value })}
         onCategoryChange={(value) => updateRunContext(run.id, { category: value, categoryTags: tagsForCategory(value) })}
         onProjectChange={(value) => updateRunProject(run.id, value)}

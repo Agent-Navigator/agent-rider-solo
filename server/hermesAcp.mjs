@@ -6,7 +6,7 @@
 //   POST /api/session/new           {workspace} → {session:{session_id,...}}
 //   GET  /api/sessions              → {sessions:[...]}  (also the health probe)
 //   POST /api/chat/start            {session_id, message, workspace, model?,
-//                                    model_provider?} → {stream_id} | 409
+//                                    model_provider?, images?} → {stream_id} | 409
 //   GET  /api/chat/stream           ?stream_id= → SSE (token/thought/tool/plan/
 //                                    stream_end/apperror/cancel/error) with
 //                                    full replay
@@ -23,11 +23,19 @@
 // same reliability contract the WebUI backend provided.
 
 import { spawn } from 'node:child_process'
+import { statSync } from 'node:fs'
+import { relative, resolve } from 'node:path'
 
 const RPC_TIMEOUT_MS = 120_000 // session/new can take ~10s on cold start
 const STREAM_RETENTION_MS = 30 * 60 * 1000
 const MAX_BUFFERED_EVENTS = 20_000
 const MODEL_CATALOG_KV_KEY = 'hermes_model_catalog'
+const MAX_BODY_BYTES = 4_000_000
+// Prompt images ride inline as base64, so a turn's body is far bigger than a
+// text-only one. The card downscales before upload; this is the backstop.
+const MAX_PROMPT_BODY_BYTES = 32_000_000
+const MAX_PROMPT_IMAGES = 8
+const IMAGE_PATH_RE = /(?:^|[\s"'`(\[])((?:\/|~\/)[^\s"'`()\[\]]+\.(?:png|jpe?g|gif|webp|bmp|svg))/gi
 
 function sendJson(res, status, payload) {
   const body = JSON.stringify(payload)
@@ -35,22 +43,74 @@ function sendJson(res, status, payload) {
   res.end(body)
 }
 
-function readBody(req) {
-  return new Promise((resolve, reject) => {
+function readBody(req, maxBytes = MAX_BODY_BYTES) {
+  return new Promise((done, reject) => {
     let body = ''
     req.on('data', (chunk) => {
       body += chunk
-      if (body.length > 4_000_000) {
+      if (body.length > maxBytes) {
         reject(new Error('body too large'))
         req.destroy()
       }
     })
-    req.on('end', () => resolve(body))
+    req.on('end', () => done(body))
     req.on('error', reject)
   })
 }
 
-export function createHermesAcp({ command = 'hermes', args = ['acp'], env = {}, getKv, setKv, log = console } = {}) {
+/** Prompt attachments → ACP image content blocks. The card sends data URLs; the
+ *  wire format wants bare base64 plus its mime type. */
+function toImageBlocks(raw) {
+  if (!Array.isArray(raw)) return []
+  const blocks = []
+  for (const item of raw.slice(0, MAX_PROMPT_IMAGES)) {
+    const source = String(item?.data ?? '').trim()
+    if (!source) continue
+    const match = /^data:([^;,]+);base64,(.*)$/s.exec(source)
+    const data = match ? match[2] : source
+    const mimeType = String(item?.mimeType ?? '').trim() || (match ? match[1] : 'image/png')
+    if (!data || !mimeType.startsWith('image/')) continue
+    blocks.push({ type: 'image', data, mimeType })
+  }
+  return blocks
+}
+
+export function createHermesAcp({ command = 'hermes', args = ['acp'], env = {}, getKv, setKv, browseRoot = '', log = console } = {}) {
+  // Hermes never sends image content blocks back over ACP — its image-producing
+  // tools (browser screenshots, image_generate) report a *file path* in their
+  // text result instead. So the only way an image Hermes made reaches the card
+  // is to spot that path and let the store's sandboxed /store/fs/view/ serve it.
+  const viewRoot = browseRoot ? resolve(browseRoot) : ''
+
+  /** Absolute image path → path relative to BROWSE_ROOT, or null when it escapes
+   *  the sandbox, does not exist, or is not a file. */
+  function viewablePath(candidate) {
+    if (!viewRoot) return null
+    const home = process.env.HOME || ''
+    const expanded = candidate.startsWith('~/') && home ? resolve(home, candidate.slice(2)) : resolve(candidate)
+    const rel = relative(viewRoot, expanded)
+    if (!rel || rel.startsWith('..') || rel.startsWith('/')) return null
+    try {
+      if (!statSync(expanded).isFile()) return null
+    } catch {
+      return null // reported but not (yet) on disk
+    }
+    return rel
+  }
+
+  function findImages(text, locations) {
+    const found = new Set()
+    for (const location of locations ?? []) {
+      const rel = viewablePath(location)
+      if (rel) found.add(rel)
+    }
+    for (const match of String(text ?? '').matchAll(IMAGE_PATH_RE)) {
+      const rel = viewablePath(match[1])
+      if (rel) found.add(rel)
+    }
+    return Array.from(found)
+  }
+
   // ── ACP child + JSON-RPC plumbing ──────────────────────────────────────────
   let child = null
   let childInitialized = null // Promise while an initialize handshake is in flight
@@ -373,6 +433,8 @@ export function createHermesAcp({ command = 'hermes', args = ['acp'], env = {}, 
         }
         const output = contentText(update.content)
         if (output) payload.output = output
+        const images = findImages(output, payload.locations)
+        if (images.length) payload.images = images
         pushEvent(stream, 'tool', payload)
         return
       }
@@ -392,7 +454,7 @@ export function createHermesAcp({ command = 'hermes', args = ['acp'], env = {}, 
     }
   }
 
-  async function startTurn({ sessionId, message, workspace, model, provider }) {
+  async function startTurn({ sessionId, message, workspace, model, provider, images = [] }) {
     const effectiveSessionId = await ensureSessionLoaded(sessionId, workspace)
     const session = sessions.get(effectiveSessionId)
 
@@ -422,7 +484,7 @@ export function createHermesAcp({ command = 'hermes', args = ['acp'], env = {}, 
 
     rpcRequest('session/prompt', {
       sessionId: effectiveSessionId,
-      prompt: [{ type: 'text', text: message }],
+      prompt: [{ type: 'text', text: message }, ...images],
     }, 0)
       .then((result) => {
         const stopReason = String(result?.stopReason ?? 'end_turn')
@@ -486,15 +548,16 @@ export function createHermesAcp({ command = 'hermes', args = ['acp'], env = {}, 
     if (req.method === 'POST' && pathname === '/api/chat/start') {
       let body
       try {
-        body = JSON.parse((await readBody(req)) || '{}')
-      } catch {
-        sendJson(res, 400, { error: 'invalid JSON body' })
+        body = JSON.parse((await readBody(req, MAX_PROMPT_BODY_BYTES)) || '{}')
+      } catch (error) {
+        sendJson(res, 400, { error: error.message === 'body too large' ? 'attachments too large' : 'invalid JSON body' })
         return
       }
       const sessionId = String(body.session_id ?? '').trim()
       const message = String(body.message ?? '')
       const workspace = String(body.workspace ?? '').trim()
-      if (!sessionId || !message) {
+      const images = toImageBlocks(body.images)
+      if (!sessionId || (!message && !images.length)) {
         sendJson(res, 400, { error: 'session_id and message are required' })
         return
       }
@@ -510,6 +573,7 @@ export function createHermesAcp({ command = 'hermes', args = ['acp'], env = {}, 
           workspace,
           model: String(body.model ?? '').trim(),
           provider: String(body.model_provider ?? '').trim(),
+          images,
         })
         sendJson(res, 200, { stream_id: streamId })
       } catch (error) {
