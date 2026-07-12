@@ -7,8 +7,9 @@
 //   GET  /api/sessions              → {sessions:[...]}  (also the health probe)
 //   POST /api/chat/start            {session_id, message, workspace, model?,
 //                                    model_provider?} → {stream_id} | 409
-//   GET  /api/chat/stream           ?stream_id= → SSE (token/stream_end/
-//                                    apperror/cancel/error) with full replay
+//   GET  /api/chat/stream           ?stream_id= → SSE (token/thought/tool/plan/
+//                                    stream_end/apperror/cancel/error) with
+//                                    full replay
 //   GET  /api/chat/stream/status    ?stream_id= → {active, replay_available}
 //   POST /api/chat/cancel           ?stream_id= → {cancelled}
 //   GET  /api/models                → {groups, default_model, active_provider}
@@ -324,6 +325,17 @@ export function createHermesAcp({ command = 'hermes', args = ['acp'], env = {}, 
     }
   }
 
+  /** Flatten ACP content blocks to display text, dropping non-text parts. */
+  function contentText(blocks) {
+    if (!Array.isArray(blocks)) return ''
+    const parts = []
+    for (const block of blocks) {
+      const inner = block?.content ?? block
+      if (inner?.type === 'text' && inner.text) parts.push(String(inner.text))
+    }
+    return parts.join('\n').trim()
+  }
+
   function handleSessionUpdate(params) {
     const sessionId = String(params.sessionId ?? '')
     const update = params.update ?? {}
@@ -331,12 +343,53 @@ export function createHermesAcp({ command = 'hermes', args = ['acp'], env = {}, 
     if (!streamId) return // replay noise from session/load, or late events
     const stream = streams.get(streamId)
     if (!stream || !stream.active) return
-    if (update.sessionUpdate === 'agent_message_chunk' && update.content?.type === 'text') {
-      const text = String(update.content.text ?? '')
-      if (text) pushEvent(stream, 'token', { text })
+
+    switch (update.sessionUpdate) {
+      case 'agent_message_chunk': {
+        if (update.content?.type !== 'text') return
+        const text = String(update.content.text ?? '')
+        if (text) pushEvent(stream, 'token', { text })
+        return
+      }
+      case 'agent_thought_chunk': {
+        if (update.content?.type !== 'text') return
+        const text = String(update.content.text ?? '')
+        if (text) pushEvent(stream, 'thought', { text })
+        return
+      }
+      case 'tool_call':
+      case 'tool_call_update': {
+        const id = String(update.toolCallId ?? '')
+        if (!id) return
+        // A fresh tool_call carries no status — it has only just started. Updates
+        // carry one, but hermes does not always send a terminal update for every
+        // call (an unmatched `read` was observed), so the client also reconciles
+        // leftovers when the turn ends.
+        const payload = { id, status: String(update.status ?? 'pending') }
+        if (update.title !== undefined) payload.title = String(update.title)
+        if (update.kind !== undefined) payload.kind = String(update.kind)
+        if (Array.isArray(update.locations)) {
+          payload.locations = update.locations.map((loc) => String(loc?.path ?? '')).filter(Boolean)
+        }
+        const output = contentText(update.content)
+        if (output) payload.output = output
+        pushEvent(stream, 'tool', payload)
+        return
+      }
+      case 'plan': {
+        const entries = Array.isArray(update.entries) ? update.entries : []
+        pushEvent(stream, 'plan', {
+          entries: entries.map((entry) => ({
+            content: String(entry?.content ?? ''),
+            status: String(entry?.status ?? 'pending'),
+          })).filter((entry) => entry.content),
+        })
+        return
+      }
+      default:
+        // usage_update / available_commands_update have no slot in the card UI
+        // today; the SSE heartbeat keeps the connection alive regardless.
     }
-    // Other updates (plan, tool_call, usage_update, thought chunks) have no
-    // slot in the card UI today; the SSE heartbeat keeps the connection alive.
   }
 
   async function startTurn({ sessionId, message, workspace, model, provider }) {

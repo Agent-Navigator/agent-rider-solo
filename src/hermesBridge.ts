@@ -357,6 +357,24 @@ export class HermesBridge {
       }
     })
 
+    // Reasoning, tool calls and plan updates: same liveness contract as `token`
+    // (arriving data means the transport is healthy), but they feed the turn's
+    // activity timeline rather than its answer text.
+    const forwardActivity = (sseEvent: string, type: string) => {
+      source.addEventListener(sseEvent, (raw) => {
+        this.clearStreamRecovery(streamId)
+        try {
+          const payload = JSON.parse((raw as MessageEvent).data) as Record<string, unknown>
+          this.emit({ type, payload })
+        } catch {
+          // ignore malformed activity frame
+        }
+      })
+    }
+    forwardActivity('thought', 'message.thought')
+    forwardActivity('tool', 'message.tool')
+    forwardActivity('plan', 'message.plan')
+
     const finish = () => {
       finishStream('ready', 'Assistant response complete', { type: 'message.complete' })
     }

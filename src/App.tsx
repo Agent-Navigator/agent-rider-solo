@@ -301,6 +301,40 @@ interface ResourceItem {
   assignedTaskIds: string[]
 }
 
+/** One tool Hermes ran during a turn, as reported over ACP. A call starts with
+ *  no status and is only sometimes given a terminal `tool_call_update`, so a
+ *  'pending' entry is reconciled when the turn finishes. */
+interface ToolActivity {
+  id: string
+  title: string
+  kind: string
+  status: 'pending' | 'completed' | 'failed'
+  locations?: string[]
+  output?: string
+}
+
+interface PlanEntry {
+  content: string
+  status: string
+}
+
+/** ACP tool status → our three states, never regressing a settled call back to
+ *  pending (a late update carrying no status must not un-complete it). */
+function normalizeToolStatus(raw: unknown, previous?: ToolActivity['status']): ToolActivity['status'] {
+  const value = String(raw ?? '')
+  if (value === 'completed') return 'completed'
+  if (value === 'failed' || value === 'error') return 'failed'
+  return previous && previous !== 'pending' ? previous : 'pending'
+}
+
+/** Hermes does not always send a terminal tool_call_update for every tool_call,
+ *  so a call left 'pending' when the turn ends would spin forever. Settle it:
+ *  the turn is over, so nothing is still running. */
+function settleTools(turn: TurnItem, fallback: ToolActivity['status']): ToolActivity[] | undefined {
+  if (!turn.tools?.length) return turn.tools
+  return turn.tools.map((tool) => (tool.status === 'pending' ? { ...tool, status: fallback } : tool))
+}
+
 interface TurnItem {
   id: string
   prompt: string
@@ -309,6 +343,11 @@ interface TurnItem {
   runId: string
   parentTurnId?: string | null
   createdAt: string
+  // Activity timeline (Hermes only): reasoning, tool calls and plan updates that
+  // led to `response`. Absent on turns from agents that stream plain text.
+  thinking?: string
+  tools?: ToolActivity[]
+  plan?: PlanEntry[]
 }
 
 interface QueuedPromptEntry {
@@ -1910,6 +1949,69 @@ function DraggablePanel({
   )
 }
 
+const TOOL_STATUS_MARK: Record<ToolActivity['status'], string> = {
+  pending: '·',
+  completed: '✓',
+  failed: '✗',
+}
+
+function planMark(status: string) {
+  if (status === 'completed') return '✓'
+  if (status === 'in_progress') return '▸'
+  return '○'
+}
+
+/** What Hermes did on the way to its answer: plan, tool calls, reasoning. This
+ *  is the only window into a Hermes turn — unlike the TUI agents, its work does
+ *  not show up in a terminal — and it doubles as the audit trail for tools that
+ *  ran without a permission prompt. Everything is collapsed by default so the
+ *  answer stays the focus. */
+function TurnActivity({ turn }: { turn: TurnItem }) {
+  const tools = turn.tools ?? []
+  const plan = turn.plan ?? []
+  const thinking = (turn.thinking ?? '').trim()
+  if (!tools.length && !plan.length && !thinking) return null
+
+  return (
+    <div className="term-activity">
+      {plan.length ? (
+        <ul className="term-plan">
+          {plan.map((entry, index) => (
+            <li key={index} className={`term-plan-item ${entry.status}`}>
+              <span className="term-plan-mark" aria-hidden>{planMark(entry.status)}</span>
+              <span>{entry.content}</span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+
+      {tools.map((tool) => (
+        <details key={tool.id} className={`term-tool ${tool.status}`}>
+          <summary className="term-tool-head">
+            <span className="term-tool-mark" aria-hidden>{TOOL_STATUS_MARK[tool.status]}</span>
+            <span className="term-tool-kind">{tool.kind}</span>
+            <span className="term-tool-title">{tool.title}</span>
+          </summary>
+          {tool.locations?.length ? (
+            <div className="term-tool-locations">{tool.locations.join('\n')}</div>
+          ) : null}
+          {tool.output ? <pre className="term-tool-output">{tool.output}</pre> : null}
+        </details>
+      ))}
+
+      {thinking ? (
+        <details className="term-thinking">
+          <summary className="term-tool-head">
+            <span className="term-tool-mark" aria-hidden>~</span>
+            <span className="term-tool-kind">reasoning</span>
+          </summary>
+          <div className="term-thinking-body">{thinking}</div>
+        </details>
+      ) : null}
+    </div>
+  )
+}
+
 function ConversationCard({
   run,
   turns,
@@ -2256,6 +2358,7 @@ function ConversationCard({
                 </button>
               </span>
             </div>
+            <TurnActivity turn={turn} />
             <div className="md-body term-md">
               <ReactMarkdown
                 remarkPlugins={richMarkdownPlugins.remark}
@@ -4396,6 +4499,7 @@ export default function App() {
   const hydratedRef = useRef(false)
   const queuedPromptsRef = useRef<QueuedPromptEntry[]>([])
   const assistantBufferRef = useRef('')
+  const thinkingBufferRef = useRef('')
   const turnsRef = useRef<TurnItem[]>([])
   const runsRef = useRef<RunNode[]>([])
   // Pending debounced App Builder workspace-folder moves, keyed by run id —
@@ -5101,6 +5205,61 @@ export default function App() {
         return
       }
 
+      if (event.type === 'message.thought') {
+        const delta = String(event.payload?.text ?? '')
+        if (!delta) return
+        thinkingBufferRef.current += delta
+        const turnId = activeTurnRef.current
+        if (!turnId) return
+        const thinking = thinkingBufferRef.current
+        setTurns((current) =>
+          current.map((turn) => (turn.id === turnId ? { ...turn, thinking, status: 'running' } : turn)),
+        )
+        return
+      }
+
+      if (event.type === 'message.tool') {
+        const turnId = activeTurnRef.current
+        const id = String(event.payload?.id ?? '')
+        if (!turnId || !id) return
+        const patch = event.payload as Record<string, unknown>
+        setTurns((current) =>
+          current.map((turn) => {
+            if (turn.id !== turnId) return turn
+            const tools = turn.tools ?? []
+            const existing = tools.find((tool) => tool.id === id)
+            // tool_call and tool_call_update share this event; an update carries
+            // only the fields that changed, so merge rather than replace.
+            const merged: ToolActivity = {
+              id,
+              title: String(patch.title ?? existing?.title ?? id),
+              kind: String(patch.kind ?? existing?.kind ?? 'other'),
+              status: normalizeToolStatus(patch.status, existing?.status),
+              locations: (patch.locations as string[] | undefined) ?? existing?.locations,
+              output: String(patch.output ?? '') || existing?.output,
+            }
+            return {
+              ...turn,
+              status: 'running',
+              tools: existing
+                ? tools.map((tool) => (tool.id === id ? merged : tool))
+                : [...tools, merged],
+            }
+          }),
+        )
+        return
+      }
+
+      if (event.type === 'message.plan') {
+        const turnId = activeTurnRef.current
+        const entries = Array.isArray(event.payload?.entries) ? (event.payload.entries as PlanEntry[]) : []
+        if (!turnId) return
+        setTurns((current) =>
+          current.map((turn) => (turn.id === turnId ? { ...turn, plan: entries, status: 'running' } : turn)),
+        )
+        return
+      }
+
       if (event.type === 'message.complete') {
         const turnId = activeTurnRef.current
         const currentText = assistantBufferRef.current.trim()
@@ -5108,7 +5267,7 @@ export default function App() {
           setTurns((current) =>
             current.map((turn) =>
               turn.id === turnId
-                ? { ...turn, response: currentText || turn.response, status: 'done' }
+                ? { ...turn, response: currentText || turn.response, status: 'done', tools: settleTools(turn, 'completed') }
                 : turn,
             ),
           )
@@ -5128,6 +5287,7 @@ export default function App() {
         activeTurnRef.current = null
         activeRunRef.current = null
         assistantBufferRef.current = ''
+        thinkingBufferRef.current = ''
         setActiveHermesTurnId(null)
         setActiveHermesStreamId(null)
         setConnectionState('ready')
@@ -5149,7 +5309,7 @@ export default function App() {
           setTurns((current) =>
             current.map((turn) =>
               turn.id === turnId
-                ? { ...turn, response: currentText || message, status: 'error' }
+                ? { ...turn, response: currentText || message, status: 'error', tools: settleTools(turn, 'failed') }
                 : turn,
             ),
           )
@@ -5161,6 +5321,7 @@ export default function App() {
         activeTurnRef.current = null
         activeRunRef.current = null
         assistantBufferRef.current = ''
+        thinkingBufferRef.current = ''
         setActiveHermesTurnId(null)
         setActiveHermesStreamId(null)
         void flushQueue()
@@ -5183,8 +5344,8 @@ export default function App() {
             current.map((turn) =>
               turn.id === turnId
                 ? hasContent
-                  ? { ...turn, response: currentText, status: 'done' }
-                  : { ...turn, response: [message, hint].filter(Boolean).join('\n\n'), status: 'error' }
+                  ? { ...turn, response: currentText, status: 'done', tools: settleTools(turn, 'completed') }
+                  : { ...turn, response: [message, hint].filter(Boolean).join('\n\n'), status: 'error', tools: settleTools(turn, 'failed') }
                 : turn,
             ),
           )
@@ -5203,6 +5364,7 @@ export default function App() {
         activeTurnRef.current = null
         activeRunRef.current = null
         assistantBufferRef.current = ''
+        thinkingBufferRef.current = ''
         setActiveHermesTurnId(null)
         setActiveHermesStreamId(null)
         setConnectionState(hasContent ? 'ready' : 'error')
@@ -5424,6 +5586,10 @@ export default function App() {
     activeTurnRef.current = boundTurnId
     activeRunRef.current = entry.runId
     assistantBufferRef.current = ownerTurn && !isThinkingPlaceholder(ownerTurn.response) ? ownerTurn.response : ''
+    // The server replays a recovered stream from its first frame, so reasoning
+    // rebuilds itself from the replayed thought chunks; seeding it here would
+    // double the text. Tool events are merged by id, so they replay idempotently.
+    thinkingBufferRef.current = ''
     setActiveHermesTurnId(boundTurnId)
     setActiveHermesStreamId(activeStreamId)
     setConnectionState('busy')
@@ -5461,6 +5627,7 @@ export default function App() {
     activeTurnRef.current = turnId
     activeRunRef.current = runId
     assistantBufferRef.current = ''
+    thinkingBufferRef.current = ''
     try {
       // Reuse this conversation's session, or create one rooted at its workspace.
       let session = sessionByRunRef.current.get(runId)
@@ -5519,7 +5686,9 @@ export default function App() {
     const response = assistantBufferRef.current.trim() || message
     if (turnId) {
       setTurns((current) =>
-        current.map((turn) => (turn.id === turnId ? { ...turn, response, status: 'cancelled' } : turn)),
+        current.map((turn) =>
+          turn.id === turnId ? { ...turn, response, status: 'cancelled', tools: settleTools(turn, 'failed') } : turn,
+        ),
       )
     }
     if (runId) {
@@ -5528,6 +5697,7 @@ export default function App() {
     activeTurnRef.current = null
     activeRunRef.current = null
     assistantBufferRef.current = ''
+    thinkingBufferRef.current = ''
     setActiveHermesTurnId(null)
     setActiveHermesStreamId(null)
     setConnectionState('ready')
@@ -6238,8 +6408,6 @@ export default function App() {
                   <button type="button" className="free-grid-step" onClick={() => setFreeCols((c) => Math.min(6, c + 1))}>+</button>
                 </div>
               ) : null}
-
-              {error ? <span className="error-text inline">{error}</span> : null}
             </div>
 
             {/* Datalists shared by every card's Category / Project comboboxes. */}

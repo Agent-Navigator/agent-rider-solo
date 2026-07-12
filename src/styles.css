@@ -4674,3 +4674,73 @@ button { cursor: pointer; }
 .conv-card.drag-over.after {
   box-shadow: 0 3px 0 -1px var(--win-accent), 0 2px 12px rgba(0, 0, 0, 0.25);
 }
+
+/* ── Hermes turn activity: plan, tool calls, reasoning ───────────────────── */
+.term-activity {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 4px 0 8px;
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 12px;
+}
+.term-plan {
+  margin: 0 0 2px;
+  padding: 6px 8px;
+  list-style: none;
+  border-left: 2px solid var(--line-strong);
+  color: var(--muted);
+}
+.term-plan-item { display: flex; gap: 8px; line-height: 1.7; }
+.term-plan-item.completed { color: var(--good); opacity: 0.75; }
+.term-plan-item.in_progress { color: var(--text); }
+.term-plan-mark { width: 1ch; flex: none; }
+
+.term-tool,
+.term-thinking {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: rgba(148, 163, 184, 0.05);
+}
+.term-tool-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 8px;
+  cursor: pointer;
+  list-style: none;
+  color: var(--muted);
+}
+.term-tool-head::-webkit-details-marker { display: none; }
+.term-tool-head:hover { background: rgba(148, 163, 184, 0.08); }
+.term-tool-mark { width: 1ch; flex: none; }
+.term-tool.completed .term-tool-mark { color: var(--good); }
+.term-tool.failed .term-tool-mark { color: var(--bad); }
+.term-tool.pending .term-tool-mark { color: var(--warn); }
+.term-tool-kind {
+  flex: none;
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--accent);
+  opacity: 0.85;
+}
+.term-tool-title {
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.term-tool-locations,
+.term-tool-output,
+.term-thinking-body {
+  margin: 0;
+  padding: 6px 8px 8px 25px;
+  color: var(--muted);
+  white-space: pre-wrap;
+  overflow-x: auto;
+  max-height: 260px;
+  overflow-y: auto;
+}
+.term-tool-output { font-size: 11px; line-height: 1.6; }
+.term-thinking-body { font-style: italic; line-height: 1.7; }
