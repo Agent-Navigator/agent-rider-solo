@@ -177,7 +177,12 @@ WEB_PORT=5173
 WEB_HOST=127.0.0.1
 STORE_PORT=5174
 BROWSE_ROOT=/root
-HERMES_TARGET=http://127.0.0.1:8789
+# Hermes 對話預設由 store 後端內建的 ACP server 服務（server/hermesAcp.mjs，
+# 只需主機裝好 `hermes` CLI），不需要另外部署 hermes-webui。
+# 若要改用外部 Hermes WebUI 後端，設定 HERMES_TARGET 指向它：
+# HERMES_TARGET=http://127.0.0.1:8789
+# Tools 面板內嵌的 Hermes WebUI iframe（選配）另由 HERMES_UI_TARGET 控制，
+# 預設 http://127.0.0.1:8789。
 VITE_ALLOWED_HOSTS=all
 ```
 

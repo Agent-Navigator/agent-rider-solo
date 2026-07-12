@@ -11,6 +11,7 @@ import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import * as pty from 'node-pty'
 import { WebSocket, WebSocketServer } from 'ws'
+import { createHermesAcp } from './hermesAcp.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const DB_DIR = join(__dirname, '..', 'data')
@@ -1338,6 +1339,16 @@ function attachTerminalSocket(server) {
   })
 }
 
+// Embedded Hermes API server (see server/hermesAcp.mjs): serves the /api/*
+// REST/SSE surface the frontend's Hermes bridge speaks, backed by a
+// `hermes acp` child process instead of an external hermes-webui deployment.
+const hermesAcp = createHermesAcp({
+  command: resolveCommandFile('hermes'),
+  getKv,
+  setKv: (key, value) => upsertKv.run(key, value, nowIso()),
+  log: console,
+})
+
 const server = createServer((req, res) => {
   const url = (req.url || '').split('?')[0]
 
@@ -1345,6 +1356,12 @@ const server = createServer((req, res) => {
 
   if (!isAuthorized(req)) {
     sendJson(res, 401, { error: 'locked' })
+    return
+  }
+
+  if (url.startsWith('/api/')) {
+    const requestUrl = new URL(req.url || '/', 'http://localhost')
+    hermesAcp.handleHttp(req, res, url, requestUrl)
     return
   }
 
