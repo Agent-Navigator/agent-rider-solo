@@ -8,6 +8,7 @@ Guidance for agents working in this repository.
   before moving on to the next one — do not batch multiple unrelated changes into
   a single commit.
 - Write a clear, concise commit message describing what changed and why.
+- Do not automatically reinstall the app after a commit.
 
 ## Restart the app
 
