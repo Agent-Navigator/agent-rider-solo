@@ -1040,6 +1040,16 @@ function WinFilesIcon() {
   )
 }
 
+function WinImageIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+      <rect x="2" y="3" width="12" height="10" rx="1.5" stroke="currentColor" strokeWidth="1.3" />
+      <circle cx="5.5" cy="6.5" r="1.25" stroke="currentColor" strokeWidth="1.2" />
+      <path d="M2.8 11.5l3.4-3.4a1 1 0 011.4 0l1.9 1.9M9.8 9.5l1-1a1 1 0 011.4 0l1.6 1.6" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
 function WinFullscreenIcon({ active }: { active?: boolean }) {
   return active ? (
     <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
@@ -2915,12 +2925,6 @@ function ConversationCard({
                     value={draft}
                     rows={1}
                     onChange={(event) => setDraft(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter' && !event.shiftKey) {
-                        event.preventDefault()
-                        event.currentTarget.form?.requestSubmit()
-                      }
-                    }}
                     onPaste={pasteIntoPrompt}
                     onDragOver={(event) => {
                       if (
@@ -2931,6 +2935,7 @@ function ConversationCard({
                     onDrop={(event) => dropFilePathIntoTextarea(event, setDraft)}
                     placeholder={isDraft ? 'Describe the task to start this conversation…' : `Reply to ${conversationTitle(run)}…`}
                     aria-label="Message"
+                    style={draft || attachments.length ? undefined : { caretColor: 'transparent' }}
                   />
                   <label className="win-attach" title="Attach an image (or paste one)">
                     <input
@@ -2942,10 +2947,10 @@ function ConversationCard({
                         event.target.value = ''
                       }}
                     />
-                    <span aria-hidden>▣</span>
+                    <WinImageIcon />
                   </label>
                   {draft || attachments.length ? (
-                    <button type="submit" className="term-action accent win-send" title="Send (Enter)">
+                    <button type="submit" className="term-action accent win-send" title="Send">
                       send ↵
                     </button>
                   ) : (
