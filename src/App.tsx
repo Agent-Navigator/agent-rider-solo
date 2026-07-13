@@ -6852,7 +6852,6 @@ export default function App() {
               </button>
 
               <div className="toolbar-divider" aria-hidden />
-              <span className="toolbar-label">LAYOUT</span>
               <div className="preset-picker">
                 {LAYOUT_PRESETS.map((preset) => (
                   <button
