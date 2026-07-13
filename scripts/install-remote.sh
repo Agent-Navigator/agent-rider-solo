@@ -8,7 +8,8 @@ Usage:
 
 Environment:
   APP_DIR             Install root. Default: /opt/agent-rider
-  APP_USER            systemd user. Default: SUDO_USER, or root
+  APP_USER            systemd user. Default: existing install's user, else the
+                      session user (SUDO_USER/logname), else root
   WEB_HOST            Public Vite preview bind host. Default: 127.0.0.1
   WEB_PORT            Public Vite preview port. Default: 5173
   STORE_PORT          Local store backend port. Default: 5174
@@ -56,7 +57,25 @@ read_env_value() {
 
 existing_app_dir=$(read_env_value APP_DIR || true)
 APP_DIR=${APP_DIR:-${existing_app_dir:-/opt/agent-rider}}
-APP_USER=${APP_USER:-${SUDO_USER:-root}}
+# Auto-detect the systemd user. Priority:
+#   1. APP_USER (explicit override)
+#   2. the identity an existing install already runs as — so an update, even one
+#      run straight as root (no sudo, e.g. root login / `su -` / cron), keeps the
+#      current user instead of silently switching to root. A root service has
+#      HOME=/root, so it can't find the user's CLI agents (~/.local/bin) and the
+#      Conversation card greys them all out.
+#   3. the user behind this session: SUDO_USER (via sudo) or logname (login/su -)
+#   4. root
+store_unit=/etc/systemd/system/agent-rider-store.service
+existing_service_user=''
+if [[ -r "$store_unit" ]]; then
+  existing_service_user=$(awk -F= '/^User=/{print $2; exit}' "$store_unit")
+fi
+if [[ -z "$existing_service_user" && -e "$APP_DIR/current" ]]; then
+  existing_service_user=$(stat -c '%U' "$APP_DIR/current" 2>/dev/null || true)
+fi
+session_user=${SUDO_USER:-$(logname 2>/dev/null || true)}
+APP_USER=${APP_USER:-${existing_service_user:-${session_user:-root}}}
 APP_GROUP=${APP_GROUP:-$APP_USER}
 existing_web_host=$(read_env_value WEB_HOST || true)
 existing_web_port=$(read_env_value WEB_PORT || true)

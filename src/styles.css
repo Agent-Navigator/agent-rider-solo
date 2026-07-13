@@ -4088,6 +4088,17 @@ button { cursor: pointer; }
 .win-btn-close:hover { background: rgba(239, 109, 109, 0.14); color: #ff9d9d; }
 .win-btn .conv-caret { margin: 0; font-size: 11px; }
 
+.win-usage-btn {
+  width: auto;
+  min-width: 26px;
+  padding: 0 6px;
+  font-family: var(--win-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
 /* Compact text buttons that sit inside a titlebar (e.g. WebView Reload,
    the TUI Files toggle) — restyle the legacy pill to match the bar. */
 .win-titlebar .terminal-clear {

@@ -158,6 +158,143 @@ function tmuxSessionExists(name) {
   return result.status === 0
 }
 
+// ── On-demand usage/quota refresh ────────────────────────────────────────────
+// claude/codex/agy expose their quota only through an interactive slash
+// command rendered straight into the TUI — there's no headless subcommand or
+// cache file to read instead. Refreshing means briefly typing that command
+// into the agent's live tmux session and scraping the rendered screen, which
+// is why this only runs when the user explicitly asks for it (never on a
+// timer): it's invisible in the pane for a user who isn't looking, but it
+// does inject real keystrokes into a real session.
+function sleep(ms) {
+  return new Promise((resolveSleep) => setTimeout(resolveSleep, ms))
+}
+
+function tmuxSendKeys(name, args) {
+  spawnSync('tmux', ['-L', TMUX_SOCKET, 'send-keys', '-t', name, ...args], { stdio: 'ignore' })
+}
+
+function tmuxCapturePane(name) {
+  const result = spawnSync('tmux', ['-L', TMUX_SOCKET, 'capture-pane', '-t', name, '-p'], { encoding: 'utf8' })
+  return result.stdout || ''
+}
+
+// Best-effort guard against injecting into a live turn or an approval prompt
+// (where an unexpected Enter could confirm/deny a tool call). Not exhaustive —
+// just enough to skip the obvious cases.
+const USAGE_BUSY_MARKERS = ['esc to interrupt', 'Do you want to', '(y/n)', 'Waiting for approval']
+
+const USAGE_ADAPTERS = {
+  // `/status` opens a full-screen tabbed dialog defaulting to the Settings
+  // tab; two Right-arrow presses land on the tab with quota bars.
+  claude: {
+    open: (name) => {
+      tmuxSendKeys(name, ['-l', '/status'])
+      tmuxSendKeys(name, ['Enter'])
+    },
+    afterOpenMs: 1500,
+    navigateKey: '\x1b[C',
+    navigateCount: 2,
+    navigateGapMs: 300,
+    settleMs: 600,
+    close: (name) => tmuxSendKeys(name, ['Escape']),
+    parse(text) {
+      const re = /(Current[^\n]*)\n[^\n]*?(\d+)% used\s*\n\s*Resets ([^\n]+)/g
+      const meters = []
+      let match
+      while ((match = re.exec(text))) {
+        meters.push({ label: match[1].trim(), percentUsed: Number(match[2]), resets: `resets ${match[3].trim()}` })
+      }
+      return meters
+    },
+  },
+  // `/status` prints an inline box with the weekly limit and returns straight
+  // to the prompt — no navigation or dismissal needed. Like agy below, the
+  // first Enter only confirms the slash-command autocomplete into the input
+  // line; a second Enter actually submits it.
+  codex: {
+    open: (name) => {
+      tmuxSendKeys(name, ['-l', '/status'])
+      tmuxSendKeys(name, ['Enter'])
+    },
+    afterOpenMs: 700,
+    doubleEnterGapMs: 700,
+    navigateKey: null,
+    navigateCount: 0,
+    navigateGapMs: 0,
+    settleMs: 0,
+    close: null,
+    parse(text) {
+      const match = /Weekly limit:\s*\[[^\]]*\]\s*(\d+)% left \(resets ([^)]+)\)/.exec(text)
+      if (!match) return []
+      return [{ label: 'Weekly', percentUsed: 100 - Number(match[1]), resets: `resets ${match[2].trim()}` }]
+    },
+  },
+  // `/usage` opens a scrollable panel with weekly + 5h bars per model group;
+  // Esc closes it. The first Enter only accepts the slash-command
+  // autocomplete suggestion into the input line ("enter Select"); a second
+  // Enter is what actually runs it.
+  agy: {
+    open: (name) => {
+      tmuxSendKeys(name, ['-l', '/usage'])
+      tmuxSendKeys(name, ['Enter'])
+    },
+    afterOpenMs: 700,
+    doubleEnterGapMs: 700,
+    navigateKey: null,
+    navigateCount: 0,
+    navigateGapMs: 0,
+    settleMs: 0,
+    close: (name) => tmuxSendKeys(name, ['Escape']),
+    parse(text) {
+      const re = /([A-Z][A-Z &]+MODELS)\n\s*Models within this group: [^\n]+\n\s*\n\s*Weekly Limit\n\s*\[[^\]]*\]\s*[\d.]+%\n\s*(\d+)% remaining · Refreshes in ([^\n]+)\n\s*\n\s*Five Hour Limit\n\s*\[[^\]]*\]\s*[\d.]+%\n\s*(\d+)% remaining · Refreshes in ([^\n]+)/g
+      const meters = []
+      let match
+      while ((match = re.exec(text))) {
+        const group = match[1].trim()
+        meters.push({ label: `${group} · weekly`, percentUsed: 100 - Number(match[2]), resets: `refreshes in ${match[3].trim()}` })
+        meters.push({ label: `${group} · 5h`, percentUsed: 100 - Number(match[4]), resets: `refreshes in ${match[5].trim()}` })
+      }
+      return meters
+    },
+  },
+}
+
+async function captureAgentUsage({ agent, cwd, session }) {
+  const adapter = USAGE_ADAPTERS[agent]
+  if (!adapter) return { available: false, reason: 'unsupported' }
+
+  const cleanSessionKey = String(session || '').trim()
+  if (!cleanSessionKey) return { available: false, reason: 'no-session' }
+  const resolvedCwd = safeResolve(cwd || DEFAULT_CWD) || DEFAULT_CWD
+  const name = tmuxSessionName(`${cleanSessionKey}|${resolvedCwd}`, agent)
+  if (!tmuxSessionExists(name)) return { available: false, reason: 'no-session' }
+
+  const before = tmuxCapturePane(name)
+  if (USAGE_BUSY_MARKERS.some((marker) => before.includes(marker))) {
+    return { available: false, reason: 'busy' }
+  }
+
+  adapter.open(name)
+  await sleep(adapter.afterOpenMs)
+  if (adapter.doubleEnterGapMs) {
+    tmuxSendKeys(name, ['Enter'])
+    await sleep(adapter.doubleEnterGapMs)
+  }
+  for (let i = 0; i < adapter.navigateCount; i += 1) {
+    tmuxSendKeys(name, ['-l', adapter.navigateKey])
+    await sleep(adapter.navigateGapMs)
+  }
+  if (adapter.settleMs) await sleep(adapter.settleMs)
+
+  const screen = tmuxCapturePane(name)
+  const meters = adapter.parse(screen)
+  if (adapter.close) adapter.close(name)
+
+  if (!meters.length) return { available: false, reason: 'unparsed' }
+  return { available: true, agent, meters, fetchedAt: Date.now() }
+}
+
 function agentRiderBackgroundPrompt(agentLabel, { promptContext = 'agent-rider', appWorkspace = '' } = {}) {
   if (!AGENT_RIDER_BACKGROUND) return ''
   const background = promptContext === 'app-builder'
@@ -1562,6 +1699,23 @@ const server = createServer((req, res) => {
         const { source, target } = JSON.parse(body || '{}')
         const result = moveDirectory(source, target)
         sendJson(res, result.error ? result.status : 200, result)
+      } catch (error) {
+        sendJson(res, 400, { error: String(error?.message || error) })
+      }
+    })
+    return
+  }
+
+  if (req.method === 'POST' && url === '/store/terminal/usage') {
+    let body = ''
+    req.on('data', (chunk) => {
+      body += chunk
+      if (body.length > 10_000) req.destroy()
+    })
+    req.on('end', () => {
+      try {
+        const payload = JSON.parse(body || '{}')
+        void captureAgentUsage(payload).then((result) => sendJson(res, 200, result))
       } catch (error) {
         sendJson(res, 400, { error: String(error?.message || error) })
       }

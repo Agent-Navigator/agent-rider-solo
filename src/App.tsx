@@ -118,6 +118,49 @@ function agentLabel(agent: AgentType) {
   return AGENT_OPTIONS.find((option) => option.value === agent)?.label ?? agent
 }
 
+// Agents whose quota can be read back by typing their slash command into the
+// live tmux session and scraping the render (see /store/terminal/usage).
+// devin isn't wired up (no CLI available to verify its output against).
+const USAGE_SUPPORTED_AGENTS = new Set<AgentType>(['claude', 'codex', 'agy'])
+
+interface UsageMeter {
+  label: string
+  percentUsed: number
+  resets: string
+}
+
+type UsageResult =
+  | { available: true; meters: UsageMeter[]; fetchedAt: number }
+  | { available: false; reason: 'no-session' | 'busy' | 'unparsed' | 'unsupported' | 'error' }
+
+async function fetchAgentUsage(agent: AgentType, cwd: string, session: string): Promise<UsageResult> {
+  try {
+    const res = await fetch('/store/terminal/usage', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ agent, cwd, session }),
+    })
+    if (!res.ok) return { available: false, reason: 'error' }
+    return await res.json()
+  } catch {
+    return { available: false, reason: 'error' }
+  }
+}
+
+function usageTone(percentUsed: number) {
+  if (percentUsed >= 90) return '#ff9d9d'
+  if (percentUsed >= 70) return '#e6b25a'
+  return '#5fd39b'
+}
+
+const USAGE_UNAVAILABLE_LABEL: Record<Exclude<UsageResult, { available: true }>['reason'], string> = {
+  'no-session': 'Open the session first',
+  busy: 'Agent looks busy — try again shortly',
+  unparsed: "Couldn't read the usage screen (CLI output may have changed)",
+  unsupported: 'Not supported for this agent',
+  error: 'Refresh failed',
+}
+
 // Which TUI agent CLIs are installed on the host (from /store/agents), so the
 // Agent dropdown can grey out the ones that aren't. Cached module-wide: every
 // card shares one fetch. Fails open — if the endpoint is unavailable nothing
@@ -2920,6 +2963,7 @@ function ConversationCard({
 
                 <form className="win-promptbar" onSubmit={submit}>
                   <span className="win-prompt-mark" aria-hidden>›</span>
+                  {draft || attachments.length ? null : <span className="win-cursor" aria-hidden />}
                   <textarea
                     ref={promptTextareaRef}
                     value={draft}
@@ -2953,9 +2997,7 @@ function ConversationCard({
                     <button type="submit" className="term-action accent win-send" title="Send">
                       send ↵
                     </button>
-                  ) : (
-                    <span className="win-cursor" aria-hidden />
-                  )}
+                  ) : null}
                 </form>
 
                 <div className="win-footer">
@@ -3980,6 +4022,16 @@ function WebTerminal({
   const notepadEnabled = agentTerminal && typeof onNotepadChange === 'function'
   const [notepadOpen, setNotepadOpen] = useState(false)
   const [notepadCopied, setNotepadCopied] = useState(false)
+  const usageSupported = Boolean(agent && USAGE_SUPPORTED_AGENTS.has(agent))
+  const [usage, setUsage] = useState<UsageResult | null>(null)
+  const [usageLoading, setUsageLoading] = useState(false)
+  const refreshUsage = useCallback(() => {
+    if (!agent || !usageSupported || usageLoading) return
+    setUsageLoading(true)
+    void fetchAgentUsage(agent, initialCwd, sessionKey ?? '')
+      .then(setUsage)
+      .finally(() => setUsageLoading(false))
+  }, [agent, usageSupported, usageLoading, initialCwd, sessionKey])
 
   useEffect(() => {
     const container = containerRef.current
@@ -4185,6 +4237,35 @@ function WebTerminal({
         <span className="win-meta">{eyebrow}</span>
         <div className="win-spacer" />
         <span className="win-status" style={{ color: stateTone.color }}>{stateTone.label}</span>
+        {usageSupported ? (
+          <button
+            type="button"
+            className="win-btn win-usage-btn"
+            title={
+              usageLoading
+                ? 'Checking usage…'
+                : !usage
+                  ? 'Check quota usage (types the agent\'s status command into its session and reads the reply)'
+                  : usage.available
+                    ? usage.meters.map((meter) => `${meter.label}: ${meter.percentUsed}% used (${meter.resets})`).join('\n')
+                    : USAGE_UNAVAILABLE_LABEL[usage.reason]
+            }
+            aria-label="Refresh usage quota"
+            style={{ color: usage?.available ? usageTone(Math.max(...usage.meters.map((meter) => meter.percentUsed))) : undefined }}
+            onClick={(event) => {
+              event.stopPropagation()
+              refreshUsage()
+            }}
+          >
+            {usageLoading
+              ? '…'
+              : !usage
+                ? 'Usage'
+                : usage.available
+                  ? `${Math.max(...usage.meters.map((meter) => meter.percentUsed))}%`
+                  : '—'}
+          </button>
+        ) : null}
         {headerLeading}
         {collapsible ? (
           <button

@@ -13,7 +13,9 @@ Environment:
   SOURCE_REF          Branch, tag, or commit to deploy. Default: master.
   APP_DIR             Remote install root. Default: /opt/agent-rider
   GIT_CACHE           Local mirror cache. Default: ~/.cache/agent-rider/source.git
-  WORK_DIR            Temporary update directory. Default: /tmp/agent-rider-git-update
+  WORK_DIR            Temporary update directory. Default: a fresh mktemp dir,
+                      removed on exit. A fixed path shared across users (root vs
+                      the app user) collides on ownership, so leave this unset.
   SSH_OPTS            Extra ssh options, for example: -p 2222
   GIT_SSH_COMMAND     Full git SSH command. Overrides SSH_OPTS when set.
 USAGE
@@ -28,7 +30,7 @@ SOURCE_GIT=${SOURCE_GIT:-${1:-}}
 SOURCE_REF=${SOURCE_REF:-master}
 APP_NAME=${APP_NAME:-agent-rider}
 APP_DIR=${APP_DIR:-/opt/agent-rider}
-WORK_DIR=${WORK_DIR:-/tmp/agent-rider-git-update}
+WORK_DIR=${WORK_DIR:-}
 
 cache_root=${XDG_CACHE_HOME:-${HOME:+$HOME/.cache}}
 GIT_CACHE=${GIT_CACHE:-${cache_root:-/tmp}/agent-rider/source.git}
@@ -128,8 +130,17 @@ fi
 short_sha=$(git -C "$GIT_CACHE" rev-parse --short "$commit")
 stamp=$(date -u +%Y%m%dT%H%M%SZ)
 
-rm -rf "$WORK_DIR"
-mkdir -p "$WORK_DIR"
+# A per-run mktemp dir (owned by whoever runs the update) sidesteps the
+# ownership collision a fixed shared path hits when root and the app user take
+# turns updating. An explicit WORK_DIR is honored but left for the caller to
+# clean up; the default is removed on exit.
+if [[ -n "$WORK_DIR" ]]; then
+  rm -rf "$WORK_DIR"
+  mkdir -p "$WORK_DIR"
+else
+  WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/agent-rider-git-update.XXXXXX")
+  trap 'rm -rf "$WORK_DIR"' EXIT
+fi
 archive="$WORK_DIR/${APP_NAME}-${stamp}-${short_sha}.tar.gz"
 
 echo "Resolved SOURCE_REF '$SOURCE_REF' to $commit."
