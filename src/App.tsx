@@ -161,6 +161,58 @@ const USAGE_UNAVAILABLE_LABEL: Record<Exclude<UsageResult, { available: true }>[
   error: 'Refresh failed',
 }
 
+const AGENT_SHORT_LABEL: Record<AgentType, string> = {
+  hermes: 'Hermes',
+  claude: 'Claude',
+  codex: 'Codex',
+  agy: 'Agy',
+  devin: 'Devin',
+  custom: 'Custom',
+}
+
+/** Global toolbar button checking quota for one agent type, against its
+ *  most recently created conversation (see `usageAgentRuns` in App). */
+function AgentUsageToolbarButton({ agent, cwd, session }: { agent: AgentType; cwd: string; session: string }) {
+  const [usage, setUsage] = useState<UsageResult | null>(null)
+  const [loading, setLoading] = useState(false)
+  const refresh = useCallback(() => {
+    if (loading) return
+    setLoading(true)
+    void fetchAgentUsage(agent, cwd, session).then(setUsage).finally(() => setLoading(false))
+  }, [agent, cwd, session, loading])
+  const label = AGENT_SHORT_LABEL[agent]
+  return (
+    <button
+      type="button"
+      className="win-btn win-usage-btn"
+      title={
+        loading
+          ? 'Checking usage…'
+          : !usage
+            ? `Check ${label} quota usage (types its status command into the most recent ${label} session and reads the reply)`
+            : usage.available
+              ? usage.meters.map((meter) => `${meter.label}: ${meter.percentUsed}% used (${meter.resets})`).join('\n')
+              : USAGE_UNAVAILABLE_LABEL[usage.reason]
+      }
+      aria-label={`Refresh ${label} usage quota`}
+      style={{ color: usage?.available ? usageTone(Math.max(...usage.meters.map((meter) => meter.percentUsed))) : undefined }}
+      onClick={(event) => {
+        event.stopPropagation()
+        refresh()
+      }}
+    >
+      {label} ·{' '}
+      {loading
+        ? '…'
+        : !usage
+          ? 'usage'
+          : usage.available
+            ? `${Math.max(...usage.meters.map((meter) => meter.percentUsed))}%`
+            : '—'}
+    </button>
+  )
+}
+
 // Which TUI agent CLIs are installed on the host (from /store/agents), so the
 // Agent dropdown can grey out the ones that aren't. Cached module-wide: every
 // card shares one fetch. Fails open — if the endpoint is unavailable nothing
@@ -5064,6 +5116,17 @@ export default function App() {
   const hasContent = runs.some((run) => run.cardKind !== 'app-builder') || panelOrder.length > 0
   // Cards hidden via their close button drop out of the stack but stay in the tree.
   const visibleRuns = useMemo(() => runs.filter((run) => run.cardKind !== 'app-builder' && !closedRunIds.has(run.id)), [runs, closedRunIds])
+  // One toolbar usage button per distinct agent type in use, checked against
+  // that agent's most recently created conversation.
+  const usageAgentRuns = useMemo(() => {
+    const byAgent = new Map<AgentType, RunNode>()
+    for (const run of visibleRuns) {
+      if (!USAGE_SUPPORTED_AGENTS.has(run.agentType)) continue
+      const existing = byAgent.get(run.agentType)
+      if (!existing || run.createdAt > existing.createdAt) byAgent.set(run.agentType, run)
+    }
+    return Array.from(byAgent.values())
+  }, [visibleRuns])
   const hasLegacyDefaultWorkspace = useMemo(
     () => runs.some((run) => run.workspacePath === DEFAULT_WORKSPACE_CWD),
     [runs],
@@ -6776,6 +6839,16 @@ export default function App() {
                   <span className="free-grid-value">{freeCols}</span>
                   <button type="button" className="free-grid-step" onClick={() => setFreeCols((c) => Math.min(6, c + 1))}>+</button>
                 </div>
+              ) : null}
+
+              {usageAgentRuns.length ? (
+                <>
+                  <div className="toolbar-divider" aria-hidden />
+                  <span className="toolbar-label">USAGE</span>
+                  {usageAgentRuns.map((run) => (
+                    <AgentUsageToolbarButton key={run.agentType} agent={run.agentType} cwd={run.workspacePath} session={run.id} />
+                  ))}
+                </>
               ) : null}
             </div>
 
