@@ -203,7 +203,9 @@ const USAGE_ADAPTERS = {
       const meters = []
       let match
       while ((match = re.exec(text))) {
-        meters.push({ label: match[1].trim(), percentUsed: Number(match[2]), resets: `resets ${match[3].trim()}` })
+        const label = match[1].trim()
+        const kind = /week/i.test(label) ? 'week' : '5h'
+        meters.push({ label, percentUsed: Number(match[2]), resets: `resets ${match[3].trim()}`, kind })
       }
       return meters
     },
@@ -227,7 +229,7 @@ const USAGE_ADAPTERS = {
     parse(text) {
       const match = /Weekly limit:\s*\[[^\]]*\]\s*(\d+)% left \(resets ([^)]+)\)/.exec(text)
       if (!match) return []
-      return [{ label: 'Weekly', percentUsed: 100 - Number(match[1]), resets: `resets ${match[2].trim()}` }]
+      return [{ label: 'Weekly', percentUsed: 100 - Number(match[1]), resets: `resets ${match[2].trim()}`, kind: 'week' }]
     },
   },
   // `/usage` opens a scrollable panel with weekly + 5h bars per model group;
@@ -252,8 +254,8 @@ const USAGE_ADAPTERS = {
       let match
       while ((match = re.exec(text))) {
         const group = match[1].trim()
-        meters.push({ label: `${group} · weekly`, percentUsed: 100 - Number(match[2]), resets: `refreshes in ${match[3].trim()}` })
-        meters.push({ label: `${group} · 5h`, percentUsed: 100 - Number(match[4]), resets: `refreshes in ${match[5].trim()}` })
+        meters.push({ label: `${group} · weekly`, percentUsed: 100 - Number(match[2]), resets: `refreshes in ${match[3].trim()}`, kind: 'week' })
+        meters.push({ label: `${group} · 5h`, percentUsed: 100 - Number(match[4]), resets: `refreshes in ${match[5].trim()}`, kind: '5h' })
       }
       return meters
     },

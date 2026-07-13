@@ -127,11 +127,52 @@ interface UsageMeter {
   label: string
   percentUsed: number
   resets: string
+  kind?: '5h' | 'week'
 }
 
 type UsageResult =
   | { available: true; meters: UsageMeter[]; fetchedAt: number }
   | { available: false; reason: 'no-session' | 'busy' | 'unparsed' | 'unsupported' | 'error' }
+
+// The worst (highest %used) meter of each kind, so a provider that reports
+// both a 5h and a weekly limit shows both instead of just the max of either.
+function usageByKind(meters: UsageMeter[]) {
+  const worstOf = (kind: UsageMeter['kind']) => {
+    const matching = meters.filter((meter) => meter.kind === kind)
+    return matching.length ? Math.max(...matching.map((meter) => meter.percentUsed)) : null
+  }
+  return { fiveH: worstOf('5h'), week: worstOf('week') }
+}
+
+/** Compact label for a usage button: "5h 62% / wk 18%" when both limits are
+ *  known, otherwise whichever single percentage is available. */
+function usageSummaryLabel(meters: UsageMeter[]) {
+  const { fiveH, week } = usageByKind(meters)
+  if (fiveH != null && week != null) return `5h ${fiveH}% / wk ${week}%`
+  if (fiveH != null) return `5h ${fiveH}%`
+  if (week != null) return `wk ${week}%`
+  return `${Math.max(...meters.map((meter) => meter.percentUsed))}%`
+}
+
+// CLI status screens report resets as a relative duration ("4h 12m", "in 3h",
+// "2d 4h"). Convert that to a plain hh:mm countdown for the tooltip; returns
+// null for anything that isn't a parseable duration (e.g. a weekday name),
+// so callers can fall back to the raw text instead of showing something wrong.
+function formatResetCountdown(resets: string): string | null {
+  const match = /\D*(?:(\d+)\s*d[a-z]*)?\D*(?:(\d+)\s*h[a-z]*)?\D*(?:(\d+)\s*m[a-z]*)?/i.exec(resets)
+  if (!match) return null
+  const days = Number(match[1] || 0)
+  const hours = Number(match[2] || 0)
+  const minutes = Number(match[3] || 0)
+  if (!days && !hours && !minutes) return null
+  const totalHours = days * 24 + hours
+  return `${String(totalHours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`
+}
+
+function usageMeterTooltipLine(meter: UsageMeter) {
+  const countdown = formatResetCountdown(meter.resets)
+  return `${meter.label}: ${meter.percentUsed}% used (${meter.resets}${countdown ? ` — ${countdown} remaining` : ''})`
+}
 
 async function fetchAgentUsage(agent: AgentType, cwd: string, session: string): Promise<UsageResult> {
   try {
@@ -189,12 +230,12 @@ function AgentUsageToolbarButton({ agent, cwd, session }: { agent: AgentType; cw
         loading
           ? 'Checking usage…'
           : !usage
-            ? `Check ${label} quota usage (types its status command into the most recent ${label} session and reads the reply)`
+            ? `Check ${label} usage (types its status command into the most recent ${label} session and reads the reply)`
             : usage.available
-              ? usage.meters.map((meter) => `${meter.label}: ${meter.percentUsed}% used (${meter.resets})`).join('\n')
+              ? usage.meters.map(usageMeterTooltipLine).join('\n')
               : USAGE_UNAVAILABLE_LABEL[usage.reason]
       }
-      aria-label={`Refresh ${label} usage quota`}
+      aria-label={`Refresh ${label} usage`}
       style={{ color: usage?.available ? usageTone(Math.max(...usage.meters.map((meter) => meter.percentUsed))) : undefined }}
       onClick={(event) => {
         event.stopPropagation()
@@ -207,7 +248,7 @@ function AgentUsageToolbarButton({ agent, cwd, session }: { agent: AgentType; cw
         : !usage
           ? 'usage'
           : usage.available
-            ? `${Math.max(...usage.meters.map((meter) => meter.percentUsed))}%`
+            ? usageSummaryLabel(usage.meters)
             : '—'}
     </button>
   )
@@ -4297,12 +4338,12 @@ function WebTerminal({
               usageLoading
                 ? 'Checking usage…'
                 : !usage
-                  ? 'Check quota usage (types the agent\'s status command into its session and reads the reply)'
+                  ? 'Check usage (types the agent\'s status command into its session and reads the reply)'
                   : usage.available
-                    ? usage.meters.map((meter) => `${meter.label}: ${meter.percentUsed}% used (${meter.resets})`).join('\n')
+                    ? usage.meters.map(usageMeterTooltipLine).join('\n')
                     : USAGE_UNAVAILABLE_LABEL[usage.reason]
             }
-            aria-label="Refresh usage quota"
+            aria-label="Refresh usage"
             style={{ color: usage?.available ? usageTone(Math.max(...usage.meters.map((meter) => meter.percentUsed))) : undefined }}
             onClick={(event) => {
               event.stopPropagation()
@@ -4314,7 +4355,7 @@ function WebTerminal({
               : !usage
                 ? 'Usage'
                 : usage.available
-                  ? `${Math.max(...usage.meters.map((meter) => meter.percentUsed))}%`
+                  ? usageSummaryLabel(usage.meters)
                   : '—'}
           </button>
         ) : null}
