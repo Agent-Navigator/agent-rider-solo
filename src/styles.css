@@ -3904,11 +3904,17 @@ button { cursor: pointer; }
   height: 40px;
   display: inline-grid;
   place-items: center;
+  padding: 0;
   border-radius: 999px;
   border: 1px solid rgba(148, 163, 184, 0.18);
   background: rgba(255, 255, 255, 0.03);
   color: var(--muted);
+  line-height: 0;
   transition: border-color .12s ease, background .12s ease, color .12s ease, transform .2s ease;
+}
+
+.settings-gear-btn svg {
+  display: block;
 }
 
 .settings-gear-btn:hover {
