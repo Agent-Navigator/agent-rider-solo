@@ -8,9 +8,4 @@ Guidance for agents working in this repository.
   before moving on to the next one — do not batch multiple unrelated changes into
   a single commit.
 - Write a clear, concise commit message describing what changed and why.
-- Do not automatically reinstall the app after a commit.
-
-## Restart the app
-
-- Restart the app after **every** code edit so changes are picked up and can be
-  verified in the running app.
+- Do not automatically reinstall or restart the app.
