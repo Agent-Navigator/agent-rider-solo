@@ -908,7 +908,7 @@ const CODE_EXTS = new Set([
   '.json', '.jsonc', '.yaml', '.yml', '.toml', '.xml',
   '.py', '.rb', '.go', '.rs', '.java', '.kt', '.swift',
   '.c', '.h', '.cpp', '.cc', '.cxx', '.hpp', '.cs',
-  '.php', '.sh', '.bash', '.zsh', '.fish', '.sql',
+  '.php', '.r', '.sh', '.bash', '.zsh', '.fish', '.sql',
   '.vue', '.svelte', '.astro',
 ])
 const CODE_FILENAMES = new Set([
@@ -1193,6 +1193,7 @@ const MIME_TYPES = {
   '.css': 'text/css; charset=utf-8',
   '.csv': 'text/csv; charset=utf-8',
   '.txt': 'text/plain; charset=utf-8',
+  '.r': 'text/plain; charset=utf-8',
   '.json': 'application/json; charset=utf-8',
   '.svg': 'image/svg+xml',
   '.png': 'image/png',

@@ -20,6 +20,7 @@ import json from 'highlight.js/lib/languages/json'
 import kotlin from 'highlight.js/lib/languages/kotlin'
 import php from 'highlight.js/lib/languages/php'
 import python from 'highlight.js/lib/languages/python'
+import r from 'highlight.js/lib/languages/r'
 import ruby from 'highlight.js/lib/languages/ruby'
 import rust from 'highlight.js/lib/languages/rust'
 import sql from 'highlight.js/lib/languages/sql'
@@ -658,6 +659,7 @@ hljs.registerLanguage('json', json)
 hljs.registerLanguage('kotlin', kotlin)
 hljs.registerLanguage('php', php)
 hljs.registerLanguage('python', python)
+hljs.registerLanguage('r', r)
 hljs.registerLanguage('ruby', ruby)
 hljs.registerLanguage('rust', rust)
 hljs.registerLanguage('sql', sql)
@@ -694,6 +696,7 @@ const CODE_LANGUAGE_BY_EXT: Record<string, string> = {
   '.mjs': 'javascript',
   '.php': 'php',
   '.py': 'python',
+  '.r': 'r',
   '.rb': 'ruby',
   '.rs': 'rust',
   '.sass': 'css',
@@ -1531,9 +1534,9 @@ function FloatingPreview({ preview, onClose }: FloatingPreviewProps) {
 }
 
 /**
- * Read-only file browser scoped to a conversation's workspace. Collapsed by default
- * and lazy-loaded on first expand. Navigation is bounded to the workspace subtree
- * (you can't browse above `rootPath`), and the backend further sandboxes to BROWSE_ROOT.
+ * File browser opened at a conversation's workspace. Collapsed by default and
+ * lazy-loaded on first expand. Users can navigate above the workspace, while the
+ * backend still sandboxes every filesystem operation to BROWSE_ROOT.
  */
 function FileBrowser({
   rootPath,
@@ -1705,8 +1708,9 @@ function FileBrowser({
   // browser panel to be rendered).
   if (!open && !showOwnToggle && !preview) return null
 
-  // Only allow walking up while staying within the workspace subtree.
-  const canGoUp = path !== effectiveRootPath && pathWithinRoot(path, effectiveRootPath)
+  // The backend supplies a parent only while it remains inside BROWSE_ROOT.
+  const canGoUp = Boolean(listing?.parent)
+  const isAtWorkspace = path === rootPath
   const relLabel = path === effectiveRootPath
     ? '.'
     : path.startsWith(`${effectiveRootPath}/`)
@@ -1767,9 +1771,22 @@ function FileBrowser({
               className="file-browser-up"
               disabled={!canGoUp || loading}
               onClick={() => listing?.parent && void load(listing.parent)}
-              title={canGoUp ? 'Up one folder' : 'At workspace root'}
+              title={canGoUp ? 'Up one folder' : 'At server browse root'}
             >
               ↑ ..
+            </button>
+            <button
+              type="button"
+              className="file-browser-home"
+              disabled={isAtWorkspace || loading}
+              onClick={() => void load(rootPath)}
+              title="Return to workspace"
+              aria-label="Return to workspace"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M3.5 10.5 12 3.75l8.5 6.75" />
+                <path d="M5.75 9.25v10h12.5v-10M9.5 19.25v-6h5v6" />
+              </svg>
             </button>
             <button
               type="button"
@@ -1777,8 +1794,11 @@ function FileBrowser({
               disabled={loading}
               onClick={() => void load(path)}
               title="Refresh"
+              aria-label="Refresh folder"
             >
-              ⟳
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M19.25 8.25V3.75m0 0h-4.5m4.5 0-3.1 3.1a7.5 7.5 0 1 0 2.65 7.4" />
+              </svg>
             </button>
             <button
               type="button"

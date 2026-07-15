@@ -1066,6 +1066,7 @@ button { cursor: pointer; }
 }
 
 .file-browser-up,
+.file-browser-home,
 .file-browser-refresh,
 .file-browser-upload,
 .file-preview-close,
@@ -1083,6 +1084,7 @@ button { cursor: pointer; }
 }
 
 .file-browser-up:disabled,
+.file-browser-home:disabled,
 .file-browser-refresh:disabled,
 .file-browser-upload:disabled {
   opacity: 0.4;
@@ -1090,10 +1092,37 @@ button { cursor: pointer; }
 }
 
 .file-browser-up:not(:disabled):hover,
+.file-browser-home:not(:disabled):hover,
 .file-browser-refresh:not(:disabled):hover,
 .file-browser-upload:not(:disabled):hover {
   border-color: rgba(121, 185, 255, 0.42);
   background: rgba(121, 185, 255, 0.08);
+}
+
+.file-browser-home,
+.file-browser-refresh {
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 26px;
+  padding: 0;
+}
+
+.file-browser-home svg,
+.file-browser-refresh svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+}
+
+.file-browser-refresh svg {
+  width: 20px;
+  height: 20px;
+  stroke-width: 2.5;
 }
 
 .file-browser-list {
@@ -1447,9 +1476,14 @@ button { cursor: pointer; }
   user-select: none;
 }
 
-/* Full-screen: the window fills the viewport (with a small inset so the
-   resize handles remain reachable). Drag and resize still work. */
+/* Full-screen: let the viewport edges define the window instead of retaining
+   the floating window's inline geometry. */
 .floating-preview.full-screen {
+  inset: 0 !important;
+  width: auto !important;
+  height: auto !important;
+  min-width: 0;
+  min-height: 0;
   border-radius: 0;
   z-index: 210;
 }
@@ -1520,6 +1554,12 @@ button { cursor: pointer; }
   min-height: 0;
   overflow: auto;
   padding: 10px 14px 14px;
+}
+
+.floating-preview .file-preview-code {
+  min-height: 100%;
+  max-height: none;
+  box-sizing: border-box;
 }
 
 .floating-preview-media {
