@@ -9,7 +9,8 @@
     "release": "bash scripts/release.sh",
     "deploy:scp": "bash scripts/deploy-scp.sh",
     "preview": "vite preview",
-    "store": "node server/store.mjs"
+    "store": "node server/store.mjs",
+    "test:contract": "node --test test/contract-store.test.mjs"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",
