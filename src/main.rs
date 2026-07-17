@@ -1,4 +1,5 @@
 mod backend;
+mod upgrade;
 
 const SOURCE_COMMIT: &str = match option_env!("AGENT_RIDER_SOURCE_COMMIT") {
     Some(value) => value,
@@ -26,8 +27,10 @@ async fn main() {
                 .expect("serve Agent Rider");
         }
         Some("upgrade") => {
-            eprintln!("agrider upgrade is not available in this development build yet");
-            std::process::exit(2);
+            if let Err(error) = upgrade::run().await {
+                eprintln!("upgrade failed: {error}");
+                std::process::exit(1);
+            }
         }
         _ => {
             usage();
