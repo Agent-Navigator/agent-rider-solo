@@ -93,6 +93,9 @@ pub async fn run() -> Result<(), String> {
         .unwrap_or_else(|_| DEFAULT_RELEASE_BASE.to_string())
         .trim_end_matches('/')
         .to_string();
+    if legacy_install_needs_migration(&paths) {
+        return run_legacy_installer(&client, &release_base, &paths).await;
+    }
     let manifest_url = format!("{release_base}/manifest.json");
     println!("Checking {manifest_url}");
     let manifest: Manifest = download_json(&client, &manifest_url).await?;
@@ -198,6 +201,39 @@ pub async fn run() -> Result<(), String> {
         manifest.version, manifest.source_commit
     );
     Ok(())
+}
+
+fn legacy_install_needs_migration(paths: &InstallPaths) -> bool {
+    if fs::symlink_metadata(&paths.current).is_ok() {
+        return false;
+    }
+    let legacy = env::var_os("AGRIDER_LEGACY_ROOT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/opt/agent-rider"));
+    legacy.join("current").exists() || legacy.join("shared").is_dir()
+}
+
+async fn run_legacy_installer(
+    client: &Client,
+    release_base: &str,
+    paths: &InstallPaths,
+) -> Result<(), String> {
+    let url = format!("{release_base}/install.sh");
+    println!("Legacy /opt installation detected; starting the verified rootless migration.");
+    let script = download_bytes(client, &url).await?;
+    let installer = paths.root.join(".migration-install.sh");
+    fs::write(&installer, script).map_err(display_error("write migration installer"))?;
+    let status = Command::new("sh")
+        .arg(&installer)
+        .status()
+        .map_err(|error| format!("run migration installer: {error}"));
+    let _ = fs::remove_file(&installer);
+    let status = status?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("migration installer exited with {status}"))
+    }
 }
 
 async fn prepare_release(

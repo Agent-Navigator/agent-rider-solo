@@ -123,6 +123,8 @@ exit 0
     } else if (request.url === '/store/state') {
       response.statusCode = healthStatus
       response.end('{}')
+    } else if (request.url === '/install.sh') {
+      response.end('#!/bin/sh\nprintf migrated > "$AGRIDER_DATA_ROOT/migrated"\n')
     } else {
       response.statusCode = 404
       response.end('not found')
@@ -218,4 +220,21 @@ test('a concurrent upgrade is rejected by the update lock', async () => {
   heldResponse.end(JSON.stringify(manifest))
   const firstResult = await first
   assert.equal(firstResult.code, 0, firstResult.stderr)
+})
+
+test('an upgrade command without a rootless current release dispatches legacy migration', async () => {
+  const home = join(sandbox, 'home-legacy-dispatch')
+  const root = join(home, '.local', 'share', 'agrider')
+  const legacy = join(sandbox, 'legacy-dispatch')
+  await mkdir(join(legacy, 'shared'), { recursive: true })
+  await mkdir(join(home, '.config', 'agrider'), { recursive: true })
+  const install = {
+    home,
+    root,
+    config: join(home, '.config', 'agrider', 'env'),
+    log: join(sandbox, 'legacy-dispatch.log'),
+  }
+  const result = await runUpgrade(install, { AGRIDER_LEGACY_ROOT: legacy })
+  assert.equal(result.code, 0, result.stderr)
+  assert.equal(await readFile(join(root, 'migrated'), 'utf8'), 'migrated')
 })
