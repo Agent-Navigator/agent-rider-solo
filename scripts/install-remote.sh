@@ -15,8 +15,7 @@ Environment:
   STORE_PORT          Local store backend port. Default: 5174
   BROWSE_ROOT         File browser root. Default: APP_USER home
   AGENT_RIDER_APPS_DIR Local Agent Apps root. Default: APP_DIR/shared/plugins
-  HERMES_TARGET       External Hermes WebUI to serve /api from. Default: unset,
-                      so /api is served by the store backend's embedded ACP server
+  HERMES_TARGET       Hermes ACP executable. Default: hermes resolved from PATH.
   VITE_ALLOWED_HOSTS  Comma-separated hosts, or "all". Default: all
 USAGE
 }
@@ -87,14 +86,11 @@ existing_allowed_hosts=$(read_env_value VITE_ALLOWED_HOSTS || true)
 WEB_HOST=${WEB_HOST:-${existing_web_host:-127.0.0.1}}
 WEB_PORT=${WEB_PORT:-${existing_web_port:-5173}}
 STORE_PORT=${STORE_PORT:-${existing_store_port:-5174}}
-# /api is served by the store backend's embedded ACP server (server/hermesAcp.mjs);
-# HERMES_TARGET is now only for pointing it at an external Hermes WebUI instead.
-# Older installs have the retired default baked into their env file, which would
-# otherwise keep proxying /api at a hermes-webui that is no longer deployed.
+# Retire the old external WebUI URL; the Rust backend expects an ACP executable.
 if [[ "${existing_hermes_target:-}" == "http://127.0.0.1:8789" ]]; then
   existing_hermes_target=''
 fi
-HERMES_TARGET=${HERMES_TARGET:-${existing_hermes_target:-}}
+HERMES_TARGET=${HERMES_TARGET:-${existing_hermes_target:-hermes}}
 VITE_ALLOWED_HOSTS=${VITE_ALLOWED_HOSTS:-${existing_allowed_hosts:-all}}
 
 if ! id "$APP_USER" >/dev/null 2>&1; then
@@ -253,6 +249,10 @@ sync_plugins() {
 
 mkdir -p "$releases_dir" "$shared_data_dir" "$shared_plugins_dir" "$shared_dir/logs" "$release_dir"
 tar -xzf "$archive" -C "$release_dir"
+if [[ ! -x "$release_dir/bin/agent-rider-store" ]]; then
+  echo "Release is missing executable bin/agent-rider-store." >&2
+  exit 1
+fi
 cat > "$release_dir/.agent-rider-release" <<EOF
 commit=${AGENT_RIDER_DEPLOY_COMMIT:-unknown}
 short_sha=${AGENT_RIDER_DEPLOY_SHORT_SHA:-unknown}
@@ -262,16 +262,6 @@ archive=$release_name
 deployed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 EOF
 
-services_were_stopped=0
-on_error() {
-  if (( services_were_stopped == 1 )) && systemd_available; then
-    systemctl start agent-rider-store.service agent-rider-web.service 2>/dev/null || true
-  fi
-}
-trap on_error ERR
-
-stop_existing_services
-services_were_stopped=1
 backup_shared_state
 sync_plugins "$release_dir/plugins" "$shared_plugins_dir"
 rm -rf "$release_dir/data" "$release_dir/plugins"
@@ -282,10 +272,15 @@ cd "$release_dir"
 npm ci
 npm run build
 
-ln -sfn "$release_dir" "$APP_DIR/current"
 chown -R "$APP_USER:$APP_GROUP" "$APP_DIR"
 
-cat > "$ENV_FILE" <<EOF
+staging_dir="$release_dir/.agent-rider-install"
+mkdir -p "$staging_dir"
+new_env="$staging_dir/environment"
+new_store_unit="$staging_dir/agent-rider-store.service"
+new_web_unit="$staging_dir/agent-rider-web.service"
+
+cat > "$new_env" <<EOF
 APP_DIR=$APP_DIR
 HOME=$app_home
 BROWSE_ROOT=$BROWSE_ROOT
@@ -297,7 +292,7 @@ HERMES_TARGET=$HERMES_TARGET
 VITE_ALLOWED_HOSTS=$VITE_ALLOWED_HOSTS
 EOF
 
-cat > /etc/systemd/system/agent-rider-store.service <<EOF
+cat > "$new_store_unit" <<EOF
 [Unit]
 Description=Agent Rider store backend
 After=network.target
@@ -308,7 +303,7 @@ User=$APP_USER
 Group=$APP_GROUP
 WorkingDirectory=$APP_DIR/current
 EnvironmentFile=/etc/default/agent-rider
-ExecStart=/usr/bin/node server/store.mjs
+ExecStart=$APP_DIR/current/bin/agent-rider-store
 Restart=always
 RestartSec=3
 
@@ -316,7 +311,7 @@ RestartSec=3
 WantedBy=multi-user.target
 EOF
 
-cat > /etc/systemd/system/agent-rider-web.service <<EOF
+cat > "$new_web_unit" <<EOF
 [Unit]
 Description=Agent Rider web UI
 After=network.target agent-rider-store.service
@@ -336,9 +331,54 @@ RestartSec=3
 WantedBy=multi-user.target
 EOF
 
+old_current=$(readlink -f "$APP_DIR/current" 2>/dev/null || true)
+rollback_dir="$staging_dir/rollback"
+mkdir -p "$rollback_dir"
+[[ -f "$store_unit" ]] && cp -a "$store_unit" "$rollback_dir/store.service"
+[[ -f /etc/systemd/system/agent-rider-web.service ]] && cp -a /etc/systemd/system/agent-rider-web.service "$rollback_dir/web.service"
+[[ -f "$ENV_FILE" ]] && cp -a "$ENV_FILE" "$rollback_dir/environment"
+
+services_were_stopped=0
+rollback_install() {
+  local status=$?
+  trap - ERR
+  if (( services_were_stopped == 1 )); then
+    echo "Deployment failed; restoring the previous release and systemd units." >&2
+    if [[ -n "$old_current" && -d "$old_current" ]]; then ln -sfn "$old_current" "$APP_DIR/current"; else rm -f "$APP_DIR/current"; fi
+    if [[ -f "$rollback_dir/store.service" ]]; then cp -a "$rollback_dir/store.service" "$store_unit"; else rm -f "$store_unit"; fi
+    if [[ -f "$rollback_dir/web.service" ]]; then cp -a "$rollback_dir/web.service" /etc/systemd/system/agent-rider-web.service; else rm -f /etc/systemd/system/agent-rider-web.service; fi
+    if [[ -f "$rollback_dir/environment" ]]; then cp -a "$rollback_dir/environment" "$ENV_FILE"; else rm -f "$ENV_FILE"; fi
+    if systemd_available; then
+      systemctl daemon-reload
+      systemctl restart agent-rider-store.service agent-rider-web.service 2>/dev/null || true
+    fi
+  fi
+  exit "$status"
+}
+trap rollback_install ERR
+
+stop_existing_services
+services_were_stopped=1
+ln -sfn "$release_dir" "$APP_DIR/current"
+install -m 0644 "$new_env" "$ENV_FILE"
+install -m 0644 "$new_store_unit" "$store_unit"
+install -m 0644 "$new_web_unit" /etc/systemd/system/agent-rider-web.service
 restart_services
+
+healthy=0
+for _ in $(seq 1 30); do
+  status=$(curl -sS -o /dev/null -w '%{http_code}' "http://127.0.0.1:$STORE_PORT/store/state" || true)
+  if [[ "$status" == 200 || "$status" == 401 ]]; then healthy=1; break; fi
+  sleep 1
+done
+if (( healthy == 0 )); then
+  echo "Rust backend health check failed on /store/state." >&2
+  false
+fi
+
 services_were_stopped=0
 trap - ERR
+rm -rf "$staging_dir"
 
 echo "Agent Rider deployed to $release_dir"
 echo "Current symlink: $APP_DIR/current"
