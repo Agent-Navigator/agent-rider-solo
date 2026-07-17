@@ -51,6 +51,7 @@ jobs:
         run: |
           cargo build --locked --release --target x86_64-unknown-linux-musl
           install -Dm755 target/x86_64-unknown-linux-musl/release/agent-rider-store staging/bin/agent-rider-store
+          staging/bin/agent-rider-store --version
           archive=agent-rider-store-x86_64-unknown-linux-musl.tar.gz
           tar -C staging -czf "$archive" bin/agent-rider-store
           sha256sum "$archive" > "$archive.sha256"
