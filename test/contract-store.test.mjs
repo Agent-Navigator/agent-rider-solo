@@ -16,7 +16,7 @@ let baseUrl
 let store
 let cookie = ''
 
-const backend = process.env.AGENT_RIDER_CONTRACT_BACKEND || 'node'
+const backend = process.env.AGENT_RIDER_CONTRACT_BACKEND || 'rust'
 
 function allocatePort() {
   return new Promise((resolve, reject) => {
@@ -83,8 +83,10 @@ before(async () => {
     await chmod(executable, 0o755)
   }
 
-  await cp(join(ROOT, 'server'), join(sandbox, 'server'), { recursive: true })
-  await symlink(join(ROOT, 'node_modules'), join(sandbox, 'node_modules'), 'dir')
+  if (backend === 'node') {
+    await cp(join(ROOT, 'server'), join(sandbox, 'server'), { recursive: true })
+    await symlink(join(ROOT, 'node_modules'), join(sandbox, 'node_modules'), 'dir')
+  }
 
   const port = await allocatePort()
   baseUrl = `http://127.0.0.1:${port}`
@@ -231,16 +233,13 @@ test('state API persists full state and reconciles deleted rows', async () => {
 test('terminal WebSocket accepts input and streams PTY output', async () => {
   const wsUrl = baseUrl.replace('http://', 'ws://') + `/store/terminal/ws?cwd=${encodeURIComponent(join(sandbox, 'workspace'))}&cols=80&rows=24`
   const socket = new WebSocket(wsUrl)
+  socket.binaryType = 'arraybuffer'
   let output = ''
   await new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`terminal output timed out: ${output}`)), 5000)
     socket.addEventListener('open', () => socket.send(JSON.stringify({ type: 'input', data: 'printf websocket-ok\\n\n' })))
-    socket.addEventListener('message', async (event) => {
-      output += typeof event.data === 'string'
-        ? event.data
-        : typeof event.data?.text === 'function'
-          ? await event.data.text()
-          : Buffer.from(event.data).toString()
+    socket.addEventListener('message', (event) => {
+      output += typeof event.data === 'string' ? event.data : Buffer.from(event.data).toString()
       if (output.includes('websocket-ok')) {
         clearTimeout(timer)
         resolve()
