@@ -9,7 +9,7 @@
     "release": "bash scripts/release.sh",
     "deploy:scp": "bash scripts/deploy-scp.sh",
     "preview": "vite preview",
-    "store": "cargo run --bin agrider -- serve",
+    "store": "AGENT_RIDER_PORT=${STORE_PORT:-5174} cargo run --bin agrider -- serve",
     "test:contract": "cargo build && AGENT_RIDER_CONTRACT_BACKEND=rust node --test test/contract-store.test.mjs",
     "test:upgrade": "cargo build && node --test test/upgrade.test.mjs"
   },
