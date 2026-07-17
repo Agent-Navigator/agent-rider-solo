@@ -101,6 +101,40 @@ impl Rpc {
                     }
                 } else if message["method"] == "session/update" {
                     let _ = rpc.updates.send(message["params"].clone());
+                } else if message.get("id").is_some()
+                    && message["method"] == "session/request_permission"
+                {
+                    let options = message["params"]["options"]
+                        .as_array()
+                        .cloned()
+                        .unwrap_or_default();
+                    let selected = options
+                        .iter()
+                        .find(|option| option["optionId"] == "allow_session")
+                        .or_else(|| {
+                            options
+                                .iter()
+                                .find(|option| option["optionId"] == "allow_once")
+                        })
+                        .or_else(|| options.first());
+                    let option_id = selected
+                        .and_then(|option| option["optionId"].as_str())
+                        .unwrap_or("allow_once");
+                    let reply = format!(
+                        "{}\n",
+                        json!({"jsonrpc":"2.0","id":message["id"],"result":{"outcome":{"outcome":"selected","optionId":option_id}}})
+                    );
+                    if let Some(writer) = rpc.writer.lock().await.as_mut() {
+                        let _ = writer.write_all(reply.as_bytes()).await;
+                    }
+                } else if message.get("id").is_some() && message.get("method").is_some() {
+                    let reply = format!(
+                        "{}\n",
+                        json!({"jsonrpc":"2.0","id":message["id"],"error":{"code":-32601,"message":format!("unsupported client method: {}",message["method"].as_str().unwrap_or("unknown"))}})
+                    );
+                    if let Some(writer) = rpc.writer.lock().await.as_mut() {
+                        let _ = writer.write_all(reply.as_bytes()).await;
+                    }
                 }
             }
             rpc.initialized.store(false, Ordering::Release);
