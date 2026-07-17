@@ -46,6 +46,7 @@ jobs:
           npm run test:contract
           npm run build
           test/install-remote.test.sh
+          test/pull-update.test.sh
 
       - name: Build static backend archive
         id: artifact
