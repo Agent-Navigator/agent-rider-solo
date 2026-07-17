@@ -96,6 +96,11 @@ pub async fn run() -> Result<(), String> {
     if legacy_install_needs_migration(&paths) {
         return run_legacy_installer(&client, &release_base, &paths).await;
     }
+    if fs::symlink_metadata(&paths.current).is_err() {
+        return Err(
+            "Agent Rider is not installed; run the public install.sh bootstrap first".into(),
+        );
+    }
     let manifest_url = format!("{release_base}/manifest.json");
     println!("Checking {manifest_url}");
     let manifest: Manifest = download_json(&client, &manifest_url).await?;

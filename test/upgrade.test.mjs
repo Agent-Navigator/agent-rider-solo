@@ -238,3 +238,20 @@ test('an upgrade command without a rootless current release dispatches legacy mi
   assert.equal(result.code, 0, result.stderr)
   assert.equal(await readFile(join(root, 'migrated'), 'utf8'), 'migrated')
 })
+
+test('a standalone binary without any installation points to the bootstrap installer', async () => {
+  const home = join(sandbox, 'home-not-installed')
+  const root = join(home, '.local', 'share', 'agrider')
+  await mkdir(join(home, '.config', 'agrider'), { recursive: true })
+  const install = {
+    home,
+    root,
+    config: join(home, '.config', 'agrider', 'env'),
+    log: join(sandbox, 'not-installed.log'),
+  }
+  const result = await runUpgrade(install, {
+    AGRIDER_LEGACY_ROOT: join(sandbox, 'does-not-exist'),
+  })
+  assert.equal(result.code, 1)
+  assert.match(result.stderr, /run the public install\.sh bootstrap first/)
+})
