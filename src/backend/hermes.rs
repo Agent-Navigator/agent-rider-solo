@@ -8,6 +8,7 @@ use serde_json::{json, Value};
 use std::{
     collections::HashMap,
     convert::Infallible,
+    path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         Arc,
@@ -197,6 +198,7 @@ pub struct Hermes {
     streams: Mutex<HashMap<String, Stream>>,
     active: Mutex<HashMap<String, String>>,
     models: Mutex<Value>,
+    browse_root: PathBuf,
 }
 impl Hermes {
     pub async fn new(config: &Config, db: Database) -> Arc<Self> {
@@ -217,6 +219,7 @@ impl Hermes {
             streams: Mutex::new(HashMap::new()),
             active: Mutex::new(HashMap::new()),
             models: Mutex::new(models),
+            browse_root: config.browse_root.clone(),
         });
         let weak = Arc::downgrade(&hermes);
         tokio::spawn(async move {
@@ -261,6 +264,31 @@ impl Hermes {
         let catalog = json!({"groups":groups,"default_model":model,"active_provider":if provider.is_empty(){Value::Null}else{json!(provider)}});
         *self.models.lock().await = catalog.clone();
         let _ = self.db.set_kv(MODEL_KEY, catalog.to_string()).await;
+    }
+    async fn refresh_models(&self, workspace: &str) -> Result<(), String> {
+        if let Some((id, session)) = self
+            .sessions
+            .lock()
+            .await
+            .iter()
+            .next()
+            .map(|(id, session)| (id.clone(), session.clone()))
+        {
+            let result = self
+                .rpc
+                .request(
+                    "session/load",
+                    json!({"sessionId":id,"cwd":session.cwd,"mcpServers":[]}),
+                    Some(Duration::from_secs(120)),
+                )
+                .await?;
+            self.capture_models(&result).await;
+            return Ok(());
+        }
+        if workspace.is_empty() {
+            return Err("workspace is required to refresh the model catalog".into());
+        }
+        self.new_session(workspace).await.map(|_| ())
     }
     async fn new_session(&self, cwd: &str) -> Result<String, String> {
         let result = self
@@ -384,10 +412,18 @@ impl Hermes {
                 if !id.is_empty() {
                     let mut payload =
                         json!({"id":id,"status":update["status"].as_str().unwrap_or("pending")});
-                    for key in ["title", "kind", "locations", "content"] {
+                    for key in ["title", "kind", "locations"] {
                         if !update[key].is_null() {
                             payload[key] = update[key].clone()
                         }
+                    }
+                    let output = content_text(&update["content"]);
+                    if !output.is_empty() {
+                        payload["output"] = json!(output);
+                    }
+                    let images = discover_images(&self.browse_root, &output, &update["locations"]);
+                    if !images.is_empty() {
+                        payload["images"] = json!(images);
                     }
                     self.push(&stream_id, "tool", payload).await
                 }
@@ -610,7 +646,17 @@ pub async fn handle(hermes: Arc<Hermes>, req: Request<Body>) -> Response<Body> {
             });
             json_response(200, json!({"cancelled":true}))
         }
-        (Method::GET, "/api/models") => json_response(200, hermes.models.lock().await.clone()),
+        (Method::GET, "/api/models") => {
+            if query.get("refresh").is_some_and(|value| value == "1") {
+                if let Err(error) = hermes
+                    .refresh_models(query.get("workspace").map(String::as_str).unwrap_or(""))
+                    .await
+                {
+                    return json_response(502, json!({"error":format!("hermes acp: {error}")}));
+                }
+            }
+            json_response(200, hermes.models.lock().await.clone())
+        }
         (Method::GET, "/api/reasoning") => {
             json_response(200, json!({"supported_efforts":[],"reasoning_effort":""}))
         }
@@ -624,4 +670,66 @@ async fn read(req: Request<Body>, limit: usize) -> Value {
         .ok()
         .and_then(|b| serde_json::from_slice(&b).ok())
         .unwrap_or_else(|| json!({}))
+}
+
+fn content_text(content: &Value) -> String {
+    content
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|block| {
+            let inner = block.get("content").unwrap_or(block);
+            (inner["type"] == "text")
+                .then(|| inner["text"].as_str())
+                .flatten()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim()
+        .to_string()
+}
+
+fn discover_images(root: &Path, output: &str, locations: &Value) -> Vec<String> {
+    let mut candidates = locations
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|value| value["path"].as_str().map(str::to_owned))
+        .collect::<Vec<_>>();
+    if let Ok(pattern) = regex::Regex::new(
+        r#"(?:^|[\s\"'`(\[])((?:/|~/)[^\s\"'`()\[\]]+\.(?:png|jpe?g|gif|webp|bmp|svg))"#,
+    ) {
+        candidates.extend(
+            pattern
+                .captures_iter(output)
+                .filter_map(|capture| capture.get(1).map(|value| value.as_str().to_owned())),
+        );
+    }
+    let canonical_root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let home = std::env::var("HOME").unwrap_or_default();
+    let mut found = Vec::new();
+    for candidate in candidates {
+        let path = if let Some(rest) = candidate.strip_prefix("~/") {
+            PathBuf::from(&home).join(rest)
+        } else {
+            PathBuf::from(candidate)
+        };
+        let Ok(canonical) = std::fs::canonicalize(&path) else {
+            continue;
+        };
+        if !canonical.is_file() || !canonical.starts_with(&canonical_root) {
+            continue;
+        }
+        let Ok(relative) = canonical.strip_prefix(&canonical_root) else {
+            continue;
+        };
+        let value = relative
+            .to_string_lossy()
+            .trim_start_matches('/')
+            .to_string();
+        if !value.is_empty() && !found.contains(&value) {
+            found.push(value);
+        }
+    }
+    found
 }
