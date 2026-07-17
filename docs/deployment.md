@@ -1,8 +1,7 @@
 # Agent Rider deployment
 
-部署方式改為 **Tailscale private git remote**。Remote server 不再從 source
-machine `scp` release tarball；它直接透過 SSH/Tailscale `git fetch` private
-repo，從指定 commit 建立本機 release，然後套用。
+Remote server 透過 SSH `git fetch` private repo 解析 exact commit，再以 read-only
+GitHub token 下載該 commit 的 CI-built static Rust backend。
 
 ## 保留內容
 
@@ -34,12 +33,15 @@ SSH deploy key。更新流程用 git commit 判斷，不使用 `package.json` �
 判斷是否需要更新。舊的 Tailscale bare repo 仍可用，只要把 `SOURCE_GIT` 換成
 `root@YOUR-SOURCE-TAILNET-HOST:/srv/git/agent-rider.git`。
 
+`GITHUB_TOKEN` 只需 private repo 的 Contents read 權限。GitHub Actions 會為每個
+commit 建立 `build-<full-sha>` prerelease；等 workflow 完成後再更新。
+
 ## Remote install/update
 
 在 remote server 執行一行：
 
 ```bash
-SOURCE_GIT=git@github.com:ytk77/agent-rider-dev.git SOURCE_REF=master APP_DIR=/opt/agent-rider bash -lc 'command -v git >/dev/null || { sudo apt-get update && sudo apt-get install -y git; }; tmp=$(mktemp -d); git clone --depth=1 --branch "${SOURCE_REF:-master}" "$SOURCE_GIT" "$tmp/agent-rider" && bash "$tmp/agent-rider/scripts/pull-update.sh"'
+GITHUB_TOKEN=github_pat_READ_ONLY SOURCE_GIT=git@github.com:ytk77/agent-rider-dev.git SOURCE_REF=master APP_DIR=/opt/agent-rider bash -lc 'command -v git >/dev/null || { sudo apt-get update && sudo apt-get install -y git; }; tmp=$(mktemp -d); git clone --depth=1 --branch "${SOURCE_REF:-master}" "$SOURCE_GIT" "$tmp/agent-rider" && bash "$tmp/agent-rider/scripts/pull-update.sh"'
 ```
 
 第一次安裝和後續更新使用同一行。更新流程：
@@ -47,9 +49,9 @@ SOURCE_GIT=git@github.com:ytk77/agent-rider-dev.git SOURCE_REF=master APP_DIR=/o
 1. `pull-update.sh` 在 remote server 維護 `~/.cache/agent-rider/source.git` mirror。
 2. Fetch `SOURCE_GIT`。
 3. Resolve `SOURCE_REF`（branch/tag/commit，預設 `master`）。
-4. 用 `git archive` 從該最新 commit 建本機 release archive。
-5. 執行 release 裡的 `install-remote.sh` 或 `update-remote.sh`。
-6. 保留 shared data/plugins，設定 `AGENT_RIDER_APPS_DIR` 指向 shared plugins，重建 production build，切換 `/opt/agent-rider/current`。
+4. 下載 `build-<full-sha>` 的 musl binary 與 checksum 並驗證。
+5. 把 source 與 binary 組成 release archive，再執行 installer。
+6. frontend build 與備份完成後才停止服務；health check 失敗會自動 rollback。
 
 實際部署的 commit 會寫到：
 
@@ -62,7 +64,7 @@ cat /opt/agent-rider/current/.agent-rider-release
 第一次安裝後，可以直接呼叫目前版本裡的 updater：
 
 ```bash
-SOURCE_GIT=git@github.com:ytk77/agent-rider-dev.git SOURCE_REF=master APP_DIR=/opt/agent-rider bash /opt/agent-rider/current/scripts/pull-update.sh
+GITHUB_TOKEN=github_pat_READ_ONLY SOURCE_GIT=git@github.com:ytk77/agent-rider-dev.git SOURCE_REF=master APP_DIR=/opt/agent-rider bash /opt/agent-rider/current/scripts/pull-update.sh
 ```
 
 或建立固定 command：
@@ -75,6 +77,7 @@ set -Eeuo pipefail
 SOURCE_GIT=${SOURCE_GIT:-git@github.com:ytk77/agent-rider-dev.git}
 SOURCE_REF=${SOURCE_REF:-master}
 APP_DIR=${APP_DIR:-/opt/agent-rider}
+: "${GITHUB_TOKEN:?set a read-only GitHub Contents token}"
 
 if [[ -x "$APP_DIR/current/scripts/pull-update.sh" ]]; then
   exec bash "$APP_DIR/current/scripts/pull-update.sh"
@@ -122,15 +125,22 @@ WEB_HOST=127.0.0.1
 STORE_PORT=5174
 BROWSE_ROOT=/root
 AGENT_RIDER_APPS_DIR=/opt/agent-rider/shared/plugins
-# 留空：/api 由 store 後端內建的 ACP server 服務（server/hermesAcp.mjs）。
-# 只有要改用外部 Hermes WebUI 後端時才填，例如 http://127.0.0.1:8789。
-HERMES_TARGET=
+# Rust backend 直接執行此 ACP CLI；預設 hermes。
+HERMES_TARGET=hermes
 VITE_ALLOWED_HOSTS=all
 ```
 
 這些值會寫進遠端 `/etc/default/agent-rider`。如果改了這個檔案，重啟：
 
 ```bash
+sudo systemctl restart agent-rider-store agent-rider-web
+```
+
+手動 rollback：
+
+```bash
+sudo ln -sfn /opt/agent-rider/releases/<previous-release> /opt/agent-rider/current
+sudo systemctl daemon-reload
 sudo systemctl restart agent-rider-store agent-rider-web
 ```
 
