@@ -10,6 +10,9 @@ import { after, before, test } from 'node:test'
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const BINARY = join(ROOT, 'target', 'debug', 'agrider')
+const currentVersion = JSON.parse(await readFile(join(ROOT, 'package.json'), 'utf8')).version
+const versionParts = currentVersion.split('.').map(Number)
+const nextVersion = `${versionParts[0]}.${versionParts[1]}.${versionParts[2] + 1}`
 const platformArch = process.arch === 'arm64' ? 'aarch64' : 'x86_64'
 const platform = `linux-${platformArch}`
 const archiveName = `agrider-${platform}.tar.gz`
@@ -38,7 +41,7 @@ function command(file, args, options = {}) {
 
 function stableManifest(overrides = {}) {
   return {
-    version: '0.1.2',
+    version: nextVersion,
     source_commit: 'fixture-commit',
     assets: [{ platform, archive: archiveName, sha256: digest }],
     ...overrides,
@@ -48,7 +51,7 @@ function stableManifest(overrides = {}) {
 async function setupInstall(name) {
   const home = join(sandbox, `home-${name}`)
   const root = join(home, '.local', 'share', 'agrider')
-  const old = join(root, 'releases', '0.1.1')
+  const old = join(root, 'releases', currentVersion)
   await mkdir(join(root, 'shared', 'data'), { recursive: true })
   await mkdir(join(root, 'shared', 'plugins'), { recursive: true })
   await mkdir(old, { recursive: true })
@@ -89,7 +92,7 @@ before(async () => {
   await writeFile(join(source, 'agrider'), '#!/bin/sh\nexit 0\n')
   await chmod(join(source, 'agrider'), 0o755)
   await writeFile(join(source, 'frontend', 'index.html'), '<!doctype html><title>new</title>\n')
-  await writeFile(join(source, 'release.json'), '{"version":"0.1.2","source_commit":"fixture-commit"}\n')
+  await writeFile(join(source, 'release.json'), `{"version":"${nextVersion}","source_commit":"fixture-commit"}\n`)
   const archive = join(sandbox, archiveName)
   const packed = await command('tar', ['-C', source, '-czf', archive, '.'])
   assert.equal(packed.code, 0, packed.stderr)
@@ -140,7 +143,7 @@ test('stable upgrade backs up state, switches atomically, and restarts once heal
   healthStatus = 200
   const result = await runUpgrade(install)
   assert.equal(result.code, 0, result.stderr)
-  assert.equal(await readlink(join(install.root, 'current')), join(install.root, 'releases', '0.1.2'))
+  assert.equal(await readlink(join(install.root, 'current')), join(install.root, 'releases', nextVersion))
   assert.equal(await readFile(join(install.root, 'shared', 'data', 'state.txt'), 'utf8'), 'saved state\n')
   assert.equal(await readFile(join(install.root, 'shared', 'plugins', 'app.txt'), 'utf8'), 'local app\n')
   const backups = await readdir(join(install.root, 'shared', 'backups'))
@@ -153,13 +156,13 @@ test('stable upgrade backs up state, switches atomically, and restarts once heal
 
 test('already-current and prerelease manifests do not stop the service', async () => {
   const current = await setupInstall('current')
-  manifest = stableManifest({ version: '0.1.1' })
+  manifest = stableManifest({ version: currentVersion })
   let result = await runUpgrade(current)
   assert.equal(result.code, 0, result.stderr)
   assert.match(result.stdout, /already current/)
 
   const prerelease = await setupInstall('prerelease')
-  manifest = stableManifest({ version: '0.1.2-beta.1' })
+  manifest = stableManifest({ version: `${nextVersion}-beta.1` })
   result = await runUpgrade(prerelease)
   assert.equal(result.code, 1)
   assert.match(result.stderr, /prerelease/)
@@ -202,7 +205,7 @@ test('failed health validation restores the old release and service', async () =
 
 test('a concurrent upgrade is rejected by the update lock', async () => {
   const install = await setupInstall('concurrent')
-  manifest = stableManifest({ version: '0.1.1' })
+  manifest = stableManifest({ version: currentVersion })
   holdManifest = true
   const requested = new Promise((resolve) => { manifestRequested = resolve })
   const first = runUpgrade(install)
