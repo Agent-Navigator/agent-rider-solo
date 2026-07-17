@@ -217,6 +217,20 @@ sync_plugins() {
   [[ -d "$release_plugins" ]] || return 0
   mkdir -p "$shared_plugins"
 
+  # The shared directory contains both build-time source plugins and local
+  # Agent Apps. Remove source plugins that no longer ship in the release, but
+  # never prune App directories: their manifest marks them as persistent
+  # runtime data owned by the installation rather than the release.
+  while IFS= read -r -d '' existing; do
+    local name
+    name=$(basename "$existing")
+    [[ "$name" == .* ]] && continue
+    [[ -e "$release_plugins/$name" ]] && continue
+    [[ -f "$existing/manifest.json" ]] && continue
+    echo "Removing retired source plugin: plugins/$name"
+    rm -rf "$existing"
+  done < <(find "$shared_plugins" -mindepth 1 -maxdepth 1 -type d -print0)
+
   while IFS= read -r -d '' src; do
     cp -a "$src" "$shared_plugins/"
   done < <(find "$release_plugins" -mindepth 1 -maxdepth 1 -type f -print0)
