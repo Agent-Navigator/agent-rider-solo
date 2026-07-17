@@ -228,6 +228,30 @@ test('state API persists full state and reconciles deleted rows', async () => {
   assert.deepEqual(afterDeletion.body, { runs: [], turns: [], layout: payload.layout })
 })
 
+test('terminal WebSocket accepts input and streams PTY output', async () => {
+  const wsUrl = baseUrl.replace('http://', 'ws://') + `/store/terminal/ws?cwd=${encodeURIComponent(join(sandbox, 'workspace'))}&cols=80&rows=24`
+  const socket = new WebSocket(wsUrl)
+  let output = ''
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`terminal output timed out: ${output}`)), 5000)
+    socket.addEventListener('open', () => socket.send(JSON.stringify({ type: 'input', data: 'printf websocket-ok\\n\n' })))
+    socket.addEventListener('message', async (event) => {
+      output += typeof event.data === 'string'
+        ? event.data
+        : typeof event.data?.text === 'function'
+          ? await event.data.text()
+          : Buffer.from(event.data).toString()
+      if (output.includes('websocket-ok')) {
+        clearTimeout(timer)
+        resolve()
+      }
+    })
+    socket.addEventListener('error', reject)
+  })
+  socket.close()
+  assert.match(output, /websocket-ok/)
+})
+
 test('password gate protects store routes and issues a reusable session cookie', async () => {
   const configured = await json('/store/password/set', {
     method: 'POST',
@@ -425,4 +449,18 @@ test('Hermes ACP REST, SSE replay, exclusivity, cancel, and recovery contracts',
 
   const reasoning = await json('/api/reasoning', { headers: { Cookie: cookie } })
   assert.deepEqual(reasoning.body, { supported_efforts: [], reasoning_effort: '' })
+
+  const crashing = await json('/api/chat/start', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: cookie },
+    body: JSON.stringify({ session_id: sessionId, message: 'crash', workspace: join(sandbox, 'workspace') }),
+  })
+  assert.equal(crashing.response.status, 200)
+  await sleep(75)
+  const crashReplay = await request(`/api/chat/stream?stream_id=${encodeURIComponent(crashing.body.stream_id)}`, { headers: { Cookie: cookie } })
+  assert.match(await crashReplay.text(), /event: (?:app)?error/)
+  const recovered = await json('/api/session/new', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: cookie },
+    body: JSON.stringify({ workspace: join(sandbox, 'workspace') }),
+  })
+  assert.equal(recovered.response.status, 200)
 })
