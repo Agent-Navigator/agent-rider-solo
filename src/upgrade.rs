@@ -383,7 +383,15 @@ fn health_url(config: &Path) -> Result<String, String> {
 
 async fn wait_for_health(client: &Client, url: &str) -> Result<(), String> {
     let mut last = String::new();
-    for _ in 0..30 {
+    let attempts = env::var("AGRIDER_HEALTH_ATTEMPTS")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(30);
+    let delay = env::var("AGRIDER_HEALTH_DELAY_MS")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(500);
+    for _ in 0..attempts {
         match client.get(url).send().await {
             Ok(response)
                 if response.status() == StatusCode::OK
@@ -394,7 +402,7 @@ async fn wait_for_health(client: &Client, url: &str) -> Result<(), String> {
             Ok(response) => last = format!("HTTP {}", response.status()),
             Err(error) => last = error.to_string(),
         }
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        tokio::time::sleep(Duration::from_millis(delay)).await;
     }
     Err(format!("new service failed health check at {url}: {last}"))
 }
