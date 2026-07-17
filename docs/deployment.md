@@ -1,151 +1,114 @@
-# Agent Rider deployment
+# Agent Rider release and deployment
 
-Remote server 透過 SSH `git fetch` private repo 解析 exact commit，再以 read-only
-GitHub token 下載該 commit 的 CI-built static Rust backend。
+Production consists of one `agrider` executable plus prebuilt frontend assets.
+`agrider serve` binds to `127.0.0.1:5173` by default, serves the React SPA, and
+owns `/store/*`, `/api/*`, `/apps/*`, SSE, and WebSocket routes. Vite remains a
+development server only.
 
-## 保留內容
+## Repositories
 
-更新只替換程式 release；以下內容保留：
+- `ytk77/agent-rider-dev` remains the private source repository.
+- `ytk77/agent-rider` is the public distribution repository. It should contain
+  only installer documentation and published release assets.
 
-- `/opt/agent-rider/shared/data`：聊天紀錄、Conversation Card、版面狀態、App 排序/改名等 store 資料。
-- `/opt/agent-rider/shared/plugins`：本地 Agent Apps；這是 runtime data，不屬於 Agent Rider source repo。
-- `/opt/agent-rider/shared/backups/<timestamp>`：每次更新前的 data/plugins 備份。
-- `/etc/default/agent-rider`：既有 port、browse root、Hermes target、allowed hosts 會沿用；環境變數可覆蓋。
-- 遠端 preview 預設只監聽 `127.0.0.1`，避免和 `tailscale serve` 在同一個介面搶 `5173`。
+The public repository must have immutable releases enabled in repository
+settings. Immutable releases prevent a published tag or asset from being
+replaced and enable GitHub's release attestations.
 
-## Source machine setup
+Create a fine-grained token restricted to the public repository with the
+minimum release-writing permissions, then store it in the private repository as
+the Actions secret `DISTRIBUTION_REPO_TOKEN`. Protect the `public-release`
+environment if release approval is required.
 
-Source of truth 是 GitHub private repo `ytk77/agent-rider-dev`：
+## Stable release procedure
 
-```bash
-git remote add origin git@github.com:ytk77/agent-rider-dev.git 2>/dev/null || git remote set-url origin git@github.com:ytk77/agent-rider-dev.git
-git push origin master --tags
-```
-
-每次更新前，在 source machine commit 並 push：
-
-```bash
-git push origin master --tags
-```
-
-Remote server 只會看到已 push 到 GitHub 的 commit，而且需要一把可讀此 private repo 的
-SSH deploy key。更新流程用 git commit 判斷，不使用 `package.json` 的 `version`
-判斷是否需要更新。舊的 Tailscale bare repo 仍可用，只要把 `SOURCE_GIT` 換成
-`root@YOUR-SOURCE-TAILNET-HOST:/srv/git/agent-rider.git`。
-
-`GITHUB_TOKEN` 只需 private repo 的 Contents read 權限。GitHub Actions 會為每個
-commit 建立 `build-<full-sha>` prerelease；等 workflow 完成後再更新。
-
-## Remote install/update
-
-在 remote server 執行一行：
+Cargo, npm package, and npm lockfile versions must be identical. Create and push
+the matching tag:
 
 ```bash
-GITHUB_TOKEN=github_pat_READ_ONLY SOURCE_GIT=git@github.com:ytk77/agent-rider-dev.git SOURCE_REF=master APP_DIR=/opt/agent-rider bash -lc 'command -v git >/dev/null || { sudo apt-get update && sudo apt-get install -y git; }; tmp=$(mktemp -d); git clone --depth=1 --branch "${SOURCE_REF:-master}" "$SOURCE_GIT" "$tmp/agent-rider" && bash "$tmp/agent-rider/scripts/pull-update.sh"'
+version=$(node -p "require('./package.json').version")
+git tag "v$version"
+git push origin master "v$version"
 ```
 
-第一次安裝和後續更新使用同一行。更新流程：
+The `Test and publish Agent Rider` workflow then:
 
-1. `pull-update.sh` 在 remote server 維護 `~/.cache/agent-rider/source.git` mirror。
-2. Fetch `SOURCE_GIT`。
-3. Resolve `SOURCE_REF`（branch/tag/commit，預設 `master`）。
-4. 下載 `build-<full-sha>` 的 musl binary 與 checksum 並驗證。
-5. 把 source 與 binary 組成 release archive，再執行 installer。
-6. frontend build 與備份完成後才停止服務；health check 失敗會自動 rollback。
+1. Verifies the tag and synchronized versions.
+2. Runs formatting, Clippy, Rust tests, frontend build, runtime contracts,
+   installer/migration tests, upgrade tests, and rollback tests.
+3. Builds the frontend once.
+4. Builds native musl binaries on `ubuntu-24.04` and `ubuntu-24.04-arm`.
+5. Produces `agrider-linux-x86_64.tar.gz` and
+   `agrider-linux-aarch64.tar.gz`, each with `agrider`, `frontend/`, and
+   `release.json`.
+6. Generates `checksums.txt` and `manifest.json` and attaches them with
+   `install.sh` to a draft release in `ytk77/agent-rider`.
+7. Publishes the draft only after both architecture jobs succeed.
 
-實際部署的 commit 會寫到：
+Master and pull-request builds run the acceptance suite but never publish an
+upgrade. The release job refuses to mutate an existing public tag.
 
-```bash
-cat /opt/agent-rider/current/.agent-rider-release
+## Public redirect
+
+DNS alone cannot provide the install URL. Configure the chosen HTTPS domain so
+this request:
+
+```text
+https://YOUR-DOMAIN/install.sh
 ```
 
-## 固定命令
+returns an HTTP redirect to:
 
-第一次安裝後，可以直接呼叫目前版本裡的 updater：
-
-```bash
-GITHUB_TOKEN=github_pat_READ_ONLY SOURCE_GIT=git@github.com:ytk77/agent-rider-dev.git SOURCE_REF=master APP_DIR=/opt/agent-rider bash /opt/agent-rider/current/scripts/pull-update.sh
+```text
+https://github.com/ytk77/agent-rider/releases/latest/download/install.sh
 ```
 
-或建立固定 command：
+Use a temporary (`302` or `307`) redirect so `releases/latest` continues to
+resolve dynamically. Replace `YOUR-DOMAIN` in the README only after the exact
+domain and redirect are live.
 
-```bash
-sudo tee /usr/local/bin/agent-rider-git-update >/dev/null <<'SCRIPT'
-#!/usr/bin/env bash
-set -Eeuo pipefail
+## Upgrade transaction
 
-SOURCE_GIT=${SOURCE_GIT:-git@github.com:ytk77/agent-rider-dev.git}
-SOURCE_REF=${SOURCE_REF:-master}
-APP_DIR=${APP_DIR:-/opt/agent-rider}
-: "${GITHUB_TOKEN:?set a read-only GitHub Contents token}"
+`agrider upgrade` resolves `releases/latest/download/manifest.json`, requires a
+stable semver newer than the compiled version, selects the native architecture,
+and verifies the archive SHA-256. Download, checksum, extraction, bundle layout,
+and release metadata validation all occur before `agrider.service` is stopped.
 
-if [[ -x "$APP_DIR/current/scripts/pull-update.sh" ]]; then
-  exec bash "$APP_DIR/current/scripts/pull-update.sh"
-fi
+After validation it:
 
-tmp=$(mktemp -d)
-git clone --depth=1 --branch "$SOURCE_REF" "$SOURCE_GIT" "$tmp/agent-rider"
-exec bash "$tmp/agent-rider/scripts/pull-update.sh"
-SCRIPT
+1. Stops the user service if active.
+2. Copies data, plugins, and configuration into
+   `shared/backups/<timestamp>/`.
+3. Installs `releases/<version>` and atomically replaces `current`.
+4. Restarts the service and accepts HTTP `200` or the password gate's `401` at
+   `/store/state` as healthy.
+5. Restores the previous symlink and restarts the previous service on failure.
 
-sudo chmod +x /usr/local/bin/agent-rider-git-update
-```
+Checksum, download, metadata, and extraction failures do not stop the running
+service. An update lock prevents concurrent transactions.
 
-之後更新：
+## Legacy migration and rollback
 
-```bash
-agent-rider-git-update
-```
+Both `install.sh` and a directly invoked new `agrider upgrade` detect the old
+`/opt/agent-rider` deployment. The Rust command delegates migration to the same
+published installer so there is one migration implementation.
 
-部署 tag 或指定 commit：
+Migration refuses to proceed unless the current login matches the old
+`agent-rider-store.service` `User=`. After verifying the new release, it enables
+lingering, records the old `current` pointer, environment file, and systemd
+units, stops and disables both old services, then copies persistent data and
+plugins into the rootless layout. It preserves `WEB_PORT` as
+`AGENT_RIDER_PORT`, along with `BROWSE_ROOT`, `HERMES_TARGET`, and allowed-host
+configuration.
 
-```bash
-SOURCE_REF=v0.1.2 agent-rider-git-update
-SOURCE_REF=abc1234 agent-rider-git-update
-```
+If the new health check fails, the user service is disabled and the old
+`agent-rider-store` and `agent-rider-web` services are re-enabled and started.
+Packaging does not perform an irreversible SQLite schema migration.
 
-## Services
+## Deprecated private deployment scripts
 
-遠端會建立兩個 systemd services：
-
-```bash
-systemctl status agent-rider-store
-systemctl status agent-rider-web
-journalctl -u agent-rider-store -f
-journalctl -u agent-rider-web -f
-```
-
-預設 web port 是 `5173`，store backend 是 localhost `5174`。
-
-可用環境變數：
-
-```bash
-WEB_PORT=5173
-WEB_HOST=127.0.0.1
-STORE_PORT=5174
-BROWSE_ROOT=/root
-AGENT_RIDER_APPS_DIR=/opt/agent-rider/shared/plugins
-# Rust backend 直接執行此 ACP CLI；預設 hermes。
-HERMES_TARGET=hermes
-VITE_ALLOWED_HOSTS=all
-```
-
-這些值會寫進遠端 `/etc/default/agent-rider`。如果改了這個檔案，重啟：
-
-```bash
-sudo systemctl restart agent-rider-store agent-rider-web
-```
-
-手動 rollback：
-
-```bash
-sudo ln -sfn /opt/agent-rider/releases/<previous-release> /opt/agent-rider/current
-sudo systemctl daemon-reload
-sudo systemctl restart agent-rider-store agent-rider-web
-```
-
-## Legacy SCP
-
-`scripts/release.sh` 和 `scripts/deploy-scp.sh` 仍保留給不能用 Tailscale/git
-remote 的環境。一般部署請使用 `scripts/pull-update.sh` 的 private git remote
-流程。
+The scripts under `scripts/` describe the former private-token, source-checkout,
+two-service deployment. They remain only for rollback compatibility with hosts
+that have not migrated. New installations and stable upgrades must use
+`install.sh` and `agrider upgrade`; they require neither GitHub credentials nor
+a private source checkout.
