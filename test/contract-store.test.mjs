@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createServer } from 'node:net'
 import { spawn } from 'node:child_process'
+import { DatabaseSync } from 'node:sqlite'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
 
@@ -186,6 +187,15 @@ test('state API persists full state and reconciles deleted rows', async () => {
       createdAt,
     }],
   })
+
+  // Databases from before agent_type was introduced contain NULL here. Those
+  // rows were Hermes conversations and must not silently become Codex on an
+  // upgrade, or the UI would hide their saved transcript behind a new TUI.
+  const legacyDb = new DatabaseSync(join(sandbox, 'data', 'agent-rider.db'))
+  legacyDb.prepare('UPDATE runs SET agent_type = NULL WHERE id = ?').run('run-1')
+  legacyDb.close()
+  const legacy = await json('/store/state')
+  assert.equal(legacy.body.runs[0].agentType, 'hermes')
 
   const cleared = await json('/store/save', {
     method: 'POST',

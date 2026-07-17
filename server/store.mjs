@@ -501,7 +501,11 @@ function runRowToApi(r) {
     modelProvider: r.model_provider || null,
     reasoningEffort: r.reasoning_effort || '',
     sessionId: r.session_id || null,
-    agentType: r.agent_type || 'codex',
+    // Rows created before agent_type existed were Hermes conversations. Keep
+    // that historical default when reading an old database so the frontend can
+    // restore the transcript and resume its saved Hermes session. New rows are
+    // still written as Codex by default in saveState below.
+    agentType: r.agent_type || 'hermes',
     agentCommand: r.agent_command || '',
     column: Number.isFinite(r.col_index) ? r.col_index : 0,
     createdAt: r.created_at,

@@ -111,8 +111,8 @@ const AGENT_OPTIONS: { value: AgentType; label: string }[] = [
   { value: 'custom', label: 'Custom command' },
 ]
 
-// Conversation Cards are CLI-only. Hermes remains available to App Builder,
-// whose chat workflow is separate from the general-purpose card surface.
+// New Conversation Cards are CLI-only. Hermes remains available to App Builder
+// and to grandfathered Hermes cards restored from an older installation.
 const CONVERSATION_AGENT_OPTIONS = AGENT_OPTIONS.filter((option) => option.value !== 'hermes')
 
 function isTuiAgent(agent: AgentType): agent is TuiAgentType {
@@ -2360,9 +2360,10 @@ function ConversationCard({
   maximized?: boolean
   onToggleMaximize?: () => void
 }) {
-  const agentType: AgentType = run.cardKind === 'app-builder'
-    ? (run.agentType ?? 'hermes')
-    : (run.agentType === 'hermes' ? 'codex' : run.agentType ?? 'codex')
+  // Existing Hermes cards are grandfathered so upgrades keep their transcript
+  // and session continuity. New general Conversation Cards still default to a
+  // CLI agent and cannot switch back to Hermes after leaving the legacy type.
+  const agentType: AgentType = run.agentType ?? (run.cardKind === 'app-builder' ? 'hermes' : 'codex')
   const agentAvailability = useAgentAvailability()
   const tui = isTuiAgent(agentType)
   const customAgentCommand = (run.agentCommand ?? '').trim()
@@ -2773,7 +2774,10 @@ function ConversationCard({
           onChange={(event) => onAgentChange(event.target.value as AgentType)}
           aria-label="Conversation agent"
         >
-          {renderAgentOptions(agentAvailability, run.cardKind === 'app-builder' ? AGENT_OPTIONS : CONVERSATION_AGENT_OPTIONS)}
+          {renderAgentOptions(
+            agentAvailability,
+            run.cardKind === 'app-builder' || agentType === 'hermes' ? AGENT_OPTIONS : CONVERSATION_AGENT_OPTIONS,
+          )}
         </select>
       </div>
       {agentType === 'custom' ? (
@@ -5910,15 +5914,16 @@ export default function App() {
         const layout = state.layout
         // Merge defensively: never clobber content the user already created this session.
         if (state.runs.length) {
-          // General Conversation Cards are CLI-only now. Migrate cards saved
-          // with the retired Hermes ACP type to the Codex CLI; App Builder has
-          // its own agent workflow and retains its stored type.
+          // General Conversation Cards are CLI-only for new work, but existing
+          // Hermes cards remain Hermes so an upgrade preserves their visible
+          // transcript and can resume the saved session. A run with no stored
+          // type predates agent selection and therefore used Hermes.
           const restored = (state.runs as RunNode[]).map((run) => {
             const cardKind = isAppBuilderRunId(run.id) ? 'app-builder' : run.cardKind ?? 'conversation'
-            const storedAgent = run.agentType ?? (cardKind === 'app-builder' ? 'hermes' : 'codex')
+            const storedAgent = run.agentType ?? 'hermes'
             return {
               ...run,
-              agentType: cardKind === 'conversation' && storedAgent === 'hermes' ? 'codex' : storedAgent,
+              agentType: storedAgent,
               column: Number.isFinite(run.column) ? run.column : 0,
               model: typeof run.model === 'string' ? run.model : '',
               modelProvider: typeof run.modelProvider === 'string' ? run.modelProvider : null,
