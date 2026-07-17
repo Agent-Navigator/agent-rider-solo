@@ -4,6 +4,7 @@ node_modules/
 # Build output — the main app's dist/ is a build artifact and stays out of git.
 # Agent App output is runtime data under AGENT_RIDER_APPS_DIR, not source.
 dist/
+target/
 *.tsbuildinfo
 
 # Guardrail: local Agent Apps must not be staged under the Agent Rider source
