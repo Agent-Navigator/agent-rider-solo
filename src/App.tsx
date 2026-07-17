@@ -111,6 +111,10 @@ const AGENT_OPTIONS: { value: AgentType; label: string }[] = [
   { value: 'custom', label: 'Custom command' },
 ]
 
+// Conversation Cards are CLI-only. Hermes remains available to App Builder,
+// whose chat workflow is separate from the general-purpose card surface.
+const CONVERSATION_AGENT_OPTIONS = AGENT_OPTIONS.filter((option) => option.value !== 'hermes')
+
 function isTuiAgent(agent: AgentType): agent is TuiAgentType {
   return agent === 'claude' || agent === 'codex' || agent === 'agy' || agent === 'devin' || agent === 'custom'
 }
@@ -287,8 +291,11 @@ function useAgentAvailability(): Record<string, boolean> | null {
   return availability
 }
 
-function renderAgentOptions(availability: Record<string, boolean> | null) {
-  return AGENT_OPTIONS.map((option) => {
+function renderAgentOptions(
+  availability: Record<string, boolean> | null,
+  options = AGENT_OPTIONS,
+) {
+  return options.map((option) => {
     // Only explicit false disables: custom isn't in the map, and a
     // missing/failed endpoint must not lock the dropdown.
     const notInstalled = availability?.[option.value] === false
@@ -2351,7 +2358,9 @@ function ConversationCard({
   maximized?: boolean
   onToggleMaximize?: () => void
 }) {
-  const agentType: AgentType = run.agentType ?? 'hermes'
+  const agentType: AgentType = run.cardKind === 'app-builder'
+    ? (run.agentType ?? 'hermes')
+    : (run.agentType === 'hermes' ? 'codex' : run.agentType ?? 'codex')
   const agentAvailability = useAgentAvailability()
   const tui = isTuiAgent(agentType)
   const customAgentCommand = (run.agentCommand ?? '').trim()
@@ -2762,7 +2771,7 @@ function ConversationCard({
           onChange={(event) => onAgentChange(event.target.value as AgentType)}
           aria-label="Conversation agent"
         >
-          {renderAgentOptions(agentAvailability)}
+          {renderAgentOptions(agentAvailability, run.cardKind === 'app-builder' ? AGENT_OPTIONS : CONVERSATION_AGENT_OPTIONS)}
         </select>
       </div>
       {agentType === 'custom' ? (
@@ -5270,7 +5279,7 @@ export default function App() {
       modelProvider: null,
       reasoningEffort: '',
       sessionId: null,
-      agentType: 'hermes',
+      agentType: 'codex',
       agentCommand: '',
       cardKind: 'conversation',
       column: 0,
@@ -5899,17 +5908,23 @@ export default function App() {
         const layout = state.layout
         // Merge defensively: never clobber content the user already created this session.
         if (state.runs.length) {
-          // Default agentType for runs persisted before the field existed.
-          const restored = (state.runs as RunNode[]).map((run) => ({
-            ...run,
-            agentType: run.agentType ?? 'hermes',
-            column: Number.isFinite(run.column) ? run.column : 0,
-            model: typeof run.model === 'string' ? run.model : '',
-            modelProvider: typeof run.modelProvider === 'string' ? run.modelProvider : null,
-            reasoningEffort: typeof run.reasoningEffort === 'string' ? run.reasoningEffort : '',
-            agentCommand: typeof run.agentCommand === 'string' ? run.agentCommand : '',
-            cardKind: isAppBuilderRunId(run.id) ? 'app-builder' : run.cardKind ?? 'conversation',
-          }))
+          // General Conversation Cards are CLI-only now. Migrate cards saved
+          // with the retired Hermes ACP type to the Codex CLI; App Builder has
+          // its own agent workflow and retains its stored type.
+          const restored = (state.runs as RunNode[]).map((run) => {
+            const cardKind = isAppBuilderRunId(run.id) ? 'app-builder' : run.cardKind ?? 'conversation'
+            const storedAgent = run.agentType ?? (cardKind === 'app-builder' ? 'hermes' : 'codex')
+            return {
+              ...run,
+              agentType: cardKind === 'conversation' && storedAgent === 'hermes' ? 'codex' : storedAgent,
+              column: Number.isFinite(run.column) ? run.column : 0,
+              model: typeof run.model === 'string' ? run.model : '',
+              modelProvider: typeof run.modelProvider === 'string' ? run.modelProvider : null,
+              reasoningEffort: typeof run.reasoningEffort === 'string' ? run.reasoningEffort : '',
+              agentCommand: typeof run.agentCommand === 'string' ? run.agentCommand : '',
+              cardKind,
+            }
+          })
           const restoredRunIds = new Set(restored.map((run) => run.id))
           setRuns((current) => (current.length ? current : restored))
           const restoredClosedRunIds = layoutRunIdSet(layout?.closedRunIds, restoredRunIds)
