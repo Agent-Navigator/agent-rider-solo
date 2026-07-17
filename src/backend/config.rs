@@ -63,12 +63,18 @@ impl Config {
                 .map(str::to_owned),
         );
         paths.dedup();
+        let current_data = app_dir.join("current/data");
+        let db_dir = if current_data.exists() {
+            current_data
+        } else {
+            app_dir.join("data")
+        };
         Self {
             port: env::var("STORE_PORT")
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(5174),
-            db_path: app_dir.join("data/agent-rider.db"),
+            db_path: db_dir.join("agent-rider.db"),
             browse_root,
             default_cwd,
             apps_dir,
