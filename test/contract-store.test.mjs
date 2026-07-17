@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { after, before, test } from 'node:test'
-import { cp, mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises'
+import { chmod, cp, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createServer } from 'node:net'
@@ -14,6 +14,9 @@ const ROOT = join(fileURLToPath(new URL('..', import.meta.url)))
 let sandbox
 let baseUrl
 let store
+let cookie = ''
+
+const backend = process.env.AGENT_RIDER_CONTRACT_BACKEND || 'node'
 
 function allocatePort() {
   return new Promise((resolve, reject) => {
@@ -55,8 +58,10 @@ before(async () => {
   const workspace = join(sandbox, 'workspace')
   const apps = join(sandbox, 'apps')
   const appDist = join(apps, 'sample-app', 'dist')
+  const bin = join(workspace, '.local', 'bin')
   await mkdir(join(workspace, 'notes'), { recursive: true })
   await mkdir(appDist, { recursive: true })
+  await mkdir(bin, { recursive: true })
   await writeFile(join(workspace, 'README.md'), '# Fixture\n')
   await writeFile(join(workspace, 'notes', 'todo.txt'), 'ship rust backend\n')
   await writeFile(join(apps, 'sample-app', 'manifest.json'), JSON.stringify({
@@ -69,18 +74,32 @@ before(async () => {
   }))
   await writeFile(join(appDist, 'index.html'), '<!doctype html><title>Sample App</title>')
 
+  const fakeHermes = join(bin, 'hermes')
+  await writeFile(fakeHermes, `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(join(ROOT, 'test', 'fixtures', 'fake-hermes-acp.mjs'))} "$@"\n`)
+  await chmod(fakeHermes, 0o755)
+  for (const agent of ['codex', 'claude', 'agy', 'devin']) {
+    const executable = join(bin, agent)
+    await writeFile(executable, '#!/bin/sh\nprintf fixture-agent\\n\n')
+    await chmod(executable, 0o755)
+  }
+
   await cp(join(ROOT, 'server'), join(sandbox, 'server'), { recursive: true })
   await symlink(join(ROOT, 'node_modules'), join(sandbox, 'node_modules'), 'dir')
 
   const port = await allocatePort()
   baseUrl = `http://127.0.0.1:${port}`
-  store = spawn(process.execPath, ['server/store.mjs'], {
+  const command = backend === 'rust'
+    ? [join(ROOT, 'target', 'debug', 'agent-rider-store'), []]
+    : [process.execPath, ['server/store.mjs']]
+  store = spawn(command[0], command[1], {
     cwd: sandbox,
     env: {
       ...process.env,
       HOME: workspace,
       BROWSE_ROOT: workspace,
       AGENT_RIDER_APPS_DIR: apps,
+      APP_DIR: sandbox,
+      HERMES_TARGET: fakeHermes,
       STORE_PORT: String(port),
     },
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -218,7 +237,7 @@ test('password gate protects store routes and issues a reusable session cookie',
   assert.equal(configured.response.status, 200)
   assert.equal(configured.body.enabled, true)
   assert.equal(configured.body.authenticated, true)
-  const cookie = configured.response.headers.get('set-cookie').split(';', 1)[0]
+  cookie = configured.response.headers.get('set-cookie').split(';', 1)[0]
   assert.match(cookie, /^agent_rider_auth=/)
 
   const locked = await json('/store/state')
@@ -253,20 +272,10 @@ test('password gate protects store routes and issues a reusable session cookie',
 })
 
 test('filesystem and Agent App routes keep their current contract', async () => {
-  const listing = await json('/store/fs/list?path=', { headers: { Cookie: (await json('/store/password/login', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ password: 'fixture-password' }),
-  })).response.headers.get('set-cookie').split(';', 1)[0] } })
+  const listing = await json('/store/fs/list?path=', { headers: { Cookie: cookie } })
   assert.equal(listing.response.status, 200)
   assert.deepEqual(listing.body.dirs, [{ name: 'notes', path: join(sandbox, 'workspace', 'notes') }])
   assert.deepEqual(listing.body.files, [{ name: 'README.md', path: join(sandbox, 'workspace', 'README.md'), size: 10 }])
-
-  const cookie = (await json('/store/password/login', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ password: 'fixture-password' }),
-  })).response.headers.get('set-cookie').split(';', 1)[0]
 
   const preview = await json(`/store/fs/read?path=${encodeURIComponent(join(sandbox, 'workspace', 'README.md'))}`, { headers: { Cookie: cookie } })
   assert.equal(preview.response.status, 200)
@@ -303,4 +312,117 @@ test('filesystem and Agent App routes keep their current contract', async () => 
   const app = await request('/apps/sample-app/', { headers: { Cookie: cookie } })
   assert.equal(app.status, 200)
   assert.equal(await app.text(), '<!doctype html><title>Sample App</title>')
+})
+
+test('filesystem mutations and app metadata writes preserve response contracts', async () => {
+  const created = await json('/store/fs/mkdir', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: cookie },
+    body: JSON.stringify({ parent: join(sandbox, 'workspace'), name: 'uploads' }),
+  })
+  assert.equal(created.response.status, 200)
+  assert.deepEqual(created.body, { path: join(sandbox, 'workspace', 'uploads'), name: 'uploads' })
+
+  const uploaded = await json(`/store/fs/upload?path=${encodeURIComponent(join(sandbox, 'workspace', 'uploads'))}&name=fixture.txt`, {
+    method: 'POST', headers: { Cookie: cookie }, body: 'uploaded bytes',
+  })
+  assert.equal(uploaded.response.status, 200)
+  assert.equal(await readFile(join(sandbox, 'workspace', 'uploads', 'fixture.txt'), 'utf8'), 'uploaded bytes')
+
+  const downloaded = await request(`/store/fs/download?path=${encodeURIComponent(join(sandbox, 'workspace', 'uploads', 'fixture.txt'))}`, { headers: { Cookie: cookie } })
+  assert.equal(downloaded.status, 200)
+  assert.match(downloaded.headers.get('content-disposition'), /fixture\.txt/)
+  assert.equal(await downloaded.text(), 'uploaded bytes')
+
+  const moved = await json('/store/fs/move-dir', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: cookie },
+    body: JSON.stringify({ source: join(sandbox, 'workspace', 'uploads'), target: join(sandbox, 'workspace', 'archive') }),
+  })
+  assert.equal(moved.response.status, 200)
+  assert.equal(moved.body.moved, true)
+
+  const deleted = await json('/store/fs/delete', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: cookie },
+    body: JSON.stringify({ path: join(sandbox, 'workspace', 'archive', 'fixture.txt') }),
+  })
+  assert.deepEqual(deleted.body, { path: join(sandbox, 'workspace', 'archive', 'fixture.txt'), deleted: true })
+
+  const renamed = await json('/store/apps/rename', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: cookie },
+    body: JSON.stringify({ slug: 'sample-app', label: 'Renamed Fixture' }),
+  })
+  assert.equal(renamed.body.apps[0].label, 'Renamed Fixture')
+  const ordered = await json('/store/apps/order', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: cookie },
+    body: JSON.stringify({ order: ['sample-app'] }),
+  })
+  assert.equal(ordered.response.status, 200)
+  assert.equal(ordered.body.apps[0].id, 'sample-app')
+})
+
+test('agent availability and terminal HTTP contracts are stable', async () => {
+  const agents = await json('/store/agents', { headers: { Cookie: cookie } })
+  assert.equal(agents.response.status, 200)
+  assert.deepEqual(agents.body.agents, { hermes: true, claude: true, codex: true, agy: true, devin: true })
+
+  const terminal = await json('/store/terminal/run', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: cookie },
+    body: JSON.stringify({ command: 'printf contract && cd notes', cwd: join(sandbox, 'workspace') }),
+  })
+  assert.equal(terminal.response.status, 200)
+  assert.equal(terminal.body.output, 'contract')
+  assert.equal(terminal.body.exitCode, 0)
+  assert.equal(terminal.body.nextCwd, join(sandbox, 'workspace', 'notes'))
+  assert.equal(terminal.body.timedOut, false)
+
+  const usage = await json('/store/terminal/usage', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: cookie },
+    body: JSON.stringify({ agent: 'codex', session: 'missing', cwd: join(sandbox, 'workspace') }),
+  })
+  assert.deepEqual(usage.body, { available: false, reason: 'no-session' })
+})
+
+test('Hermes ACP REST, SSE replay, exclusivity, cancel, and recovery contracts', async () => {
+  const sessionResponse = await json('/api/session/new', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: cookie },
+    body: JSON.stringify({ workspace: join(sandbox, 'workspace') }),
+  })
+  assert.equal(sessionResponse.response.status, 200)
+  const sessionId = sessionResponse.body.session.session_id
+  assert.equal(sessionResponse.body.session.model, 'hermes-test')
+
+  const models = await json('/api/models', { headers: { Cookie: cookie } })
+  assert.equal(models.body.default_model, 'hermes-test')
+  assert.equal(models.body.active_provider, 'fixture')
+
+  const started = await json('/api/chat/start', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: cookie },
+    body: JSON.stringify({ session_id: sessionId, message: 'contract', workspace: join(sandbox, 'workspace') }),
+  })
+  assert.equal(started.response.status, 200)
+  const streamId = started.body.stream_id
+  await sleep(75)
+  const replay = await request(`/api/chat/stream?stream_id=${encodeURIComponent(streamId)}`, { headers: { Cookie: cookie } })
+  const replayText = await replay.text()
+  assert.match(replayText, /event: thought[\s\S]*fixture thought/)
+  assert.match(replayText, /event: token[\s\S]*echo: contract/)
+  assert.match(replayText, /event: stream_end/)
+
+  const waiting = await json('/api/chat/start', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: cookie },
+    body: JSON.stringify({ session_id: sessionId, message: 'wait for cancel', workspace: join(sandbox, 'workspace') }),
+  })
+  const conflict = await json('/api/chat/start', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: cookie },
+    body: JSON.stringify({ session_id: sessionId, message: 'second', workspace: join(sandbox, 'workspace') }),
+  })
+  assert.equal(conflict.response.status, 409)
+  assert.equal(conflict.body.active_stream_id, waiting.body.stream_id)
+  const cancelled = await json(`/api/chat/cancel?stream_id=${encodeURIComponent(waiting.body.stream_id)}`, { method: 'POST', headers: { Cookie: cookie } })
+  assert.deepEqual(cancelled.body, { cancelled: true })
+  await sleep(25)
+  const cancelledReplay = await request(`/api/chat/stream?stream_id=${encodeURIComponent(waiting.body.stream_id)}`, { headers: { Cookie: cookie } })
+  assert.match(await cancelledReplay.text(), /event: cancel/)
+
+  const reasoning = await json('/api/reasoning', { headers: { Cookie: cookie } })
+  assert.deepEqual(reasoning.body, { supported_efforts: [], reasoning_effort: '' })
 })
