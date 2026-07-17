@@ -6,9 +6,7 @@ use std::{
 #[derive(Clone, Debug)]
 pub struct Config {
     pub port: u16,
-    pub app_dir: PathBuf,
     pub db_path: PathBuf,
-    pub requested_home: PathBuf,
     pub browse_root: PathBuf,
     pub default_cwd: PathBuf,
     pub apps_dir: PathBuf,
@@ -71,12 +69,13 @@ impl Config {
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(5174),
             db_path: app_dir.join("data/agent-rider.db"),
-            app_dir,
-            requested_home,
             browse_root,
             default_cwd,
             apps_dir,
-            hermes_target: env::var("HERMES_TARGET").unwrap_or_else(|_| "hermes".into()),
+            hermes_target: env::var("HERMES_TARGET")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or_else(|| "hermes".into()),
             agent_path: paths.join(":"),
         }
     }

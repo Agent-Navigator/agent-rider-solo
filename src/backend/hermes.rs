@@ -184,7 +184,6 @@ struct Session {
     loaded: bool,
 }
 struct Stream {
-    id: String,
     session_id: String,
     active: bool,
     events: Vec<String>,
@@ -437,7 +436,6 @@ impl Hermes {
         self.streams.lock().await.insert(
             id.clone(),
             Stream {
-                id: id.clone(),
                 session_id: session_id.clone(),
                 active: true,
                 events: vec![],
@@ -561,7 +559,16 @@ pub async fn handle(hermes: Arc<Hermes>, req: Request<Body>) -> Response<Body> {
                     return json_response(404, json!({"error":format!("unknown stream: {id}")}))
                 }
             };
-            let stream = async_stream::stream! {for event in stream_events{yield Ok::<Bytes,Infallible>(Bytes::from(event));}if active{loop{match receiver.recv().await{Ok(event)=>{let terminal=event.starts_with("event: stream_end")||event.starts_with("event: cancel")||event.starts_with("event: apperror")||event.starts_with("event: error");yield Ok(Bytes::from(event));if terminal{break}},Err(_)=>break}}}};
+            let stream = async_stream::stream! {
+                for event in stream_events { yield Ok::<Bytes,Infallible>(Bytes::from(event)); }
+                if active {
+                    while let Ok(event) = receiver.recv().await {
+                        let terminal = event.starts_with("event: stream_end") || event.starts_with("event: cancel") || event.starts_with("event: apperror") || event.starts_with("event: error");
+                        yield Ok(Bytes::from(event));
+                        if terminal { break; }
+                    }
+                }
+            };
             Response::builder()
                 .status(200)
                 .header(header::CONTENT_TYPE, "text/event-stream")
