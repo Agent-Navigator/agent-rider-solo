@@ -98,17 +98,9 @@ function detectAgentAvailability() {
 const TMUX_SOCKET = 'agent-rider' // private server (`tmux -L agent-rider`)
 const TMUX_CONF = join(tmpdir(), 'agent-rider-tmux.conf')
 const AGENT_RIDER_BACKGROUND_PATH = join(__dirname, '..', 'agent-rider-background.md')
-const APP_PLUGIN_GUIDE_PATH = join(__dirname, '..', 'plugins', 'AGENTS.md')
 const AGENT_RIDER_BACKGROUND = (() => {
   try {
     return readFileSync(AGENT_RIDER_BACKGROUND_PATH, 'utf8').trim()
-  } catch {
-    return ''
-  }
-})()
-const APP_PLUGIN_GUIDE = (() => {
-  try {
-    return readFileSync(APP_PLUGIN_GUIDE_PATH, 'utf8').trim()
   } catch {
     return ''
   }
@@ -297,18 +289,11 @@ async function captureAgentUsage({ agent, cwd, session }) {
   return { available: true, agent, meters, fetchedAt: Date.now() }
 }
 
-function agentRiderBackgroundPrompt(agentLabel, { promptContext = 'agent-rider', appWorkspace = '' } = {}) {
+function agentRiderBackgroundPrompt(agentLabel) {
   if (!AGENT_RIDER_BACKGROUND) return ''
-  const background = promptContext === 'app-builder'
-    ? [
-      AGENT_RIDER_BACKGROUND,
-      APP_PLUGIN_GUIDE ? `Agent Rider App plugin guide:\n${APP_PLUGIN_GUIDE}` : '',
-      appWorkspace ? `App workspace: ${appWorkspace}` : '',
-    ].filter(Boolean).join('\n\n')
-    : AGENT_RIDER_BACKGROUND
   return [
     'Context only:',
-    background.replace(/\s+/g, ' ').trim(),
+    AGENT_RIDER_BACKGROUND.replace(/\s+/g, ' ').trim(),
     `Agent Rider connection: ${agentLabel}.`,
     'Say context loaded, then wait.',
   ].join(' ')
@@ -1359,10 +1344,6 @@ function attachTerminalSocket(server) {
     const agentParam = requestUrl.searchParams.get('agent') || ''
     const agentCmd = Object.prototype.hasOwnProperty.call(TUI_AGENTS, agentParam) ? TUI_AGENTS[agentParam] : null
     const customCommand = agentParam === 'custom' ? (requestUrl.searchParams.get('command') || '').trim() : ''
-    const promptContext = requestUrl.searchParams.get('prompt_context') === 'app-builder' ? 'app-builder' : 'agent-rider'
-    const appWorkspace = promptContext === 'app-builder'
-      ? safeResolve(requestUrl.searchParams.get('app_workspace') || cwd) || cwd
-      : ''
     const resetSession = requestUrl.searchParams.get('reset') === '1'
     const customCommandTooLong = customCommand.length > 2000
     if (agentParam === 'custom' && (!customCommand || customCommandTooLong)) {
@@ -1435,7 +1416,7 @@ function attachTerminalSocket(server) {
 
     const terminalData = terminal.onData((data) => writeSocket(data))
     if (shouldInjectAgentRiderBackground) {
-      const backgroundPrompt = agentRiderBackgroundPrompt(agentLabel, { promptContext, appWorkspace })
+      const backgroundPrompt = agentRiderBackgroundPrompt(agentLabel)
       if (backgroundPrompt) {
         setTimeout(() => {
           try {

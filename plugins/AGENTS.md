@@ -12,8 +12,8 @@ discovered at runtime by scanning manifests.
 ## Golden rules
 
 1. **Apps are runtime data, not Agent Rider source code.** Build only inside the
-   App Builder workspace shown in `<agent-rider-app-workspace>` or under
-   `AGENT_RIDER_APPS_DIR/<slug>/`. Do **not** create app folders inside the
+   app workspace provided by the user or under `AGENT_RIDER_APPS_DIR/<slug>/`.
+   Do **not** create app folders inside the
    Agent Rider source repo.
 2. **One folder per app**: `AGENT_RIDER_APPS_DIR/<slug>/`. The `<slug>` is
    **kebab-case and globally unique** (`^[a-z0-9][a-z0-9-]*$`). If your slug
@@ -28,7 +28,7 @@ discovered at runtime by scanning manifests.
    exposed there, say so — it's a platform change, not an app change.
 5. **No secrets** in app code.
 6. **No Agent Rider git commit for app work.** The repo-root AGENTS.md commit
-   rule applies to Agent Rider code changes only. App Builder work is
+   rule applies to Agent Rider code changes only. Agent App work is
    independent local development. If the app itself needs version control, run
    `git init` inside that app workspace only; never stage or commit it in the
    Agent Rider repo.
@@ -48,7 +48,7 @@ AGENT_RIDER_APPS_DIR/<slug>/
     index.html      # required entry; the app is "ready" once this exists
 ```
 
-When App Builder provides an exact app workspace path, that path is already the
+When an exact app workspace path is provided, that path is already the
 `AGENT_RIDER_APPS_DIR/<slug>/` folder. Put `manifest.json` and `dist/` directly
 there; do not create another nested `plugins/<slug>/` folder.
 
@@ -78,7 +78,7 @@ Use only what you declare in `dataScopes`.
 
 ## Workflow
 
-1. `cd` to the exact App Builder workspace path.
+1. `cd` to the exact app workspace path.
 2. Create or update `manifest.json` (set a unique `id`/`label`) and build your UI.
 3. Produce `dist/index.html` (+ assets, **relative paths**). For the no-build
    path you can author files directly in `dist/`. For a framework, configure its

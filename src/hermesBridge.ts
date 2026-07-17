@@ -1,5 +1,3 @@
-import appPluginGuide from '../plugins/AGENTS.md?raw'
-
 export type HermesConnectionState = 'disconnected' | 'connecting' | 'ready' | 'busy' | 'error'
 
 export type HermesRpcEvent = {
@@ -30,12 +28,8 @@ export interface PromptImage {
 export interface SubmitPromptOptions {
   model?: string
   modelProvider?: string | null
-  promptContext?: PromptContext
-  appWorkspace?: string
   images?: PromptImage[]
 }
-
-export type PromptContext = 'agent-rider' | 'app-builder'
 
 export class HermesActiveStreamError extends Error {
   constructor(
@@ -52,36 +46,15 @@ const AGENT_RIDER_INTERFACE_CONTEXT = [
   'You are working inside Agent Rider, a web interface with Conversation Cards, Resources, Apps, a File Browser, and embedded TUI terminals.',
   'Use the current workspace path supplied by the interface. Mention Agent Rider UI details only when relevant to the user request.',
 ].join('\n')
-const APP_PLUGIN_GUIDE = appPluginGuide.trim()
-
 function errMsg(error: unknown) {
   return error instanceof Error ? error.message : String(error)
 }
 
-function withPromptContext(message: string, context: PromptContext = 'agent-rider', appWorkspace?: string) {
-  const contextBlocks = [
+function withPromptContext(message: string) {
+  return [
     '<agent-rider-interface-context>',
     AGENT_RIDER_INTERFACE_CONTEXT,
     '</agent-rider-interface-context>',
-  ]
-  if (context === 'app-builder') {
-    contextBlocks.push(
-      '',
-      '<agent-rider-app-plugin-guide>',
-      APP_PLUGIN_GUIDE,
-      '</agent-rider-app-plugin-guide>',
-    )
-    if (appWorkspace?.trim()) {
-      contextBlocks.push(
-        '',
-        '<agent-rider-app-workspace>',
-        appWorkspace.trim(),
-        '</agent-rider-app-workspace>',
-      )
-    }
-  }
-  return [
-    ...contextBlocks,
     '',
     '<user-message>',
     message,
@@ -191,7 +164,7 @@ export class HermesBridge {
     const cleanProvider = options.modelProvider?.trim()
     const body: Record<string, unknown> = {
       session_id: sessionId,
-      message: withPromptContext(text, options.promptContext ?? 'agent-rider', options.appWorkspace),
+      message: withPromptContext(text),
       workspace: cwd,
     }
     if (cleanModel) {

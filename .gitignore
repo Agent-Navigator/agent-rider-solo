@@ -2,7 +2,7 @@
 node_modules/
 
 # Build output — the main app's dist/ is a build artifact and stays out of git.
-# App Builder output is runtime data under AGENT_RIDER_APPS_DIR, not source.
+# Agent App output is runtime data under AGENT_RIDER_APPS_DIR, not source.
 dist/
 *.tsbuildinfo
 

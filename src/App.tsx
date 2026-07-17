@@ -29,7 +29,7 @@ import typescript from 'highlight.js/lib/languages/typescript'
 import xml from 'highlight.js/lib/languages/xml'
 import yaml from 'highlight.js/lib/languages/yaml'
 import '@xterm/xterm/css/xterm.css'
-import { HermesActiveStreamError, HermesBridge, type HermesConnectionState, type PromptContext, type PromptImage } from './hermesBridge'
+import { HermesActiveStreamError, HermesBridge, type HermesConnectionState, type PromptImage } from './hermesBridge'
 import {
   loadPersistedState,
   persistState,
@@ -37,7 +37,6 @@ import {
   readFilePreview,
   searchFiles,
   makeDir,
-  moveDir,
   fileDownloadUrl,
   deleteFile,
   uploadFile,
@@ -73,16 +72,6 @@ type ChatRole = 'user' | 'assistant'
 // terminal (see WebTerminal + the /store/terminal/ws `agent` param).
 type AgentType = 'hermes' | 'claude' | 'codex' | 'agy' | 'devin' | 'custom'
 type TuiAgentType = Exclude<AgentType, 'hermes'>
-type AppBuilderMode = 'chat' | 'app' | 'split'
-
-// Chat pane share of the Chat+App split, clamped so neither pane collapses.
-const APP_BUILDER_SPLIT_DEFAULT = 0.3
-const APP_BUILDER_SPLIT_MIN = 0.15
-const APP_BUILDER_SPLIT_MAX = 0.85
-
-function clampBuilderSplit(value: number) {
-  return Math.min(APP_BUILDER_SPLIT_MAX, Math.max(APP_BUILDER_SPLIT_MIN, value))
-}
 type RunCardKind = 'conversation' | 'app-builder'
 
 interface HermesModel {
@@ -111,8 +100,8 @@ const AGENT_OPTIONS: { value: AgentType; label: string }[] = [
   { value: 'custom', label: 'Custom command' },
 ]
 
-// New Conversation Cards are CLI-only. Hermes remains available to App Builder
-// and to grandfathered Hermes cards restored from an older installation.
+// New Conversation Cards are CLI-only. Hermes remains available to
+// grandfathered Hermes cards restored from an older installation.
 const CONVERSATION_AGENT_OPTIONS = AGENT_OPTIONS.filter((option) => option.value !== 'hermes')
 
 function isTuiAgent(agent: AgentType): agent is TuiAgentType {
@@ -562,15 +551,7 @@ interface QueuedPromptEntry {
   model?: string
   modelProvider?: string | null
   reasoningEffort?: string
-  promptContext?: PromptContext
   images?: PromptImage[]
-}
-
-interface AppFolderConflict {
-  sourcePath: string
-  targetPath: string
-  error: string
-  acknowledged?: boolean
 }
 
 interface CategoryRule {
@@ -602,7 +583,6 @@ const DEFAULT_CWD = '/root/agent-work/DEV/agent-rider'
 // Default workspace folder for new Conversation Cards (~/).
 const DEFAULT_WORKSPACE_CWD = '/root'
 const DEFAULT_TERMINAL_CWD = '/root'
-const DEFAULT_APP_BUILDER_ROOT = '/root/.agent-rider/apps'
 const DEFAULT_TITLE = 'Agent Rider'
 const AGENT_TERMINAL_STATE_PREFIX = 'agent-terminal:'
 const TUI_WHEEL_PAGE_DELTA = 80
@@ -610,51 +590,29 @@ const TUI_PAGE_UP = '\x1b[5~'
 const TUI_PAGE_DOWN = '\x1b[6~'
 const DEFAULT_REASONING_EFFORTS = ['minimal', 'low', 'medium', 'high', 'xhigh']
 const EMPTY_MODEL_CATALOG: HermesModelCatalog = { groups: [], defaultModel: '', activeProvider: null }
-const APP_BUILDER_PANEL_ID = 'app-builder'
-const APP_BUILDER_RUN_ID = 'run-app-builder'
-// Per-app App Builder instances: every built app opens through its own builder
-// panel/run pair so each app keeps its own conversation and chat/app-view mode.
-const APP_BUILDER_PANEL_PREFIX = 'app-builder:'
-const APP_BUILDER_RUN_PREFIX = 'run-app-builder:'
+const LEGACY_APP_BUILDER_PANEL_ID = 'app-builder'
+const LEGACY_APP_BUILDER_PANEL_PREFIX = 'app-builder:'
+const LEGACY_APP_BUILDER_RUN_ID = 'run-app-builder'
+const LEGACY_APP_BUILDER_RUN_PREFIX = 'run-app-builder:'
 const RETIRED_PLUGIN_PANEL_IDS = new Set([
   'plugin:hermes-webui',
   'plugin:local-desktop-guacamole',
 ])
-const APP_SLUG_RE = /^[a-z0-9][a-z0-9-]*$/
 
-function appBuilderPanelIdFor(appSlug: string) {
-  return `${APP_BUILDER_PANEL_PREFIX}${appSlug}`
-}
-
-function appBuilderRunIdFor(appSlug: string) {
-  return `${APP_BUILDER_RUN_PREFIX}${appSlug}`
-}
-
-function isAppBuilderPanelId(panelId: string) {
-  return panelId === APP_BUILDER_PANEL_ID || panelId.startsWith(APP_BUILDER_PANEL_PREFIX)
-}
-
-// cardKind is not a persisted run column, so builder runs are recognized by id.
+// cardKind is not a persisted run column, so retired builder runs are still
+// recognized by id and kept hidden rather than resurfacing as conversations.
 function isAppBuilderRunId(runId: string) {
-  return runId === APP_BUILDER_RUN_ID || runId.startsWith(APP_BUILDER_RUN_PREFIX)
+  return runId === LEGACY_APP_BUILDER_RUN_ID || runId.startsWith(LEGACY_APP_BUILDER_RUN_PREFIX)
 }
 
-function appSlugForBuilderPanel(panelId: string) {
-  return panelId.startsWith(APP_BUILDER_PANEL_PREFIX) ? panelId.slice(APP_BUILDER_PANEL_PREFIX.length) : null
-}
-
-function appBuilderPanelIdForRun(runId: string) {
-  return runId.startsWith(APP_BUILDER_RUN_PREFIX) ? appBuilderPanelIdFor(runId.slice(APP_BUILDER_RUN_PREFIX.length)) : APP_BUILDER_PANEL_ID
-}
-
-function appBuilderRunIdForPanel(panelId: string) {
-  const slug = appSlugForBuilderPanel(panelId)
-  return slug ? appBuilderRunIdFor(slug) : APP_BUILDER_RUN_ID
-}
-
-// Legacy `app:<slug>` WebView panels are superseded by per-app builder panels.
-function migrateLegacyAppPanelId(panelId: string) {
-  return panelId.startsWith('app:') ? appBuilderPanelIdFor(panelId.slice('app:'.length)) : panelId
+// App Builder is retired for now, but apps created by older installations stay
+// available as plain WebView panels. Drop the old empty builder panel and map
+// per-app builder panels back to their stable `app:<slug>` ids.
+function migrateAppPanelId(panelId: string): string | null {
+  if (panelId === LEGACY_APP_BUILDER_PANEL_ID) return null
+  return panelId.startsWith(LEGACY_APP_BUILDER_PANEL_PREFIX)
+    ? `app:${panelId.slice(LEGACY_APP_BUILDER_PANEL_PREFIX.length)}`
+    : panelId
 }
 
 hljs.registerLanguage('bash', bash)
@@ -842,13 +800,9 @@ function normalizePanelStates(value: unknown): Record<string, WorkspacePanelStat
     const state: WorkspacePanelState = {}
     if (typeof source.collapsed === 'boolean') state.collapsed = source.collapsed
     if (typeof source.fullWindow === 'boolean') state.fullWindow = source.fullWindow
-    if (source.builderMode === 'chat' || source.builderMode === 'app' || source.builderMode === 'split') state.builderMode = source.builderMode
-    if (typeof source.contextCollapsed === 'boolean') state.contextCollapsed = source.contextCollapsed
-    if (typeof source.builderSplit === 'number' && Number.isFinite(source.builderSplit)) state.builderSplit = clampBuilderSplit(source.builderSplit)
     if (typeof source.notepad === 'string') state.notepad = source.notepad
-    const migratedKey = migrateLegacyAppPanelId(key)
-    // A legacy app panel was showing the app itself, so its builder starts on App View.
-    if (migratedKey !== key && !state.builderMode) state.builderMode = 'app'
+    const migratedKey = migrateAppPanelId(key)
+    if (!migratedKey) continue
     if (Object.keys(state).length) states[migratedKey] = state
   }
   return states
@@ -1286,54 +1240,6 @@ function fileNameFromPath(path: string) {
 function fileExtension(name: string) {
   const index = name.lastIndexOf('.')
   return index > 0 ? name.slice(index).toLowerCase() : ''
-}
-
-function pathSegment(value: string, fallback: string) {
-  const clean = value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-  return clean || fallback
-}
-
-function appBuilderFallbackRoot(workspaceRoot: string) {
-  const root = workspaceRoot.replace(/\/+$/, '')
-  return root === DEFAULT_WORKSPACE_CWD ? DEFAULT_APP_BUILDER_ROOT : `${root}/.agent-rider/apps`
-}
-
-function appBuilderWorkspacePath(appsRoot: string, _category: string, _project: string, title: string, appId?: string | null) {
-  const root = appsRoot.replace(/\/+$/, '')
-  return [root, pathSegment(appId || title, 'untitled-app')].join('/')
-}
-
-function appSlugFromManifestContent(content: string | undefined) {
-  if (!content) return null
-  try {
-    const manifest = JSON.parse(content) as Record<string, unknown>
-    const id = String(manifest.id ?? '').trim()
-    return APP_SLUG_RE.test(id) ? id : null
-  } catch {
-    return null
-  }
-}
-
-async function appSlugFromWorkspaceManifest(workspacePath: string) {
-  const base = workspacePath.replace(/\/+$/, '')
-  const preview = await readFilePreview(`${base}/manifest.json`)
-  if ('error' in preview) return null
-  return appSlugFromManifestContent(preview.content)
-}
-
-async function ensureWorkspacePath(rootPath: string, targetPath: string) {
-  const root = rootPath.replace(/\/+$/, '')
-  if (!targetPath.startsWith(`${root}/`)) return
-  const parts = targetPath.slice(root.length + 1).split('/').filter(Boolean)
-  let parent = root
-  for (const part of parts) {
-    const result = await makeDir(parent, part)
-    parent = 'error' in result ? `${parent}/${part}` : result.path
-  }
 }
 
 function fileTypeIcon(name: string) {
@@ -3039,8 +2945,6 @@ function ConversationCard({
                     </>
                   ) : undefined}
                   fullWindow={agentTerminalState?.fullWindow}
-                  promptContext={run.cardKind === 'app-builder' ? 'app-builder' : undefined}
-                  appWorkspace={run.cardKind === 'app-builder' ? run.workspacePath : undefined}
                   onStateChange={onAgentTerminalStateChange}
                   notepad={agentTerminalState?.notepad}
                   onNotepadChange={(text) => onAgentTerminalStateChange({ notepad: text })}
@@ -3397,444 +3301,11 @@ function useAgentApps(enabled: boolean): {
   return { listing, reorder, rename }
 }
 
-function AppBuilderPanel({
-  run,
-  apps,
-  appWarnings,
-  targetAppId,
-  chatContent,
-  onTitleChange,
-  onCategoryChange,
-  onProjectChange,
-  onAgentChange,
-  onAgentCommandChange,
-  onClose,
-  collapsed,
-  fullWindow,
-  mode,
-  onModeChange,
-  contextCollapsed,
-  onContextCollapsedChange,
-  splitRatio,
-  onStateChange,
-  maximized,
-  onToggleMaximize,
-}: {
-  run: RunNode
-  apps: AgentApp[]
-  appWarnings: AppWarning[]
-  /** When set, this builder instance edits an existing app (Resources → App entry). */
-  targetAppId?: string
-  chatContent: ReactNode
-  onTitleChange: (value: string) => void
-  onCategoryChange: (value: string) => void
-  onProjectChange: (value: string) => void
-  onAgentChange: (value: AgentType) => void
-  onAgentCommandChange: (value: string) => void
-  onClose: () => void
-  collapsed?: boolean
-  fullWindow?: boolean
-  mode?: AppBuilderMode
-  onModeChange?: (mode: AppBuilderMode) => void
-  contextCollapsed?: boolean
-  onContextCollapsedChange?: (collapsed: boolean) => void
-  /** Chat pane share (0.15–0.85) of the Chat+App split. */
-  splitRatio?: number
-  onStateChange?: (patch: WorkspacePanelState) => void
-  /** True while this panel is the single block filling the workspace grid. */
-  maximized?: boolean
-  /** Toggles this panel as the single block filling the workspace grid. */
-  onToggleMaximize?: () => void
-}) {
-  const [internalCollapsed, setInternalCollapsed] = useState(false)
-  const [internalFullWindow, setInternalFullWindow] = useState(false)
-  const [internalMode, setInternalMode] = useState<AppBuilderMode>('chat')
-  const [internalContextCollapsed, setInternalContextCollapsed] = useState(false)
-  const [internalSplit, setInternalSplit] = useState(APP_BUILDER_SPLIT_DEFAULT)
-  // Live ratio while the divider is being dragged (committed on pointer-up).
-  const [dragSplit, setDragSplit] = useState<number | null>(null)
-  const splitContainerRef = useRef<HTMLDivElement | null>(null)
-  const [customCommandDraft, setCustomCommandDraft] = useState(run.agentCommand ?? '')
-  const isCollapsed = collapsed ?? internalCollapsed
-  const isFullWindow = fullWindow ?? internalFullWindow
-  const activeMode = mode ?? internalMode
-  const isContextCollapsed = contextCollapsed ?? internalContextCollapsed
-  const splitValue = dragSplit ?? splitRatio ?? internalSplit
-  const agentAvailability = useAgentAvailability()
-  // Full-window App View drops the builder chrome (header/context/tabs) so the
-  // app truly fills the screen.
-  const appViewOnly = isFullWindow && activeMode === 'app'
-  const appTitle = run.task.trim() || 'Untitled app'
-  const appSlug = pathSegment(appTitle, 'untitled-app')
-  const appAtWork = targetAppId
-    ? apps.find((app) => app.id === targetAppId) ?? null
-    : apps.find((app) => app.id === appSlug || app.label.trim().toLowerCase() === appTitle.toLowerCase()) ?? apps.find((app) => app.hasDist) ?? apps[0] ?? null
-
-  useEffect(() => {
-    setCustomCommandDraft(run.agentCommand ?? '')
-  }, [run.id, run.agentCommand])
-
-  function setCollapsedState(updater: boolean | ((current: boolean) => boolean)) {
-    const next = typeof updater === 'function' ? updater(isCollapsed) : updater
-    if (collapsed === undefined) setInternalCollapsed(next)
-    onStateChange?.({ collapsed: next })
-  }
-
-  function setFullWindowState(updater: boolean | ((current: boolean) => boolean)) {
-    const next = typeof updater === 'function' ? updater(isFullWindow) : updater
-    if (fullWindow === undefined) setInternalFullWindow(next)
-    onStateChange?.({ fullWindow: next })
-  }
-
-  function setModeState(next: AppBuilderMode) {
-    if (mode === undefined) setInternalMode(next)
-    onModeChange?.(next)
-  }
-
-  function setContextCollapsedState(next: boolean) {
-    if (contextCollapsed === undefined) setInternalContextCollapsed(next)
-    onContextCollapsedChange?.(next)
-  }
-
-  function commitSplit(next: number) {
-    const ratio = clampBuilderSplit(next)
-    if (splitRatio === undefined) setInternalSplit(ratio)
-    onStateChange?.({ builderSplit: ratio })
-  }
-
-  function handleSplitPointerDown(event: ReactPointerEvent<HTMLDivElement>) {
-    const container = splitContainerRef.current
-    if (!container || event.button !== 0) return
-    event.preventDefault()
-    const ratioFor = (clientX: number) => {
-      const rect = container.getBoundingClientRect()
-      return rect.width > 0 ? clampBuilderSplit((clientX - rect.left) / rect.width) : null
-    }
-    const onMove = (moveEvent: PointerEvent) => {
-      const ratio = ratioFor(moveEvent.clientX)
-      if (ratio !== null) setDragSplit(ratio)
-    }
-    const onUp = (upEvent: PointerEvent) => {
-      window.removeEventListener('pointermove', onMove)
-      window.removeEventListener('pointerup', onUp)
-      window.removeEventListener('pointercancel', onUp)
-      const ratio = ratioFor(upEvent.clientX)
-      if (ratio !== null) commitSplit(ratio)
-      setDragSplit(null)
-    }
-    window.addEventListener('pointermove', onMove)
-    window.addEventListener('pointerup', onUp)
-    window.addEventListener('pointercancel', onUp)
-  }
-
-  function commitCustomAgentCommand() {
-    const next = customCommandDraft.trim()
-    if (next === (run.agentCommand ?? '').trim()) return
-    onAgentCommandChange(next)
-  }
-
-  function handleCustomAgentCommandKeyDown(event: KeyboardEvent<HTMLInputElement>) {
-    if (event.key === 'Enter') {
-      event.preventDefault()
-      commitCustomAgentCommand()
-      event.currentTarget.blur()
-      return
-    }
-    if (event.key === 'Escape') {
-      event.preventDefault()
-      setCustomCommandDraft(run.agentCommand ?? '')
-      event.currentTarget.blur()
-    }
-  }
-
-  const appView = (
-    <div className="app-builder-view" role="tabpanel">
-      <div className="app-builder-viewbar">
-        <strong>{appAtWork?.label ?? 'App at work'}</strong>
-        <span>{appAtWork?.hasDist ? 'Ready' : appAtWork ? 'Waiting for build' : 'No app yet'}</span>
-        <button
-          type="button"
-          className="terminal-icon-button app-builder-view-expand"
-          title={isFullWindow ? 'Exit full window' : 'Expand to full window'}
-          aria-label={isFullWindow ? 'Exit full window' : 'Expand to full window'}
-          onClick={() => setFullWindowState((current) => !current)}
-        >
-          {isFullWindow ? '↙' : '⛶'}
-        </button>
-      </div>
-      {appAtWork?.hasDist ? (
-        <iframe className="app-builder-frame" title={appAtWork.label} src={appAtWork.entry} />
-      ) : (
-        <div className="conv-empty">
-          {appAtWork ? `${appAtWork.label} needs a dist/index.html build before preview.` : 'The app being built will appear here after the Resources App scan refreshes.'}
-        </div>
-      )}
-      {appWarnings.length ? (
-        <div className="app-builder-warnings">
-          {appWarnings.map((warning, index) => (
-            <div key={`builder-warn-${index}`} className="app-warning" role="alert">
-              ⚠ {warning.id ?? warning.dir ?? 'plugin'}: {warning.error}
-            </div>
-          ))}
-        </div>
-      ) : null}
-    </div>
-  )
-
-  return (
-    <section
-      className={`app-builder-card conv-card ${isCollapsed && !appViewOnly ? 'collapsed' : ''} ${isFullWindow ? 'full-window' : ''} ${appViewOnly ? 'app-view-only' : ''}`}
-      aria-label="App Builder"
-    >
-      {appViewOnly ? null : (
-      <div className="win-titlebar" onDoubleClick={() => setCollapsedState((current) => !current)}>
-        <WinGrip />
-        <span
-          className="win-dot"
-          style={{ background: appAtWork?.hasDist ? '#46c98b' : '#e0a33e' }}
-          aria-hidden
-        />
-        <input
-          className="win-title-input app-builder-title-input"
-          value={run.task}
-          onChange={(event) => onTitleChange(event.target.value)}
-          onClick={(event) => event.stopPropagation()}
-          placeholder="untitled app"
-          aria-label="App title"
-          size={Math.max(4, Math.min(28, (run.task || 'untitled app').length + 1))}
-        />
-        <span className="win-meta">
-          {run.category || '···'} | {run.project || '···'}
-        </span>
-        <div className="win-spacer" />
-        <span className="win-status" style={{ color: appAtWork?.hasDist ? '#5fd39b' : '#e6b25a' }}>
-          {appAtWork?.hasDist ? 'ready' : appAtWork ? 'building' : 'no build'}
-        </span>
-        <button
-          type="button"
-          className={`win-btn ${isContextCollapsed ? '' : 'active'}`}
-          title={isContextCollapsed ? 'Show context' : 'Hide context'}
-          aria-label="Toggle context"
-          aria-expanded={!isContextCollapsed}
-          onClick={(event) => {
-            event.stopPropagation()
-            setContextCollapsedState(!isContextCollapsed)
-          }}
-        >
-          <WinContextIcon />
-        </button>
-        <button
-          type="button"
-          className="win-btn"
-          title={isCollapsed ? 'Expand window' : 'Collapse window'}
-          aria-label={isCollapsed ? 'Expand window' : 'Collapse window'}
-          aria-expanded={!isCollapsed}
-          onClick={() => setCollapsedState((current) => !current)}
-        >
-          <span className={`conv-caret ${isCollapsed ? '' : 'open'}`} aria-hidden>▾</span>
-        </button>
-        {onToggleMaximize ? (
-          <button
-            type="button"
-            className="win-btn"
-            title={maximized ? 'Restore grid layout' : 'Maximize in grid'}
-            aria-label={maximized ? 'Restore grid layout' : 'Maximize in grid'}
-            onClick={(event) => {
-              event.stopPropagation()
-              onToggleMaximize()
-            }}
-          >
-            <WinMaximizeIcon active={maximized} />
-          </button>
-        ) : null}
-        <button
-          type="button"
-          className="win-btn"
-          title={isFullWindow ? 'Exit full window' : 'Expand to full window'}
-          aria-label={isFullWindow ? 'Exit full window' : 'Expand to full window'}
-          onClick={(event) => {
-            event.stopPropagation()
-            setFullWindowState((current) => !current)
-          }}
-        >
-          <WinFullscreenIcon active={isFullWindow} />
-        </button>
-        <button
-          type="button"
-          className="win-btn win-btn-close"
-          title="Close App Builder"
-          aria-label="Close App Builder"
-          onClick={(event) => {
-            event.stopPropagation()
-            onClose()
-          }}
-        >
-          <WinCloseIcon />
-        </button>
-      </div>
-      )}
-
-      {!isCollapsed || appViewOnly ? (
-        <div className="conv-card-body app-builder-body">
-          {appViewOnly ? null : (
-          <div className={`conv-meta app-builder-context ${isContextCollapsed ? 'collapsed' : ''}`}>
-            <button
-              type="button"
-              className="conv-meta-toggle"
-              aria-expanded={!isContextCollapsed}
-              onClick={() => setContextCollapsedState(!isContextCollapsed)}
-            >
-              <span className={`conv-meta-caret ${isContextCollapsed ? '' : 'open'}`} aria-hidden>▾</span>
-              <span className="conv-meta-toggle-label">Context</span>
-              {isContextCollapsed ? (
-                <span className="conv-meta-summary">
-                  {[run.category, run.project, run.task, agentLabel(run.agentType)].filter(Boolean).join(' · ') || 'Category · Project · Title · Agent'}
-                </span>
-              ) : null}
-            </button>
-            {isContextCollapsed ? null : (
-            <div className="conv-meta-fields">
-              <div className="conv-meta-row">
-                <span className="tree-label">Category</span>
-                <input
-                  className="conv-input"
-                  list="known-categories"
-                  value={run.category}
-                  onChange={(event) => onCategoryChange(event.target.value)}
-                  placeholder="App category"
-                />
-              </div>
-              <div className="conv-meta-row">
-                <span className="tree-label">Project</span>
-                <input
-                  className="conv-input"
-                  list="known-projects"
-                  value={run.project}
-                  onChange={(event) => onProjectChange(event.target.value)}
-                  placeholder="App project"
-                />
-              </div>
-              <div className="conv-meta-row">
-                <span className="tree-label">Title</span>
-                <input
-                  className="conv-input"
-                  value={run.task}
-                  onChange={(event) => onTitleChange(event.target.value)}
-                  placeholder="App title"
-                />
-              </div>
-              <div className="conv-meta-row">
-                <span className="tree-label">Agent</span>
-                <select
-                  className="conv-input conv-agent-select"
-                  value={run.agentType ?? 'hermes'}
-                  onChange={(event) => onAgentChange(event.target.value as AgentType)}
-                  aria-label="App Builder agent"
-                >
-                  {renderAgentOptions(agentAvailability)}
-                </select>
-              </div>
-              {run.agentType === 'custom' ? (
-                <div className="conv-meta-row">
-                  <span className="tree-label">Command</span>
-                  <div className="conv-agent-command-editor">
-                    <input
-                      className="conv-input conv-agent-command"
-                      value={customCommandDraft}
-                      onChange={(event) => setCustomCommandDraft(event.target.value)}
-                      onKeyDown={handleCustomAgentCommandKeyDown}
-                      placeholder="bash command, e.g. claude --permission-mode auto"
-                      spellCheck={false}
-                      autoCapitalize="off"
-                      autoCorrect="off"
-                    />
-                    <button
-                      type="button"
-                      className="conv-agent-command-apply"
-                      disabled={customCommandDraft.trim() === (run.agentCommand ?? '').trim()}
-                      onClick={commitCustomAgentCommand}
-                    >
-                      Apply
-                    </button>
-                  </div>
-                </div>
-              ) : null}
-            </div>
-            )}
-          </div>
-          )}
-
-          {appViewOnly ? null : (
-          <div className="app-builder-tabs" role="tablist" aria-label="App Builder view">
-            <button
-              type="button"
-              role="tab"
-              aria-selected={activeMode === 'chat'}
-              className={activeMode === 'chat' ? 'active' : ''}
-              onClick={() => setModeState('chat')}
-            >
-              Chat Window
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={activeMode === 'app'}
-              className={activeMode === 'app' ? 'active' : ''}
-              onClick={() => setModeState('app')}
-            >
-              App View
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={activeMode === 'split'}
-              className={activeMode === 'split' ? 'active' : ''}
-              onClick={() => setModeState('split')}
-            >
-              Chat+App
-            </button>
-          </div>
-          )}
-
-          {activeMode === 'chat' ? (
-            <div className="app-builder-chat" role="tabpanel">
-              {chatContent}
-            </div>
-          ) : activeMode === 'split' ? (
-            <div
-              className={`app-builder-split ${dragSplit !== null ? 'dragging' : ''}`}
-              role="tabpanel"
-              ref={splitContainerRef}
-            >
-              <div className="app-builder-split-chat" style={{ width: `${splitValue * 100}%` }}>
-                {chatContent}
-              </div>
-              <div
-                className="app-builder-split-divider"
-                role="separator"
-                aria-orientation="vertical"
-                aria-label="Resize chat and app panes"
-                onPointerDown={handleSplitPointerDown}
-              />
-              <div className="app-builder-split-app">{appView}</div>
-            </div>
-          ) : (
-            appView
-          )}
-        </div>
-      ) : null}
-    </section>
-  )
-}
-
 function ResourceSidebar({
   openPluginIds,
   onLaunchPlugin,
   apps,
   appWarnings,
-  appBuilderOpen,
-  appBuilderTitle,
-  onLaunchAppBuilder,
   openAppSlugs,
   onLaunchApp,
   onReorderApps,
@@ -3844,9 +3315,6 @@ function ResourceSidebar({
   onLaunchPlugin: (pluginId: string) => void
   apps: AgentApp[]
   appWarnings: AppWarning[]
-  appBuilderOpen: boolean
-  appBuilderTitle: string
-  onLaunchAppBuilder: () => void
   openAppSlugs: Set<string>
   onLaunchApp: (slug: string) => void
   onReorderApps: (order: string[]) => void
@@ -3924,29 +3392,6 @@ function ResourceSidebar({
 
           <section className="tree-nav-category">
             <h3>App</h3>
-            <div className="tree-nav-project resource-app-tree">
-              <div className="tree-nav-label">Build</div>
-              <div className="tree-nav-runs">
-                <button
-                  type="button"
-                  className="tree-nav-run resource-tool build-app-button"
-                  onClick={onLaunchAppBuilder}
-                  title="Start a new App Builder conversation"
-                >
-                  <span className="tree-run-title">Build an App</span>
-                  <LaunchIcon open={appBuilderOpen} />
-                </button>
-                <button
-                  type="button"
-                  className={`tree-nav-run resource-tool ${appBuilderOpen ? 'active' : ''}`}
-                  onClick={onLaunchAppBuilder}
-                  title={appBuilderOpen ? 'App Builder is open' : 'Launch App Builder'}
-                >
-                  <span className="tree-run-title">{appBuilderTitle}</span>
-                  <LaunchIcon open={appBuilderOpen} />
-                </button>
-              </div>
-            </div>
             {appGroups.map(([group, groupApps]) => (
               <div key={group} className="tree-nav-project resource-app-tree">
                 <div className="tree-nav-label">{group}</div>
@@ -4052,7 +3497,7 @@ function AppTool({
           type="button"
           className={`tree-nav-run resource-tool app-tool-launch ${open ? 'active' : ''}`}
           onClick={onLaunch}
-          title={open ? `${app.label} is open in App Builder` : `Open ${app.label} in App Builder`}
+          title={open ? `${app.label} is open` : `Open ${app.label}`}
         >
           <span className="tree-run-title">{app.label}</span>
           {app.hasDist ? <LaunchIcon open={open} /> : <span className="resource-tool-action">⏳</span>}
@@ -4109,8 +3554,6 @@ function WebTerminal({
   collapsible = true,
   collapsed,
   fullWindow,
-  promptContext,
-  appWorkspace,
   onStateChange,
   headerLeading,
   frameless = false,
@@ -4136,8 +3579,6 @@ function WebTerminal({
   collapsible?: boolean
   collapsed?: boolean
   fullWindow?: boolean
-  promptContext?: PromptContext
-  appWorkspace?: string
   onStateChange?: (patch: WorkspacePanelState) => void
   /** Rendered in the header's action row before the connection state/expand
    *  button — lets the card slot in extra controls (e.g. the File Browser
@@ -4245,12 +3686,10 @@ function WebTerminal({
     const agentParam = agent ? `&agent=${encodeURIComponent(agent)}` : ''
     const commandParam = agent === 'custom' && customCommand ? `&command=${encodeURIComponent(customCommand)}` : ''
     const sessionParam = sessionKey ? `&session=${encodeURIComponent(sessionKey)}` : ''
-    const promptContextParam = promptContext ? `&prompt_context=${encodeURIComponent(promptContext)}` : ''
-    const appWorkspaceParam = appWorkspace ? `&app_workspace=${encodeURIComponent(appWorkspace)}` : ''
     const resetParam = resetOnNextConnectRef.current ? '&reset=1' : ''
     resetOnNextConnectRef.current = false
     const socket = new WebSocket(
-      `${protocol}//${window.location.host}/store/terminal/ws?cwd=${encodeURIComponent(initialCwd)}&cols=${terminal.cols}&rows=${terminal.rows}${agentParam}${commandParam}${sessionParam}${promptContextParam}${appWorkspaceParam}${resetParam}`,
+      `${protocol}//${window.location.host}/store/terminal/ws?cwd=${encodeURIComponent(initialCwd)}&cols=${terminal.cols}&rows=${terminal.rows}${agentParam}${commandParam}${sessionParam}${resetParam}`,
     )
     socketRef.current = socket
     setConnectionState('connecting')
@@ -4294,7 +3733,7 @@ function WebTerminal({
       if (socketRef.current === socket) socketRef.current = null
       if (terminalRef.current === terminal) terminalRef.current = null
     }
-  }, [initialCwd, terminalKey, agent, customCommand, sessionKey, promptContext, appWorkspace])
+  }, [initialCwd, terminalKey, agent, customCommand, sessionKey])
 
   useEffect(() => {
     if (!terminalCollapsed) window.requestAnimationFrame(() => fitRef.current())
@@ -4887,9 +4326,6 @@ export default function App() {
   const thinkingBufferRef = useRef('')
   const turnsRef = useRef<TurnItem[]>([])
   const runsRef = useRef<RunNode[]>([])
-  // Pending debounced App Builder workspace-folder moves, keyed by run id —
-  // avoids moving the folder on every keystroke while the title is being typed.
-  const workspaceMoveTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
   const [activeHermesTurnId, setActiveHermesTurnId] = useState<string | null>(null)
   const [activeHermesStreamId, setActiveHermesStreamId] = useState<string | null>(null)
   // Each conversation (run) keeps its own Hermes session for multi-turn context.
@@ -4965,7 +4401,6 @@ export default function App() {
   // Which conversation's workspace picker is open (null = closed).
   const [pickerRunId, setPickerRunId] = useState<string | null>(null)
   const [deletePromptRunId, setDeletePromptRunId] = useState<string | null>(null)
-  const [appFolderConflict, setAppFolderConflict] = useState<AppFolderConflict | null>(null)
   // Closed (hidden) conversation cards — re-launchable from the Navigator.
   const [closedRunIds, setClosedRunIds] = useState<Set<string>>(new Set())
   // Whether the Local Terminal window is open — re-launchable from Resources.
@@ -4981,7 +4416,6 @@ export default function App() {
   const [panelStates, setPanelStates] = useState<Record<string, WorkspacePanelState>>({})
   // Runtime Agent Apps (auto-discovered from the store backend).
   const { listing: appListing, reorder: reorderApps, rename: renameAppLabel } = useAgentApps(Boolean(passwordStatus?.authenticated))
-  const appBuilderRoot = appListing.appsRoot || appBuilderFallbackRoot(workspaceRoot)
 
   useEffect(() => {
     turnsRef.current = turns
@@ -4992,7 +4426,6 @@ export default function App() {
   }, [runs])
 
   const terminalOpen = panelOrder.includes('terminal')
-  const appBuilderOpen = panelOrder.includes(APP_BUILDER_PANEL_ID)
   const openPluginIds = useMemo(
     () => new Set(panelOrder.filter((p) => p.startsWith('plugin:')).map((p) => p.slice('plugin:'.length))),
     [panelOrder],
@@ -5001,9 +4434,8 @@ export default function App() {
     () =>
       new Set(
         panelOrder
-          .map(migrateLegacyAppPanelId)
-          .filter((p) => p.startsWith(APP_BUILDER_PANEL_PREFIX))
-          .map((p) => p.slice(APP_BUILDER_PANEL_PREFIX.length)),
+          .filter((panelId) => panelId.startsWith('app:'))
+          .map((panelId) => panelId.slice('app:'.length)),
       ),
     [panelOrder],
   )
@@ -5022,169 +4454,7 @@ export default function App() {
   }
   const launchPlugin = (pluginId: string) => openPanel(`plugin:${pluginId}`)
   const closePlugin = (pluginId: string) => closePanel(`plugin:${pluginId}`)
-  // Opening a built app goes through its own App Builder instance so viewing
-  // and maintaining apps share a single editor entry point.
-  const launchApp = (slug: string) => {
-    const app = appListing.apps.find((item) => item.id === slug)
-    setRuns((current) =>
-      current.some((run) => run.id === appBuilderRunIdFor(slug))
-        ? current
-        : [makeAppBuilderRun({ id: slug, label: app?.label ?? slug, workspacePath: app?.workspacePath }), ...current],
-    )
-    openPanel(appBuilderPanelIdFor(slug))
-  }
-
-  function makeAppBuilderRun(app?: { id: string; label: string; workspacePath?: string }): RunNode {
-    const category = 'Product Delivery'
-    const project = 'Agent Rider App'
-    const task = app ? app.label : 'Build an App'
-    return {
-      id: app ? appBuilderRunIdFor(app.id) : APP_BUILDER_RUN_ID,
-      prompt: '',
-      category,
-      categoryTags: tagsForCategory(category),
-      project,
-      workspace: '',
-      workspacePath: app?.workspacePath ?? appBuilderWorkspacePath(appBuilderRoot, category, project, task, app?.id),
-      task,
-      job: 'App Builder',
-      jobStatus: 'queued',
-      resourceIds: [],
-      model: '',
-      modelProvider: null,
-      reasoningEffort: '',
-      sessionId: null,
-      agentType: 'hermes',
-      agentCommand: '',
-      cardKind: 'app-builder',
-      column: 0,
-      createdAt: new Date().toISOString(),
-    }
-  }
-
-  function launchAppBuilder() {
-    setRuns((current) => (current.some((run) => run.id === APP_BUILDER_RUN_ID) ? current : [makeAppBuilderRun(), ...current]))
-    setClosedRunIds((current) => {
-      if (!current.has(APP_BUILDER_RUN_ID)) return current
-      const next = new Set(current)
-      next.delete(APP_BUILDER_RUN_ID)
-      return next
-    })
-    openPanel(APP_BUILDER_PANEL_ID)
-  }
-
-  // Every open App Builder panel needs a backing run. Per-app builders wait for
-  // the app listing so the run's title matches the app's label.
-  useEffect(() => {
-    const builderPanels = panelOrder.filter(isAppBuilderPanelId)
-    if (!builderPanels.length) return
-    setRuns((current) => {
-      const additions: RunNode[] = []
-      for (const panelId of builderPanels) {
-        const runId = appBuilderRunIdForPanel(panelId)
-        if (current.some((run) => run.id === runId) || additions.some((run) => run.id === runId)) continue
-        const slug = appSlugForBuilderPanel(panelId)
-        if (!slug) {
-          additions.push(makeAppBuilderRun())
-          continue
-        }
-        const app = appListing.apps.find((item) => item.id === slug)
-        if (app) additions.push(makeAppBuilderRun({ id: slug, label: app.label, workspacePath: app.workspacePath }))
-      }
-      return additions.length ? [...additions, ...current] : current
-    })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [panelOrder, appBuilderRoot, appListing.apps])
-
-  // Moves an App Builder run's workspace folder to match its current
-  // category/project/title. Reads the run fresh from runsRef at call time
-  // (not from a closure) since this fires after a debounce delay.
-  async function moveAppBuilderWorkspace(runId: string) {
-    const run = runsRef.current.find((item) => item.id === runId)
-    if (!run) return
-    const targetAppSlug = run.id.startsWith(APP_BUILDER_RUN_PREFIX)
-      ? run.id.slice(APP_BUILDER_RUN_PREFIX.length)
-      : await appSlugFromWorkspaceManifest(run.workspacePath)
-    const nextWorkspace = appBuilderWorkspacePath(appBuilderRoot, run.category, run.project, run.task, targetAppSlug)
-    if (run.workspacePath === nextWorkspace) {
-      void ensureWorkspacePath(appBuilderRoot, nextWorkspace).catch(() => {})
-      return
-    }
-
-    const sourceListing = await listDir(run.workspacePath)
-    if (!sourceListing) {
-      await ensureWorkspacePath(appBuilderRoot, nextWorkspace)
-      sessionByRunRef.current.delete(run.id)
-      updateRunContext(run.id, { workspacePath: nextWorkspace, sessionId: null })
-      return
-    }
-
-    const result = await moveDir(run.workspacePath, nextWorkspace)
-    if ('error' in result) {
-      if (result.conflict) {
-        setAppFolderConflict({
-          sourcePath: run.workspacePath,
-          targetPath: nextWorkspace,
-          error: result.error,
-        })
-        return
-      }
-      setError(result.error)
-      return
-    }
-    setAppFolderConflict(null)
-    sessionByRunRef.current.delete(run.id)
-    updateRunContext(run.id, { workspacePath: result.path, sessionId: null })
-  }
-
-  // Debounce the folder move so it settles once after the user stops typing
-  // the title/category/project, instead of moving the folder on every
-  // keystroke (each keystroke would otherwise create+move a new folder).
-  useEffect(() => {
-    const timers = workspaceMoveTimersRef.current
-    const openBuilderRuns = runs.filter(
-      (run) => isAppBuilderRunId(run.id) && panelOrder.includes(appBuilderPanelIdForRun(run.id)),
-    )
-    const openRunIds = new Set(openBuilderRuns.map((run) => run.id))
-    for (const [runId, timer] of timers) {
-      if (!openRunIds.has(runId)) {
-        clearTimeout(timer)
-        timers.delete(runId)
-      }
-    }
-    for (const run of openBuilderRuns) {
-      const targetAppSlug = run.id.startsWith(APP_BUILDER_RUN_PREFIX) ? run.id.slice(APP_BUILDER_RUN_PREFIX.length) : null
-      const nextWorkspace = appBuilderWorkspacePath(appBuilderRoot, run.category, run.project, run.task, targetAppSlug)
-      const runConflict = appFolderConflict?.sourcePath === run.workspacePath ? appFolderConflict : null
-      if (runConflict && runConflict.targetPath !== nextWorkspace) setAppFolderConflict(null)
-      const existing = timers.get(run.id)
-      if (existing) clearTimeout(existing)
-      if (run.workspacePath === nextWorkspace) {
-        timers.delete(run.id)
-        void ensureWorkspacePath(appBuilderRoot, nextWorkspace).catch(() => {})
-        continue
-      }
-      if (runConflict && runConflict.targetPath === nextWorkspace) continue
-      timers.set(
-        run.id,
-        setTimeout(() => {
-          timers.delete(run.id)
-          void moveAppBuilderWorkspace(run.id).catch((error) =>
-            setError(error instanceof Error ? error.message : String(error)),
-          )
-        }, 1200),
-      )
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [panelOrder, runs, appBuilderRoot, appFolderConflict])
-
-  useEffect(() => {
-    const timers = workspaceMoveTimersRef.current
-    return () => {
-      for (const timer of timers.values()) clearTimeout(timer)
-      timers.clear()
-    }
-  }, [])
+  const launchApp = (slug: string) => openPanel(`app:${slug}`)
 
   function setPanelColumn(panelId: string, column: number) {
     setPanelColumns((current) => ({ ...current, [panelId]: column }))
@@ -5196,9 +4466,6 @@ export default function App() {
       const normalized: WorkspacePanelState = {}
       if (typeof nextState.collapsed === 'boolean') normalized.collapsed = nextState.collapsed
       if (typeof nextState.fullWindow === 'boolean') normalized.fullWindow = nextState.fullWindow
-      if (nextState.builderMode === 'chat' || nextState.builderMode === 'app' || nextState.builderMode === 'split') normalized.builderMode = nextState.builderMode
-      if (typeof nextState.contextCollapsed === 'boolean') normalized.contextCollapsed = nextState.contextCollapsed
-      if (typeof nextState.builderSplit === 'number' && Number.isFinite(nextState.builderSplit)) normalized.builderSplit = clampBuilderSplit(nextState.builderSplit)
       if (typeof nextState.notepad === 'string') normalized.notepad = nextState.notepad
       return { ...current, [panelId]: normalized }
     })
@@ -5327,16 +4594,6 @@ export default function App() {
 
   function updateRunReasoningEffort(runId: string, reasoningEffort: string) {
     updateRunContext(runId, { reasoningEffort })
-  }
-
-  function canonicalAppBuilderWorkspace(run: RunNode) {
-    const targetSlug = run.id.startsWith(APP_BUILDER_RUN_PREFIX)
-      ? run.id.slice(APP_BUILDER_RUN_PREFIX.length)
-      : pathSegment(run.task, 'untitled-app')
-    const app = appListing.apps.find((item) =>
-      item.id === targetSlug || item.label.trim().toLowerCase() === run.task.trim().toLowerCase(),
-    )
-    return app?.workspacePath ?? appBuilderWorkspacePath(appBuilderRoot, run.category, run.project, run.task, targetSlug)
   }
 
   // ── Unified block ordering (cards + panels) ────────────────────────────────
@@ -5971,7 +5228,8 @@ export default function App() {
             const migratedOrder = [...new Set(
               (layout.panelOrder as string[])
                 .filter((panelId) => !RETIRED_PLUGIN_PANEL_IDS.has(panelId))
-                .map(migrateLegacyAppPanelId),
+                .map(migrateAppPanelId)
+                .filter((panelId): panelId is string => Boolean(panelId)),
             )]
             setPanelOrder((current) => (current.length ? current : migratedOrder))
           }
@@ -5979,7 +5237,10 @@ export default function App() {
             const migratedColumns = Object.fromEntries(
               Object.entries(layout.panelColumns as Record<string, number>)
                 .filter(([key]) => !RETIRED_PLUGIN_PANEL_IDS.has(key))
-                .map(([key, column]) => [migrateLegacyAppPanelId(key), column]),
+                .flatMap(([key, column]) => {
+                  const migratedKey = migrateAppPanelId(key)
+                  return migratedKey ? [[migratedKey, column]] : []
+                }),
             )
             setPanelColumns((current) => (Object.keys(current).length ? current : migratedColumns))
           }
@@ -5987,7 +5248,8 @@ export default function App() {
             const migratedLayout = [...new Set(
               (layout.layoutOrder as string[])
                 .filter((panelId) => !RETIRED_PLUGIN_PANEL_IDS.has(panelId))
-                .map(migrateLegacyAppPanelId),
+                .map(migrateAppPanelId)
+                .filter((panelId): panelId is string => Boolean(panelId)),
             )]
             setLayoutOrder((current) => (current.length ? current : migratedLayout))
           }
@@ -6130,7 +5392,7 @@ export default function App() {
     const bridge = bridgeRef.current
     if (!bridge) return
 
-    const { turnId, runId, prompt, workspace, model, modelProvider, reasoningEffort, promptContext, images } = entry
+    const { turnId, runId, prompt, workspace, model, modelProvider, reasoningEffort, images } = entry
 
     activeTurnRef.current = turnId
     activeRunRef.current = runId
@@ -6152,8 +5414,6 @@ export default function App() {
       const promptOptions = {
         model,
         modelProvider,
-        promptContext,
-        appWorkspace: promptContext === 'app-builder' ? workspace : undefined,
         images,
       }
       if (reasoningEffort?.trim()) await bridge.setReasoningEffort(reasoningEffort, promptOptions)
@@ -6311,10 +5571,8 @@ export default function App() {
     const modelProvider = (run.modelProvider ?? '').trim() || null
     const reasoningEffort = (run.reasoningEffort ?? '').trim()
     const hasTurns = turns.some((turn) => turn.runId === runId)
-    let workspace = run.cardKind === 'app-builder' ? canonicalAppBuilderWorkspace(run) : run.workspacePath
-    const appBuilderWorkspaceChanged = run.cardKind === 'app-builder' && workspace !== run.workspacePath
-    if (appBuilderWorkspaceChanged) sessionByRunRef.current.delete(run.id)
-    if (!hasTurns && run.cardKind !== 'app-builder') {
+    let workspace = run.workspacePath
+    if (!hasTurns) {
       const fields = deriveRunFields(prompt, {
         category: run.category,
         project: run.project,
@@ -6331,8 +5589,6 @@ export default function App() {
         item.id === runId
           ? {
             ...item,
-            workspacePath: appBuilderWorkspaceChanged ? workspace : item.workspacePath,
-            sessionId: appBuilderWorkspaceChanged ? null : item.sessionId,
             jobStatus: 'running',
           }
           : item
@@ -6351,7 +5607,6 @@ export default function App() {
       modelProvider,
       reasoningEffort,
       images,
-      promptContext: run.cardKind === 'app-builder' ? 'app-builder' : 'agent-rider',
     })
     return turnId
   }
@@ -6414,52 +5669,6 @@ export default function App() {
     />
   )
 
-  const renderAppBuilderChat = (run: RunNode, panelId: string) => {
-    return (
-      <ConversationCard
-        key={run.id}
-        run={run}
-        turns={turnsByRun.get(run.id) ?? []}
-        collapsed={false}
-        metaCollapsed={metaCollapsedIds.has(run.id)}
-        active={activeRunId === run.id}
-        embedded
-        hideHeader
-        hideContext
-        isNewDone={newDoneIds.has(run.id)}
-        onMarkRead={markConversationRead}
-        dragging={false}
-        dragActive={false}
-        onDragStartCard={() => {}}
-        onDragEndCard={() => {}}
-        onDropOnCard={() => {}}
-        onToggle={() => {}}
-        onMetaCollapsedChange={(collapsed) => setMetaCollapsed(run.id, collapsed)}
-        onSend={(text, parentTurnId, images) => sendInConversation(run.id, text, parentTurnId ?? null, images)}
-        onTitleChange={(value) => updateRunContext(run.id, { task: value })}
-        onCategoryChange={(value) => updateRunContext(run.id, { category: value, categoryTags: tagsForCategory(value) })}
-        onProjectChange={(value) => updateRunProject(run.id, value)}
-        onAgentChange={(value) => updateRunContext(run.id, { agentType: value })}
-        onAgentCommandChange={(value) => updateRunContext(run.id, { agentCommand: value })}
-        modelCatalog={modelCatalog}
-        modelsRefreshing={modelsRefreshing}
-        onRefreshModels={() => void refreshModelCatalog(run.workspacePath)}
-        reasoningEfforts={reasoningEfforts}
-        onModelChange={(model, modelProvider) => updateRunHermesModel(run.id, model, modelProvider)}
-        onReasoningEffortChange={(reasoningEffort) => updateRunReasoningEffort(run.id, reasoningEffort)}
-        onOpenPicker={() => setPickerRunId(run.id)}
-        onClose={() => closePanel(panelId)}
-        onDeleteTurn={(turnId) => deleteConversationTurn(run.id, turnId)}
-        stoppableTurnId={activeHermesStreamId ? activeHermesTurnId : null}
-        refreshableTurnId={activeHermesStreamId ? activeHermesTurnId : null}
-        onStopTurn={(turnId) => void stopHermesTurn(turnId)}
-        onRefreshTurn={refreshHermesTurn}
-        agentTerminalState={panelStates[agentTerminalStateKey(run.id)]}
-        onAgentTerminalStateChange={(patch) => updatePanelState(agentTerminalStateKey(run.id), patch)}
-      />
-    )
-  }
-
   // Resolve a panel id to its content + draggable wrapper (null if the
   // referenced plugin/app no longer exists).
   const renderPanelBlock = (panelId: string) => {
@@ -6479,37 +5688,6 @@ export default function App() {
           onToggleMaximize={togglePanelMaximize}
         />
       )
-    } else if (isAppBuilderPanelId(panelId)) {
-      const runId = appBuilderRunIdForPanel(panelId)
-      const targetAppSlug = appSlugForBuilderPanel(panelId)
-      const run = runs.find((item) => item.id === runId) ?? (targetAppSlug ? null : makeAppBuilderRun())
-      if (run) {
-        content = (
-          <AppBuilderPanel
-            run={run}
-            apps={appListing.apps}
-            appWarnings={appListing.warnings}
-            targetAppId={targetAppSlug ?? undefined}
-            chatContent={renderAppBuilderChat(run, panelId)}
-            onTitleChange={(value) => updateRunContext(runId, { task: value })}
-            onCategoryChange={(value) => updateRunContext(runId, { category: value, categoryTags: tagsForCategory(value) })}
-            onProjectChange={(value) => updateRunProject(runId, value)}
-            onAgentChange={(value) => updateRunContext(runId, { agentType: value })}
-            onAgentCommandChange={(value) => updateRunContext(runId, { agentCommand: value })}
-            onClose={() => closePanel(panelId)}
-            collapsed={panelStates[panelId]?.collapsed}
-            fullWindow={panelStates[panelId]?.fullWindow}
-            mode={panelStates[panelId]?.builderMode ?? (targetAppSlug ? 'app' : 'chat')}
-            onModeChange={(nextMode) => updatePanelState(panelId, { builderMode: nextMode })}
-            contextCollapsed={panelStates[panelId]?.contextCollapsed ?? Boolean(targetAppSlug)}
-            onContextCollapsedChange={(nextCollapsed) => updatePanelState(panelId, { contextCollapsed: nextCollapsed })}
-            splitRatio={panelStates[panelId]?.builderSplit}
-            onStateChange={(patch) => updatePanelState(panelId, patch)}
-            maximized={panelMaximized}
-            onToggleMaximize={togglePanelMaximize}
-          />
-        )
-      }
     } else if (panelId.startsWith('plugin:')) {
       const plugin = plugins.find((p) => p.id === panelId.slice('plugin:'.length))
       if (plugin) {
@@ -6717,48 +5895,6 @@ export default function App() {
 
       {passwordStatus && !passwordStatus.authenticated ? <PasswordUnlock onUnlocked={setPasswordStatus} /> : null}
 
-      {appFolderConflict && !appFolderConflict.acknowledged ? (
-        <div className="confirm-overlay" role="dialog" aria-modal="true" aria-label="App folder conflict">
-          <div className="confirm-dialog card app-folder-conflict-dialog">
-            <div className="picker-head">
-              <div>
-                <div className="eyebrow">App folder conflict</div>
-                <h3>Target folder already exists</h3>
-              </div>
-            </div>
-            <p className="confirm-copy">
-              App Builder cannot rename the current folder because the new auto-named folder already exists. Change the App title, Category, or Project, or manually move/delete the target folder, then retry.
-            </p>
-            <div className="folder-conflict-paths">
-              <label>
-                <span>Current folder</span>
-                <code>{appFolderConflict.sourcePath}</code>
-              </label>
-              <label>
-                <span>Target folder</span>
-                <code>{appFolderConflict.targetPath}</code>
-              </label>
-            </div>
-            <div className="picker-actions confirm-actions">
-              <button
-                type="button"
-                className="picker-cancel"
-                onClick={() => setAppFolderConflict((current) => current ? { ...current, acknowledged: true } : current)}
-              >
-                I will resolve it
-              </button>
-              <button
-                type="button"
-                className="send-button"
-                onClick={() => setAppFolderConflict(null)}
-              >
-                Retry
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
       {openWindowPickerOpen ? (
         <div
           className="confirm-overlay"
@@ -6943,9 +6079,6 @@ export default function App() {
                   onLaunchPlugin={launchPlugin}
                   apps={appListing.apps}
                   appWarnings={appListing.warnings}
-                  appBuilderOpen={appBuilderOpen}
-                  appBuilderTitle={runs.find((run) => run.id === APP_BUILDER_RUN_ID)?.task.trim() || 'App Builder'}
-                  onLaunchAppBuilder={launchAppBuilder}
                   openAppSlugs={openAppSlugs}
                   onLaunchApp={launchApp}
                   onReorderApps={reorderApps}

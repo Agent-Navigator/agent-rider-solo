@@ -1783,37 +1783,6 @@ button { cursor: pointer; }
   line-height: 1.58;
 }
 
-.app-folder-conflict-dialog {
-  width: min(620px, 100%);
-}
-
-.folder-conflict-paths {
-  display: grid;
-  gap: 10px;
-}
-
-.folder-conflict-paths label {
-  display: grid;
-  gap: 5px;
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.folder-conflict-paths code {
-  display: block;
-  max-width: 100%;
-  overflow: auto;
-  border: 1px solid rgba(148, 163, 184, 0.18);
-  border-radius: 8px;
-  padding: 8px 9px;
-  background: rgba(5, 10, 18, 0.58);
-  color: var(--text);
-  font-size: 11px;
-  font-weight: 600;
-  white-space: nowrap;
-}
-
 .picker-cancel {
   padding: 10px 16px;
   border-radius: 999px;
@@ -2441,12 +2410,6 @@ button { cursor: pointer; }
   grid-template-columns: minmax(0, 1fr) auto;
 }
 
-.build-app-button {
-  width: 100%;
-  margin-bottom: 0;
-  border-radius: 8px;
-}
-
 .resource-app-tree {
   margin-top: 2px;
 }
@@ -2849,7 +2812,6 @@ button { cursor: pointer; }
 .tile-slot .conv-card,
 .tile-slot .web-terminal,
 .tile-slot .web-view,
-.tile-slot .app-builder-card,
 .tile-slot .plugin-panel {
   height: 100%;
   display: flex;
@@ -2869,15 +2831,6 @@ button { cursor: pointer; }
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-}
-
-/* App Builder's body keeps its own grid (header/tabs row + flexible content
-   row) — just make it fill the tile cell instead of overflowing it. */
-.tile-slot .conv-card-body.app-builder-body {
-  display: grid;
-  flex: 1;
-  min-height: 0;
-  overflow: hidden;
 }
 
 /* Unified workspace canvas: panels (tools/apps) and conversation cards are
@@ -2944,8 +2897,7 @@ button { cursor: pointer; }
 }
 
 .ws-column > .plugin-panel > .web-terminal,
-.ws-column > .plugin-panel > .web-view,
-.ws-column > .plugin-panel > .app-builder-card {
+.ws-column > .plugin-panel > .web-view {
   flex: 1;
   min-height: 0;
 }
@@ -3285,120 +3237,12 @@ button { cursor: pointer; }
   box-shadow: var(--shadow), inset 0 0 0 1px rgba(121, 185, 255, 0.12);
 }
 
-.app-builder-card {
-  display: grid;
-}
-
-.app-builder-card.full-window {
-  position: fixed;
-  inset: 14px;
-  z-index: 55;
-  grid-template-rows: auto minmax(0, 1fr);
-  background: rgba(5, 10, 18, 0.98);
-  backdrop-filter: blur(18px);
-}
-
-.app-builder-card.full-window .app-builder-body {
-  min-height: 0;
-}
-
-.app-builder-card.full-window .app-builder-chat,
-.app-builder-card.full-window .app-builder-view {
-  min-height: 0;
-  height: 100%;
-}
-
-.app-builder-card.full-window .app-builder-chat > .conv-card {
-  height: 100%;
-  grid-template-rows: auto minmax(0, 1fr);
-}
-
-.app-builder-card.full-window .app-builder-frame {
-  min-height: 0;
-}
-
-/* Full-window App View: no header/context/tabs — the app owns the screen. */
-.app-builder-card.full-window.app-view-only {
-  inset: 0;
-  grid-template-rows: minmax(0, 1fr);
-}
-
-.app-builder-card.full-window.app-view-only .app-builder-body {
-  grid-template-rows: minmax(0, 1fr);
-  border-top: 0;
-  padding: 10px;
-}
-
-.app-builder-card.full-window.app-view-only .app-builder-view {
-  gap: 8px;
-}
-
-/* Chat+App split view */
-.app-builder-split {
-  display: flex;
-  align-items: stretch;
-  min-height: 460px;
-  min-width: 0;
-}
-
-.app-builder-card.full-window .app-builder-split {
-  min-height: 0;
-  height: 100%;
-}
-
-.app-builder-split-chat {
-  flex-shrink: 0;
-  min-width: 0;
-  overflow-y: auto;
-}
-
-.app-builder-split-chat > .conv-card {
-  height: 100%;
-  grid-template-rows: auto minmax(0, 1fr);
-}
-
-.app-builder-split-divider {
-  flex: 0 0 6px;
-  margin: 0 5px;
-  border-radius: 3px;
-  background: rgba(148, 163, 184, 0.18);
-  cursor: col-resize;
-  touch-action: none;
-}
-
-.app-builder-split-divider:hover,
-.app-builder-split.dragging .app-builder-split-divider {
-  background: rgba(121, 185, 255, 0.4);
-}
-
-.app-builder-split-app {
-  flex: 1;
-  min-width: 0;
-  display: grid;
-}
-
-.app-builder-split .app-builder-view {
-  min-height: 0;
-}
-
-.app-builder-split.dragging {
-  user-select: none;
-}
-
-.app-builder-split.dragging .app-builder-frame {
-  pointer-events: none;
-}
-
 .conv-card-head {
   display: flex;
   align-items: center;
   gap: 12px;
   padding: 14px 16px;
   cursor: pointer;
-}
-
-.app-builder-head .terminal-actions {
-  margin-left: auto;
 }
 
 .conv-card.collapsed .conv-card-head { padding: 12px 16px; }
@@ -3458,111 +3302,6 @@ button { cursor: pointer; }
   padding-top: 14px;
 }
 .conv-card-body .conv-meta { margin-bottom: 14px; }
-
-.app-builder-body {
-  display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
-  gap: 12px;
-}
-
-.app-builder-context {
-  margin-bottom: 0;
-}
-
-.app-builder-context.collapsed {
-  padding-top: 10px;
-  padding-bottom: 10px;
-}
-
-.app-builder-viewbar .app-builder-view-expand {
-  margin-left: auto;
-  flex-shrink: 0;
-}
-
-.app-builder-tabs {
-  display: inline-flex;
-  width: fit-content;
-  max-width: 100%;
-  gap: 4px;
-  padding: 4px;
-  border: 1px solid rgba(148, 163, 184, 0.18);
-  border-radius: 12px;
-  background: rgba(8, 14, 24, 0.62);
-}
-
-.app-builder-tabs button {
-  border: 0;
-  border-radius: 8px;
-  padding: 7px 10px;
-  background: transparent;
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.app-builder-tabs button.active {
-  background: rgba(121, 185, 255, 0.16);
-  color: var(--text);
-}
-
-.app-builder-chat {
-  min-height: 460px;
-}
-
-.conv-card.embedded {
-  min-height: 0;
-  border: 0;
-  background: transparent;
-  box-shadow: none;
-}
-
-.conv-card.embedded .conv-card-body {
-  padding: 0;
-  border-top: 0;
-}
-
-.app-builder-view {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
-  gap: 10px;
-  min-height: 460px;
-}
-
-.app-builder-viewbar {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.app-builder-viewbar strong {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text);
-  font-size: 13px;
-}
-
-.app-builder-viewbar span {
-  flex-shrink: 0;
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.app-builder-frame {
-  width: 100%;
-  height: 100%;
-  min-height: 420px;
-  border: 1px solid rgba(148, 163, 184, 0.14);
-  border-radius: 12px;
-  background: #050a12;
-}
-
-.app-builder-warnings {
-  display: grid;
-  gap: 6px;
-}
 
 .conv-followup {
   position: relative;
@@ -4180,14 +3919,14 @@ button { cursor: pointer; }
   min-height: 0;
 }
 
-.conv-card:not(.app-builder-card),
+.conv-card,
 .web-terminal,
 .web-view {
   display: flex;
   flex-direction: column;
 }
 
-.conv-card:not(.app-builder-card) {
+.conv-card {
   min-height: 0;
   overflow: hidden;
 }
@@ -4207,11 +3946,7 @@ button { cursor: pointer; }
   background: transparent;
 }
 
-.app-builder-card {
-  grid-template-rows: auto minmax(0, 1fr);
-}
-
-.conv-card-body:not(.app-builder-body) {
+.conv-card-body {
   display: flex;
   flex-direction: column;
   flex: 1 1 0;

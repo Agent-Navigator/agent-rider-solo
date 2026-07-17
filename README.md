@@ -35,7 +35,7 @@ npm run build
 - 遠端 preview 預設只監聽 `127.0.0.1`，讓 `tailscale serve` 代理到本機而不是搶同一個 5173 介面。
 - `/opt/agent-rider/shared/backups/<timestamp>`：每次更新前會備份 data/plugins。
 
-Release 只更新程式碼、Node dependencies、production build、systemd unit，以及第一方 build-time plugins。git release 內若誤帶本地 App folder（含 `manifest.json`）不會同步到 remote；App Builder 產物只保留在 `AGENT_RIDER_APPS_DIR`。
+Release 只更新程式碼、Node dependencies、production build、systemd unit，以及第一方 build-time plugins。git release 內若誤帶本地 App folder（含 `manifest.json`）不會同步到 remote；本地 Agent Apps 只保留在 `AGENT_RIDER_APPS_DIR`。
 
 ## Source Git Remote
 
@@ -75,7 +75,7 @@ SOURCE_GIT=git@github.com:ytk77/agent-rider-dev.git SOURCE_REF=master APP_DIR=/o
 - 自動選擇 `install-remote.sh` 或 `update-remote.sh`。
 - 更新前備份並保留 `/opt/agent-rider/shared/data`。
 - 更新前備份並保留 `/opt/agent-rider/shared/plugins`。
-- 設定 `AGENT_RIDER_APPS_DIR=/opt/agent-rider/shared/plugins`，讓 App Builder 與 `/apps/<slug>/` 使用獨立的本地 App 目錄。
+- 設定 `AGENT_RIDER_APPS_DIR=/opt/agent-rider/shared/plugins`，讓 `/apps/<slug>/` 使用獨立且能在升級間保留的本地 App 目錄。
 - 沿用 `/etc/default/agent-rider` 既有設定。
 - 解壓成新的 versioned release，執行 `npm ci` 與 `npm run build`。
 - 將 `/opt/agent-rider/current` 指向新版本。
