@@ -3,6 +3,7 @@ use super::{
     config::Config,
     database::Database,
     filesystem::{self, Filesystem},
+    hermes::{self, Hermes},
     terminal,
 };
 use axum::{
@@ -20,13 +21,16 @@ pub struct AppState {
     pub config: Config,
     pub db: Database,
     pub files: Filesystem,
+    pub hermes: Arc<Hermes>,
 }
 pub async fn serve(config: Config, db: Database) -> Result<(), String> {
     let address = format!("127.0.0.1:{}", config.port);
+    let hermes = Hermes::new(&config, db.clone()).await;
     let state = Arc::new(AppState {
         files: Filesystem::new(config.browse_root.clone()),
         config,
         db,
+        hermes,
     });
     let app = Router::new()
         .route("/store/terminal/ws", get(terminal::ws_handler))
@@ -147,6 +151,9 @@ async fn dispatch(State(state): State<Arc<AppState>>, req: Request<Body>) -> Res
     }
     if !auth::authorized(&state.db, cookie(req.headers())).await {
         return response(401, json!({"error":"locked"}));
+    }
+    if path.starts_with("/api/") {
+        return hermes::handle(state.hermes.clone(), req).await;
     }
     let q = query(&req);
     match (method.clone(), path.as_str()) {
