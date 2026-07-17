@@ -2890,7 +2890,7 @@ function ConversationCard({
             onToggle()
           }}
         >
-          <span className={`conv-caret ${collapsed ? '' : 'open'}`} aria-hidden>{collapsed ? '▼' : '▲'}</span>
+          <span className="conv-caret" aria-hidden>{collapsed ? '▼' : '▲'}</span>
         </button>
         {onToggleMaximize ? (
           <button
@@ -2968,7 +2968,7 @@ function ConversationCard({
                       {isNewDone ? <span className="new-dot" title="New result" /> : null}
                       <button type="button" className={`win-btn ${fileBrowserOpen ? 'active' : ''}`} title={fileBrowserOpen ? 'Hide file browser' : 'Browse files'} aria-label={fileBrowserOpen ? 'Hide file browser' : 'Browse files'} aria-expanded={fileBrowserOpen} onClick={(event) => { event.stopPropagation(); setFileBrowserOpen((current) => !current) }}><WinFilesIcon /></button>
                       {hideContext ? null : <button type="button" className={`win-btn ${metaCollapsed ? '' : 'active'}`} title={metaCollapsed ? 'Show context' : 'Hide context'} aria-label="Toggle context fields" aria-expanded={!metaCollapsed} onClick={(event) => { event.stopPropagation(); onMetaCollapsedChange(!metaCollapsed) }}><WinContextIcon /></button>}
-                      <button type="button" className="win-btn" title={collapsed ? 'Expand window' : 'Collapse window'} aria-label={collapsed ? 'Expand window' : 'Collapse window'} aria-expanded={!collapsed} onClick={(event) => { event.stopPropagation(); if (agentTerminalState?.fullWindow) { onToggleMaximize?.(); } onToggle() }}><span className={`conv-caret ${collapsed ? '' : 'open'}`} aria-hidden>{collapsed ? '▼' : '▲'}</span></button>
+                      <button type="button" className="win-btn" title={collapsed ? 'Expand window' : 'Collapse window'} aria-label={collapsed ? 'Expand window' : 'Collapse window'} aria-expanded={!collapsed} onClick={(event) => { event.stopPropagation(); if (agentTerminalState?.fullWindow) { onToggleMaximize?.(); } onToggle() }}><span className="conv-caret" aria-hidden>{collapsed ? '▼' : '▲'}</span></button>
                       {onToggleMaximize ? <button type="button" className="win-btn" title={maximized || agentTerminalState?.fullWindow ? 'Restore' : 'Full window'} aria-label={maximized || agentTerminalState?.fullWindow ? 'Restore' : 'Full window'} onClick={(event) => { event.stopPropagation(); onToggleMaximize() }}><WinFullscreenIcon active={agentTerminalState?.fullWindow} /></button> : null}
                       <button type="button" className="win-btn win-btn-close" title="Close window" aria-label="Close window" onClick={(event) => { event.stopPropagation(); onClose() }}><WinCloseIcon /></button>
                     </div>
@@ -5185,6 +5185,18 @@ export default function App() {
     // reply actually scrolls into view (see the card's IntersectionObserver).
   }
 
+  // A full-window card must have a body to render. Expanding here also keeps
+  // the TUI overlay from hiding its ordinary titlebar while the terminal is
+  // still unmounted because the card was collapsed.
+  function expandConversation(runId: string) {
+    setCollapsedIds((current) => {
+      if (!current.has(runId)) return current
+      const next = new Set(current)
+      next.delete(runId)
+      return next
+    })
+  }
+
   // Open a new, empty (draft) Conversation Card at the top of the stack.
   function startNewConversation() {
     const run: RunNode = {
@@ -6295,11 +6307,15 @@ export default function App() {
       maximized={maximizedKey === run.id}
       onToggleMaximize={isTuiAgent(run.agentType)
         ? () => {
+            expandConversation(run.id)
             const key = agentTerminalStateKey(run.id)
             const current = panelStates[key]?.fullWindow ?? false
             updatePanelState(key, { fullWindow: !current })
           }
-        : () => setMaximizedKey((current) => (current === run.id ? null : run.id))
+        : () => {
+            expandConversation(run.id)
+            setMaximizedKey((current) => (current === run.id ? null : run.id))
+          }
       }
     />
   )
