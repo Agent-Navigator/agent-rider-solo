@@ -10,7 +10,8 @@
     "deploy:scp": "bash scripts/deploy-scp.sh",
     "preview": "vite preview",
     "store": "cargo run --bin agrider -- serve",
-    "test:contract": "cargo build && AGENT_RIDER_CONTRACT_BACKEND=rust node --test test/contract-store.test.mjs"
+    "test:contract": "cargo build && AGENT_RIDER_CONTRACT_BACKEND=rust node --test test/contract-store.test.mjs",
+    "test:upgrade": "cargo build && node --test test/upgrade.test.mjs"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",
