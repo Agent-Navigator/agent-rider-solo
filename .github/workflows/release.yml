@@ -1,0 +1,183 @@
+name: Test and publish Agent Rider
+
+on:
+  push:
+    branches: [master]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy,rustfmt
+
+      - name: Verify synchronized release version
+        shell: bash
+        run: |
+          cargo_version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n1)
+          package_version=$(node -p "require('./package.json').version")
+          lock_version=$(node -p "require('./package-lock.json').packages[''].version")
+          test "$cargo_version" = "$package_version"
+          test "$cargo_version" = "$lock_version"
+          if [[ $GITHUB_REF == refs/tags/* ]]; then
+            test "${GITHUB_REF_NAME#v}" = "$cargo_version"
+          fi
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Verify source and contracts
+        run: |
+          cargo fmt --check
+          cargo clippy --all-targets -- -D warnings
+          cargo test --locked
+          npm run build
+          npm run test:contract
+          npm run test:upgrade
+          test/install-rootless.test.sh
+
+      - name: Upload frontend build
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend
+          path: dist
+          if-no-files-found: error
+          retention-days: 3
+
+  build:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: test
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-musl
+            platform: linux-x86_64
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+            platform: linux-aarch64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install musl build tools
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Download frontend build
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend
+          path: staging/frontend
+
+      - name: Build native static release bundle
+        env:
+          TARGET: ${{ matrix.target }}
+          PLATFORM: ${{ matrix.platform }}
+          VERSION: ${{ github.ref_name }}
+          AGENT_RIDER_SOURCE_COMMIT: ${{ github.sha }}
+        shell: bash
+        run: |
+          VERSION=${VERSION#v}
+          cargo build --locked --release --target "$TARGET"
+          install -Dm755 "target/$TARGET/release/agrider" staging/agrider
+          staging/agrider --version | grep -F "agrider $VERSION ($GITHUB_SHA)"
+          printf '{"version":"%s","source_commit":"%s","platform":"%s"}\n' \
+            "$VERSION" "$GITHUB_SHA" "$PLATFORM" > staging/release.json
+          archive="agrider-$PLATFORM.tar.gz"
+          tar -C staging -czf "$archive" agrider frontend release.json
+          mkdir -p artifacts
+          mv "$archive" artifacts/
+
+      - name: Upload native bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: bundle-${{ matrix.platform }}
+          path: artifacts/*.tar.gz
+          if-no-files-found: error
+          retention-days: 3
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-24.04
+    environment: public-release
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download both architecture bundles
+        uses: actions/download-artifact@v4
+        with:
+          pattern: bundle-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Generate checksums and machine-readable manifest
+        env:
+          VERSION: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          cd release-assets
+          test -f agrider-linux-x86_64.tar.gz
+          test -f agrider-linux-aarch64.tar.gz
+          sha256sum agrider-linux-x86_64.tar.gz agrider-linux-aarch64.tar.gz > checksums.txt
+          x86_sha=$(awk '$2 == "agrider-linux-x86_64.tar.gz" { print $1 }' checksums.txt)
+          arm_sha=$(awk '$2 == "agrider-linux-aarch64.tar.gz" { print $1 }' checksums.txt)
+          version=${VERSION#v}
+          jq -cn \
+            --arg version "$version" \
+            --arg commit "$GITHUB_SHA" \
+            --arg x86 "$x86_sha" \
+            --arg arm "$arm_sha" \
+            '{version:$version,source_commit:$commit,assets:[
+              {platform:"linux-x86_64",archive:"agrider-linux-x86_64.tar.gz",sha256:$x86},
+              {platform:"linux-aarch64",archive:"agrider-linux-aarch64.tar.gz",sha256:$arm}
+            ]}' > manifest.json
+          cp ../install.sh .
+          sh -n install.sh
+
+      - name: Create and publish public release
+        env:
+          GH_TOKEN: ${{ secrets.DISTRIBUTION_REPO_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          DISTRIBUTION_REPOSITORY: ytk77/agent-rider
+        shell: bash
+        run: |
+          if gh release view "$TAG" --repo "$DISTRIBUTION_REPOSITORY" >/dev/null 2>&1; then
+            echo "Public release $TAG already exists and will not be mutated." >&2
+            exit 1
+          fi
+          gh release create "$TAG" \
+            --repo "$DISTRIBUTION_REPOSITORY" \
+            --draft \
+            --title "Agent Rider $TAG" \
+            --notes "Stable Linux x86_64 and arm64 release built from $GITHUB_SHA."
+          gh release upload "$TAG" release-assets/* \
+            --repo "$DISTRIBUTION_REPOSITORY"
+          gh release edit "$TAG" \
+            --repo "$DISTRIBUTION_REPOSITORY" \
+            --draft=false \
+            --latest
