@@ -3,12 +3,13 @@ use super::{
     config::Config,
     database::Database,
     filesystem::{self, Filesystem},
+    terminal,
 };
 use axum::{
     body::{to_bytes, Body},
     extract::State,
     http::{header, HeaderMap, Method, Request, Response, StatusCode},
-    routing::any,
+    routing::{any, get},
     Router,
 };
 use serde_json::{json, Value};
@@ -28,6 +29,7 @@ pub async fn serve(config: Config, db: Database) -> Result<(), String> {
         db,
     });
     let app = Router::new()
+        .route("/store/terminal/ws", get(terminal::ws_handler))
         .route("/", any(dispatch))
         .route("/{*path}", any(dispatch))
         .with_state(state);
@@ -242,6 +244,21 @@ async fn dispatch(State(state): State<Arc<AppState>>, req: Request<Body>) -> Res
         ),
         (Method::GET, "/store/apps") => {
             response(200, apps::scan(&state.config.apps_dir, &state.db).await)
+        }
+        (Method::GET, "/store/agents") => response(200, terminal::agents(&state)),
+        (Method::POST, "/store/terminal/run") => {
+            let body = match json_body(req, 100_000).await {
+                Ok(v) => v,
+                Err(v) => return v,
+            };
+            response(200, terminal::run(&state, &body).await)
+        }
+        (Method::POST, "/store/terminal/usage") => {
+            let body = match json_body(req, 10_000).await {
+                Ok(v) => v,
+                Err(v) => return v,
+            };
+            response(200, terminal::usage(&state, &body))
         }
         (Method::POST, "/store/apps/order") => {
             let body = match json_body(req, 100_000).await {
