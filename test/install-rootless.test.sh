@@ -55,11 +55,22 @@ cat > "$SANDBOX/mock-bin/sudo" <<'SCRIPT'
 #!/bin/sh
 printf 'sudo:%s\n' "$*" >> "$MOCK_SERVICE_LOG"
 case "${1:-}" in
-  loginctl|systemctl) exit 0 ;;
+  loginctl)
+    [ "${MOCK_SUDO_FAIL_LINGER:-0}" = 1 ] && exit 1
+    exit 0
+    ;;
+  systemctl) exit 0 ;;
   cp|chown) exec "$@" ;;
   *) exec "$@" ;;
 esac
 SCRIPT
+for unavailable in node npm; do
+  cat > "$SANDBOX/mock-bin/$unavailable" <<'SCRIPT'
+#!/bin/sh
+echo "installer unexpectedly invoked this unavailable runtime" >&2
+exit 97
+SCRIPT
+done
 chmod +x "$SANDBOX/mock-bin/"*
 
 run_installer() {
@@ -72,6 +83,7 @@ run_installer() {
     MOCK_RELEASE_DIR="$SANDBOX" MOCK_SERVICE_LOG="$SANDBOX/$name.log" \
     MOCK_ARCH="${MOCK_ARCH:-x86_64}" MOCK_OS="${MOCK_OS:-Linux}" \
     MOCK_HEALTH_STATUS="${MOCK_HEALTH_STATUS:-200}" MOCK_LEGACY_USER="${MOCK_LEGACY_USER:-}" \
+    MOCK_SUDO_FAIL_LINGER="${MOCK_SUDO_FAIL_LINGER:-0}" \
     AGRIDER_RELEASE_BASE=https://fixture.invalid/releases/latest/download \
     AGRIDER_HEALTH_ATTEMPTS=1 \
     "$@" sh "$ROOT/install.sh"
@@ -84,6 +96,13 @@ test -L "$SANDBOX/home-clean/.local/bin/agrider"
 grep -F 'ExecStart=' "$SANDBOX/home-clean/.config/systemd/user/agrider.service" | grep -F 'agrider serve' >/dev/null
 grep -F 'sudo:loginctl enable-linger' "$SANDBOX/clean.log" >/dev/null
 grep -F 'user:--user enable --now agrider.service' "$SANDBOX/clean.log" >/dev/null
+
+if MOCK_SUDO_FAIL_LINGER=1 run_installer lingering >"$SANDBOX/lingering.out" 2>&1; then
+  echo 'Linger permission failure unexpectedly installed.' >&2
+  exit 1
+fi
+grep -F 'could not enable lingering' "$SANDBOX/lingering.out" >/dev/null
+test ! -e "$SANDBOX/home-lingering/.local/share/agrider/current"
 
 MOCK_ARCH=aarch64 run_installer arm >/dev/null
 test -x "$SANDBOX/home-arm/.local/share/agrider/current/agrider"
