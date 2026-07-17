@@ -14,7 +14,12 @@ use axum::{
     Router,
 };
 use serde_json::{json, Value};
-use std::{collections::HashMap, fs, sync::Arc};
+use std::{
+    collections::HashMap,
+    fs,
+    path::{Component, Path, PathBuf},
+    sync::Arc,
+};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -24,7 +29,7 @@ pub struct AppState {
     pub hermes: Arc<Hermes>,
 }
 pub async fn serve(config: Config, db: Database) -> Result<(), String> {
-    let address = format!("127.0.0.1:{}", config.port);
+    let address = format!("{}:{}", config.host, config.port);
     let hermes = Hermes::new(&config, db.clone()).await;
     let state = Arc::new(AppState {
         files: Filesystem::new(config.browse_root.clone()),
@@ -41,7 +46,7 @@ pub async fn serve(config: Config, db: Database) -> Result<(), String> {
         .await
         .map_err(|e| e.to_string())?;
     println!(
-        "[store] Agent Rider Rust backend on http://{address} → {}",
+        "Agent Rider on http://{address} → {}",
         listener.local_addr().map(|_| "").unwrap_or("")
     );
     axum::serve(listener, app).await.map_err(|e| e.to_string())
@@ -73,6 +78,9 @@ fn query(req: &Request<Body>) -> HashMap<String, String> {
 async fn dispatch(State(state): State<Arc<AppState>>, req: Request<Body>) -> Response<Body> {
     let path = req.uri().path().to_string();
     let method = req.method().clone();
+    if method == Method::GET && is_frontend_path(&path) {
+        return static_response(&state.config.web_root, &path);
+    }
     if path == "/store/password/status" && method == Method::GET {
         let record = auth::record(&state.db).await;
         let enabled = record.is_some();
@@ -339,6 +347,50 @@ async fn dispatch(State(state): State<Arc<AppState>>, req: Request<Body>) -> Res
         }
         _ => response(404, json!({"error":"not found"})),
     }
+}
+
+fn is_frontend_path(path: &str) -> bool {
+    !["/store", "/api", "/apps"].iter().any(|prefix| {
+        path == *prefix
+            || path
+                .strip_prefix(prefix)
+                .is_some_and(|rest| rest.starts_with('/'))
+    })
+}
+
+fn safe_static_path(root: &Path, request_path: &str) -> Option<PathBuf> {
+    let relative = request_path.trim_start_matches('/');
+    let candidate = Path::new(relative);
+    if candidate
+        .components()
+        .any(|part| !matches!(part, Component::Normal(_)))
+    {
+        return None;
+    }
+    Some(root.join(candidate))
+}
+
+fn static_response(root: &Path, request_path: &str) -> Response<Body> {
+    let requested = safe_static_path(root, request_path).filter(|path| path.is_file());
+    let path = requested.unwrap_or_else(|| root.join("index.html"));
+    if !path.is_file() {
+        return response(404, json!({"error":"frontend assets not installed"}));
+    }
+    let mime = mime_guess::from_path(&path).first_or_octet_stream();
+    let is_index = path.file_name().is_some_and(|name| name == "index.html");
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, mime.as_ref())
+        .header(
+            header::CACHE_CONTROL,
+            if is_index {
+                "no-cache"
+            } else {
+                "public, max-age=31536000, immutable"
+            },
+        )
+        .body(Body::from(fs::read(path).unwrap_or_default()))
+        .unwrap()
 }
 fn file_response(
     result: Result<(std::path::PathBuf, u64, String), (u16, String)>,

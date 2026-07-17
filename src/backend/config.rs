@@ -5,8 +5,10 @@ use std::{
 
 #[derive(Clone, Debug)]
 pub struct Config {
+    pub host: String,
     pub port: u16,
     pub db_path: PathBuf,
+    pub web_root: PathBuf,
     pub browse_root: PathBuf,
     pub default_cwd: PathBuf,
     pub apps_dir: PathBuf,
@@ -64,17 +66,27 @@ impl Config {
         );
         paths.dedup();
         let current_data = app_dir.join("current/data");
-        let db_dir = if current_data.exists() {
-            current_data
-        } else {
-            app_dir.join("data")
-        };
+        let db_dir = env::var_os("AGENT_RIDER_DATA_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                if current_data.exists() {
+                    current_data
+                } else {
+                    app_dir.join("data")
+                }
+            });
+        let web_root = env::var_os("AGENT_RIDER_WEB_ROOT")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| cwd.join("dist"));
         Self {
-            port: env::var("STORE_PORT")
+            host: env::var("AGENT_RIDER_HOST").unwrap_or_else(|_| "127.0.0.1".into()),
+            port: env::var("AGENT_RIDER_PORT")
+                .or_else(|_| env::var("STORE_PORT"))
                 .ok()
                 .and_then(|v| v.parse().ok())
-                .unwrap_or(5174),
+                .unwrap_or(5173),
             db_path: db_dir.join("agent-rider.db"),
+            web_root,
             browse_root,
             default_cwd,
             apps_dir,

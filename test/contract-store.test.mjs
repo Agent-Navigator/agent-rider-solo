@@ -91,7 +91,7 @@ before(async () => {
   const port = await allocatePort()
   baseUrl = `http://127.0.0.1:${port}`
   const command = backend === 'rust'
-    ? [join(ROOT, 'target', 'debug', 'agent-rider-store'), []]
+    ? [join(ROOT, 'target', 'debug', 'agrider'), ['serve']]
     : [process.execPath, ['server/store.mjs']]
   store = spawn(command[0], command[1], {
     cwd: sandbox,
