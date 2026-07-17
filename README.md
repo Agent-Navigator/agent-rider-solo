@@ -179,8 +179,6 @@ BROWSE_ROOT=/root
 # 只需主機裝好 `hermes` CLI），不需要另外部署 hermes-webui。
 # 若要改用外部 Hermes WebUI 後端，設定 HERMES_TARGET 指向它：
 # HERMES_TARGET=http://127.0.0.1:8789
-# Tools 面板內嵌的 Hermes WebUI iframe（選配）另由 HERMES_UI_TARGET 控制，
-# 預設 http://127.0.0.1:8789。
 VITE_ALLOWED_HOSTS=all
 ```
 

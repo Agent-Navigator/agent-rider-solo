@@ -3245,7 +3245,7 @@ button { cursor: pointer; }
   text-align: right;
 }
 
-/* Embedded web service view (e.g. Hermes WebUI) — reuses the terminal window chrome. */
+/* Embedded web service views reuse the terminal window chrome. */
 .web-view .terminal-body {
   grid-template-rows: minmax(280px, 520px);
 }

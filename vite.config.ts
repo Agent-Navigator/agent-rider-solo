@@ -35,9 +35,6 @@ const storeTarget = `http://127.0.0.1:${process.env.STORE_PORT || '5174'}`
 // (server/hermesAcp.mjs) by default — no external hermes-webui deployment
 // needed. Set HERMES_TARGET to point /api at an external Hermes WebUI instead.
 const hermesTarget = process.env.HERMES_TARGET || storeTarget
-// The embeddable Hermes WebUI iframe (Tools panel) is a separate, optional
-// deployment; it keeps the old default.
-const hermesUiTarget = process.env.HERMES_UI_TARGET || process.env.HERMES_TARGET || 'http://127.0.0.1:8789'
 const guacamoleTarget = process.env.GUACAMOLE_TARGET || 'http://127.0.0.1:8081'
 const guacamoleJsonSecretFile = process.env.GUACAMOLE_JSON_SECRET_KEY_FILE || '/root/.guacamole-json-secret'
 const guacamoleVncPasswordFile = process.env.GUACAMOLE_VNC_PASSWORD_FILE || '/root/.guacamole-vnc-password'
@@ -199,24 +196,6 @@ const apiProxy: Record<string, ProxyOptions> = {
   '/apps': {
     target: storeTarget,
     changeOrigin: true,
-  },
-  // Same-origin mount of the Hermes WebUI so it can be embedded in an iframe.
-  // Hermes sends X-Frame-Options: DENY and CSP frame-ancestors 'none', which
-  // block framing outright — we strip those headers on the proxied responses.
-  '/hermes-ui': {
-    target: hermesUiTarget,
-    changeOrigin: true,
-    ws: true,
-    rewrite: (path: string) => path.replace(/^\/hermes-ui/, ''),
-    configure: (proxy: {
-      on: (event: string, cb: (proxyRes: { headers: Record<string, unknown> }) => void) => void
-    }) => {
-      proxy.on('proxyRes', (proxyRes) => {
-        delete proxyRes.headers['x-frame-options']
-        delete proxyRes.headers['content-security-policy']
-        delete proxyRes.headers['content-security-policy-report-only']
-      })
-    },
   },
   // Apache Guacamole web application. The iframe enters through
   // /guacamole-auth/start, which redirects here with short-lived encrypted JSON

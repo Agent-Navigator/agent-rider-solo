@@ -616,6 +616,7 @@ const APP_BUILDER_RUN_ID = 'run-app-builder'
 // panel/run pair so each app keeps its own conversation and chat/app-view mode.
 const APP_BUILDER_PANEL_PREFIX = 'app-builder:'
 const APP_BUILDER_RUN_PREFIX = 'run-app-builder:'
+const RETIRED_HERMES_WEBUI_PANEL_ID = 'plugin:hermes-webui'
 const APP_SLUG_RE = /^[a-z0-9][a-z0-9-]*$/
 
 function appBuilderPanelIdFor(appSlug: string) {
@@ -832,6 +833,7 @@ function normalizePanelStates(value: unknown): Record<string, WorkspacePanelStat
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
   const states: Record<string, WorkspacePanelState> = {}
   for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
+    if (key === RETIRED_HERMES_WEBUI_PANEL_ID) continue
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue
     const source = raw as Record<string, unknown>
     const state: WorkspacePanelState = {}
@@ -5958,17 +5960,27 @@ export default function App() {
         // order, and the column count.
         if (layout) {
           if (Array.isArray(layout.panelOrder)) {
-            const migratedOrder = [...new Set((layout.panelOrder as string[]).map(migrateLegacyAppPanelId))]
+            const migratedOrder = [...new Set(
+              (layout.panelOrder as string[])
+                .filter((panelId) => panelId !== RETIRED_HERMES_WEBUI_PANEL_ID)
+                .map(migrateLegacyAppPanelId),
+            )]
             setPanelOrder((current) => (current.length ? current : migratedOrder))
           }
           if (layout.panelColumns && typeof layout.panelColumns === 'object') {
             const migratedColumns = Object.fromEntries(
-              Object.entries(layout.panelColumns as Record<string, number>).map(([key, column]) => [migrateLegacyAppPanelId(key), column]),
+              Object.entries(layout.panelColumns as Record<string, number>)
+                .filter(([key]) => key !== RETIRED_HERMES_WEBUI_PANEL_ID)
+                .map(([key, column]) => [migrateLegacyAppPanelId(key), column]),
             )
             setPanelColumns((current) => (Object.keys(current).length ? current : migratedColumns))
           }
           if (Array.isArray(layout.layoutOrder)) {
-            const migratedLayout = [...new Set((layout.layoutOrder as string[]).map(migrateLegacyAppPanelId))]
+            const migratedLayout = [...new Set(
+              (layout.layoutOrder as string[])
+                .filter((panelId) => panelId !== RETIRED_HERMES_WEBUI_PANEL_ID)
+                .map(migrateLegacyAppPanelId),
+            )]
             setLayoutOrder((current) => (current.length ? current : migratedLayout))
           }
           const validPresets: LayoutPreset[] = ['single', 'two-up', 'quad', 'three-col', 'master-stack', 'free']
