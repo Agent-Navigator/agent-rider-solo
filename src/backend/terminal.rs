@@ -47,7 +47,9 @@ pub async fn run(state: &AppState, body: &Value) -> Value {
         return json!({"output":"","exitCode":0,"cwd":cwd,"nextCwd":cwd,"timedOut":false});
     }
     let script = format!("{command}\n__agent_rider_status=$?\nprintf '\\n__AGENT_RIDER_EXIT__%s\\n' \"$__agent_rider_status\"\nprintf '__AGENT_RIDER_CWD__%s\\n' \"$PWD\"\nexit \"$__agent_rider_status\"\n");
-    let child = Command::new("/bin/bash")
+    let mut process = Command::new("/bin/bash");
+    process.kill_on_drop(true);
+    let child = process
         .args(["-lc", &script])
         .current_dir(&cwd)
         .stdout(Stdio::piped())
@@ -92,7 +94,9 @@ pub async fn run(state: &AppState, body: &Value) -> Value {
 }
 
 fn tmux_name(session: &str, agent: &str, cwd: &Path) -> String {
-    let raw = format!("{session}|{}", cwd.display());
+    tmux_name_from_key(&format!("{session}|{}", cwd.display()), agent)
+}
+fn tmux_name_from_key(raw: &str, agent: &str) -> String {
     let safe = raw
         .chars()
         .map(|c| {
@@ -276,22 +280,28 @@ async fn terminal_socket(socket: WebSocket, state: Arc<AppState>, query: HashMap
     let persistent = !session.is_empty();
     let mut builder = if persistent {
         let kind = if agent.is_empty() { "shell" } else { agent };
-        let key = if agent == "custom" {
+        let name = if agent == "custom" {
             let hash = format!("{:x}", Sha256::digest(launch.as_bytes()));
-            format!("{session}-{hash}")
+            tmux_name_from_key(
+                &format!("{session}|{}|{}", cwd.display(), &hash[..12]),
+                kind,
+            )
         } else {
-            session.into()
+            tmux_name(session, kind, &cwd)
         };
-        let name = tmux_name(&key, kind, &cwd);
         if reset && tmux_exists(&name) {
             let _ = std::process::Command::new("tmux")
                 .args(["-L", "agent-rider", "kill-session", "-t", &name])
                 .status();
         }
         let mut b = CommandBuilder::new("tmux");
+        let tmux_conf = std::env::temp_dir().join("agent-rider-tmux.conf");
+        let _ = std::fs::write(&tmux_conf, "set -g status off\nset -g window-size latest\nset -g mouse on\nset -g set-clipboard external\nset -g history-limit 10000\nset -g destroy-unattached off\nsetw -g aggressive-resize on\n");
         let argv = vec![
             "-L".into(),
             "agent-rider".into(),
+            "-f".into(),
+            tmux_conf.display().to_string(),
             "new-session".into(),
             "-A".into(),
             "-s".into(),
