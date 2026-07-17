@@ -58,9 +58,11 @@ before(async () => {
   const workspace = join(sandbox, 'workspace')
   const apps = join(sandbox, 'apps')
   const appDist = join(apps, 'sample-app', 'dist')
+  const webDist = join(sandbox, 'frontend')
   const bin = join(workspace, '.local', 'bin')
   await mkdir(join(workspace, 'notes'), { recursive: true })
   await mkdir(appDist, { recursive: true })
+  await mkdir(join(webDist, 'assets'), { recursive: true })
   await mkdir(bin, { recursive: true })
   await writeFile(join(workspace, 'README.md'), '# Fixture\n')
   await writeFile(join(workspace, 'notes', 'todo.txt'), 'ship rust backend\n')
@@ -73,6 +75,8 @@ before(async () => {
     version: 1,
   }))
   await writeFile(join(appDist, 'index.html'), '<!doctype html><title>Sample App</title>')
+  await writeFile(join(webDist, 'index.html'), '<!doctype html><title>Agent Rider Fixture</title>')
+  await writeFile(join(webDist, 'assets', 'fixture.js'), 'console.log("fixture")\n')
 
   const fakeHermes = join(bin, 'hermes')
   await writeFile(fakeHermes, `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(join(ROOT, 'test', 'fixtures', 'fake-hermes-acp.mjs'))} "$@"\n`)
@@ -100,6 +104,7 @@ before(async () => {
       HOME: workspace,
       BROWSE_ROOT: workspace,
       AGENT_RIDER_APPS_DIR: apps,
+      AGENT_RIDER_WEB_ROOT: webDist,
       APP_DIR: sandbox,
       HERMES_TARGET: fakeHermes,
       STORE_PORT: String(port),
@@ -292,6 +297,32 @@ test('password gate protects store routes and issues a reusable session cookie',
   })
   assert.equal(logout.response.status, 200)
   assert.deepEqual(logout.body, { ok: true })
+})
+
+test('production frontend uses immutable assets and public SPA fallback without masking APIs', async () => {
+  const index = await request('/')
+  assert.equal(index.status, 200)
+  assert.match(index.headers.get('content-type'), /^text\/html/)
+  assert.equal(index.headers.get('cache-control'), 'no-cache')
+  assert.match(await index.text(), /Agent Rider Fixture/)
+
+  const spa = await request('/conversations/fixture')
+  assert.equal(spa.status, 200)
+  assert.equal(spa.headers.get('cache-control'), 'no-cache')
+  assert.match(await spa.text(), /Agent Rider Fixture/)
+
+  const asset = await request('/assets/fixture.js')
+  assert.equal(asset.status, 200)
+  assert.equal(asset.headers.get('cache-control'), 'public, max-age=31536000, immutable')
+  assert.equal(await asset.text(), 'console.log("fixture")\n')
+
+  const protectedStore = await json('/store/not-a-route')
+  assert.equal(protectedStore.response.status, 401)
+  assert.deepEqual(protectedStore.body, { error: 'locked' })
+
+  const protectedApi = await json('/api/not-a-route')
+  assert.equal(protectedApi.response.status, 401)
+  assert.deepEqual(protectedApi.body, { error: 'locked' })
 })
 
 test('filesystem and Agent App routes keep their current contract', async () => {
