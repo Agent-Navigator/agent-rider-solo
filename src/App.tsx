@@ -1201,6 +1201,22 @@ function WinFullscreenIcon({ active }: { active?: boolean }) {
   )
 }
 
+function WinConversationCollapseIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 16 16" aria-hidden>
+      <path d="M3 10.5h10L8 5z" fill="currentColor" />
+    </svg>
+  )
+}
+
+function WinConversationExpandIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 16 16" aria-hidden>
+      <path d="M3 5.5h10L8 11z" fill="currentColor" />
+    </svg>
+  )
+}
+
 function WinMaximizeIcon({ active }: { active?: boolean }) {
   return (
     <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
@@ -2703,7 +2719,10 @@ function ConversationCard({
   // In full-window TUI mode the terminal is a fixed overlay covering the card,
   // so the context fields rendered in the card body sit hidden behind it. Render
   // them inside the overlay (below its titlebar) instead so "Show context" works.
-  const isTuiFullWindow = Boolean(tui && agentTerminalState?.fullWindow)
+  // A stale persisted full-window flag must not hide a collapsed card's only
+  // mounted titlebar. Once the card expands, the same flag can safely mount
+  // the terminal overlay and its replacement titlebar.
+  const isTuiFullWindow = Boolean(tui && agentTerminalState?.fullWindow && !collapsed)
   const contextFields = (
     <div className="conv-meta-fields">
       <div className="conv-meta-row">
@@ -2781,6 +2800,8 @@ function ConversationCard({
     </div>
   )
 
+  const toggleCollapsedState = onToggle
+
   return (
     <article
       id={`conversation-${run.id}`}
@@ -2849,10 +2870,10 @@ function ConversationCard({
     >
       {/* In full-window mode the titlebar is rendered inside the WebTerminal
           overlay so the two stay visually connected as one element. */}
-      {tui && agentTerminalState?.fullWindow ? null : (
+      {isTuiFullWindow ? null : (
       <div
         className="win-titlebar"
-        onDoubleClick={onToggle}
+        onDoubleClick={toggleCollapsedState}
         title="Drag to reorder · double-click to collapse"
       >
         <WinGrip />
@@ -2907,24 +2928,24 @@ function ConversationCard({
           aria-expanded={!collapsed}
           onClick={(event) => {
             event.stopPropagation()
-            onToggle()
+            toggleCollapsedState()
           }}
         >
-          <span className={`conv-caret ${collapsed ? '' : 'open'}`} aria-hidden>{collapsed ? '▼' : '▲'}</span>
+          {collapsed ? <WinConversationExpandIcon /> : <WinConversationCollapseIcon />}
         </button>
         {onToggleMaximize ? (
           <button
             type="button"
             className="win-btn"
-            title={maximized || agentTerminalState?.fullWindow ? 'Restore' : (tui ? 'Full window' : 'Maximize in grid')}
-            aria-label={maximized || agentTerminalState?.fullWindow ? 'Restore' : (tui ? 'Full window' : 'Maximize in grid')}
+            title={maximized || isTuiFullWindow ? 'Restore' : (tui ? 'Full window' : 'Maximize in grid')}
+            aria-label={maximized || isTuiFullWindow ? 'Restore' : (tui ? 'Full window' : 'Maximize in grid')}
             onClick={(event) => {
               event.stopPropagation()
               onToggleMaximize()
             }}
           >
             {tui ? (
-              <WinFullscreenIcon active={agentTerminalState?.fullWindow} />
+              <WinFullscreenIcon active={isTuiFullWindow} />
             ) : (
               <WinMaximizeIcon active={maximized} />
             )}
@@ -2979,7 +3000,7 @@ function ConversationCard({
                   frameless
                   titleBar={tui && !hideHeader ? (
                     <>
-                    <div className="win-titlebar" onDoubleClick={onToggle} title="Drag to reorder · double-click to collapse">
+                    <div className="win-titlebar" onDoubleClick={toggleCollapsedState} title="Drag to reorder · double-click to collapse">
                       <WinGrip />
                       <span className="win-dot" style={{ background: tone.dot }} aria-hidden />
                       <input className="win-title-input" value={run.task} onChange={(event) => onTitleChange(event.target.value)} onClick={(event) => event.stopPropagation()} placeholder="untitled" aria-label="Conversation title" size={Math.max(4, Math.min(28, (run.task || 'untitled').length + 1))} />
@@ -2988,7 +3009,7 @@ function ConversationCard({
                       {isNewDone ? <span className="new-dot" title="New result" /> : null}
                       <button type="button" className={`win-btn ${fileBrowserOpen ? 'active' : ''}`} title={fileBrowserOpen ? 'Hide file browser' : 'Browse files'} aria-label={fileBrowserOpen ? 'Hide file browser' : 'Browse files'} aria-expanded={fileBrowserOpen} onClick={(event) => { event.stopPropagation(); setFileBrowserOpen((current) => !current) }}><WinFilesIcon /></button>
                       {hideContext ? null : <button type="button" className={`win-btn ${metaCollapsed ? '' : 'active'}`} title={metaCollapsed ? 'Show context' : 'Hide context'} aria-label="Toggle context fields" aria-expanded={!metaCollapsed} onClick={(event) => { event.stopPropagation(); onMetaCollapsedChange(!metaCollapsed) }}><WinContextIcon /></button>}
-                      <button type="button" className="win-btn" title={collapsed ? 'Expand window' : 'Collapse window'} aria-label={collapsed ? 'Expand window' : 'Collapse window'} aria-expanded={!collapsed} onClick={(event) => { event.stopPropagation(); if (agentTerminalState?.fullWindow) { onToggleMaximize?.(); } onToggle() }}><span className={`conv-caret ${collapsed ? '' : 'open'}`} aria-hidden>{collapsed ? '▼' : '▲'}</span></button>
+                      <button type="button" className="win-btn" title={collapsed ? 'Expand window' : 'Collapse window'} aria-label={collapsed ? 'Expand window' : 'Collapse window'} aria-expanded={!collapsed} onClick={(event) => { event.stopPropagation(); toggleCollapsedState() }}>{collapsed ? <WinConversationExpandIcon /> : <WinConversationCollapseIcon />}</button>
                       {onToggleMaximize ? <button type="button" className="win-btn" title={maximized || agentTerminalState?.fullWindow ? 'Restore' : 'Full window'} aria-label={maximized || agentTerminalState?.fullWindow ? 'Restore' : 'Full window'} onClick={(event) => { event.stopPropagation(); onToggleMaximize() }}><WinFullscreenIcon active={agentTerminalState?.fullWindow} /></button> : null}
                       <button type="button" className="win-btn win-btn-close" title="Close window" aria-label="Close window" onClick={(event) => { event.stopPropagation(); onClose() }}><WinCloseIcon /></button>
                     </div>
@@ -5195,14 +5216,40 @@ export default function App() {
 
   function toggleCollapse(runId: string) {
     setActiveRunId(runId)
+    const willCollapse = !collapsedIds.has(runId)
+
+    // Keep collapse and leaving either maximize mode in the same event. A
+    // deferred cleanup effect can race with the next full-window click and
+    // clear the state that click just enabled.
+    if (willCollapse) {
+      setMaximizedKey((current) => (current === runId ? null : current))
+      setPanelStates((current) => {
+        const key = agentTerminalStateKey(runId)
+        if (!current[key]?.fullWindow) return current
+        return { ...current, [key]: { ...current[key], fullWindow: false } }
+      })
+    }
+
     setCollapsedIds((current) => {
       const next = new Set(current)
-      if (next.has(runId)) next.delete(runId)
-      else next.add(runId)
+      if (willCollapse) next.add(runId)
+      else next.delete(runId)
       return next
     })
     // Note: the unread dot is NOT cleared here. It clears only once the new
     // reply actually scrolls into view (see the card's IntersectionObserver).
+  }
+
+  // A full-window card must have a body to render. Expanding here also keeps
+  // the TUI overlay from hiding its ordinary titlebar while the terminal is
+  // still unmounted because the card was collapsed.
+  function expandConversation(runId: string) {
+    setCollapsedIds((current) => {
+      if (!current.has(runId)) return current
+      const next = new Set(current)
+      next.delete(runId)
+      return next
+    })
   }
 
   // Open a new, empty (draft) Conversation Card at the top of the stack.
@@ -6315,11 +6362,19 @@ export default function App() {
       maximized={maximizedKey === run.id}
       onToggleMaximize={isTuiAgent(run.agentType)
         ? () => {
+            const wasCollapsed = collapsedIds.has(run.id)
+            expandConversation(run.id)
             const key = agentTerminalStateKey(run.id)
             const current = panelStates[key]?.fullWindow ?? false
-            updatePanelState(key, { fullWindow: !current })
+            // A click from a collapsed card always means "enter full window".
+            // Do not toggle a stale persisted fullWindow flag back off.
+            updatePanelState(key, { fullWindow: wasCollapsed ? true : !current })
           }
-        : () => setMaximizedKey((current) => (current === run.id ? null : run.id))
+        : () => {
+            const wasCollapsed = collapsedIds.has(run.id)
+            expandConversation(run.id)
+            setMaximizedKey((current) => (wasCollapsed ? run.id : current === run.id ? null : run.id))
+          }
       }
     />
   )

@@ -1,0 +1,415 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Agentic AI 社群痛點 vs. Agent Rider 設計分析</title>
+  <style>
+    :root {
+      --bg: #090d13; --surface: #111824; --surface-2: #172130;
+      --line: #2a394d; --text: #e8eef6; --muted: #9cacc0;
+      --blue: #70d6ff; --green: #7cf0bd; --yellow: #ffd37a;
+      --red: #ff7a7a; --orange: #ffb347; --purple: #c4a7ff;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0; color: var(--text); background:
+        radial-gradient(circle at 10% 0, rgba(112,214,255,.10), transparent 35rem),
+        radial-gradient(circle at 90% 10%, rgba(196,167,255,.07), transparent 30rem),
+        radial-gradient(circle at 50% 80%, rgba(124,240,189,.06), transparent 28rem), var(--bg);
+      font: 16px/1.75 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    header, main, footer { width: min(calc(100% - 2rem), 1120px); margin-inline: auto; }
+    header { padding: 5rem 0 2.5rem; border-bottom: 1px solid var(--line); margin-bottom: 2rem; }
+    main { display: grid; gap: 1.25rem; }
+    section {
+      padding: clamp(1.25rem, 3vw, 2rem); border: 1px solid var(--line); border-radius: 1rem;
+      background: linear-gradient(145deg, rgba(23,33,48,.92), rgba(14,19,28,.96));
+      box-shadow: 0 18px 50px rgba(0,0,0,.18);
+    }
+    h1, h2, h3 { line-height: 1.25; }
+    h1 { max-width: 900px; margin: 0 0 1rem; font-size: clamp(2rem, 5.5vw, 3.8rem); letter-spacing: -.04em; }
+    h2 { margin: 0 0 1.25rem; font-size: clamp(1.35rem, 2.8vw, 1.9rem); letter-spacing: -.02em; }
+    h3 { margin: 1.5rem 0 .5rem; font-size: 1.1rem; color: var(--blue); }
+    h3:first-child { margin-top: 0; }
+    a { color: var(--blue); }
+    p { margin: 0 0 .85rem; color: var(--muted); }
+    p:last-child { margin-bottom: 0; }
+    strong { color: var(--text); }
+    .eyebrow { color: var(--green); font-size: .78rem; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; margin-bottom: .6rem; }
+    .lede { max-width: 870px; color: var(--muted); font-size: 1.1rem; margin-top: .5rem; }
+    .source-tag { display: inline-block; background: rgba(112,214,255,.1); border: 1px solid rgba(112,214,255,.25); color: var(--blue); font-size: .72rem; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; padding: .15rem .55rem; border-radius: 100px; margin-left: .4rem; vertical-align: middle; }
+
+    /* Pain point cards */
+    .pain-grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fill, minmax(min(100%, 500px), 1fr)); }
+    .pain-card {
+      border-radius: .75rem; padding: 1.25rem 1.4rem;
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,.025);
+      position: relative; overflow: hidden;
+    }
+    .pain-card::before {
+      content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px; border-radius: 1rem 1rem 0 0;
+    }
+    .pain-card.p-red::before { background: linear-gradient(90deg, var(--red), #ff4d4d); }
+    .pain-card.p-yellow::before { background: linear-gradient(90deg, var(--yellow), #e8b84b); }
+    .pain-card.p-orange::before { background: linear-gradient(90deg, var(--orange), #e09020); }
+    .pain-card-header { display: flex; align-items: center; gap: .6rem; margin-bottom: .75rem; flex-wrap: wrap; }
+    .severity-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+    .severity-dot.red { background: var(--red); box-shadow: 0 0 6px var(--red); }
+    .severity-dot.yellow { background: var(--yellow); box-shadow: 0 0 6px var(--yellow); }
+    .severity-dot.orange { background: var(--orange); box-shadow: 0 0 6px var(--orange); }
+    .pain-title { font-weight: 700; font-size: 1rem; }
+    .coverage-badge {
+      display: inline-flex; align-items: center; gap: .35rem; font-size: .75rem; font-weight: 700;
+      padding: .2rem .65rem; border-radius: 100px; margin-left: auto;
+    }
+    .coverage-badge.full { background: rgba(124,240,189,.12); border: 1px solid rgba(124,240,189,.3); color: var(--green); }
+    .coverage-badge.partial { background: rgba(255,211,122,.1); border: 1px solid rgba(255,211,122,.3); color: var(--yellow); }
+    .quote {
+      margin: .75rem 0 .75rem; padding: .6rem 1rem; border-left: 3px solid rgba(112,214,255,.4);
+      background: rgba(112,214,255,.05); border-radius: 0 .5rem .5rem 0;
+      font-style: italic; color: var(--muted); font-size: .9rem;
+    }
+    .ar-solution { margin-top: .75rem; padding: .65rem .9rem; background: rgba(124,240,189,.07); border: 1px solid rgba(124,240,189,.2); border-radius: .6rem; font-size: .88rem; }
+    .ar-solution strong { color: var(--green); }
+
+    /* Coverage matrix table */
+    table { width: 100%; border-collapse: collapse; font-size: .9rem; }
+    thead tr { border-bottom: 2px solid var(--line); }
+    thead th { text-align: left; padding: .6rem .75rem; color: var(--muted); font-weight: 600; font-size: .78rem; letter-spacing: .06em; text-transform: uppercase; }
+    tbody tr { border-bottom: 1px solid rgba(255,255,255,.05); transition: background .15s; }
+    tbody tr:hover { background: rgba(255,255,255,.03); }
+    tbody td { padding: .65rem .75rem; vertical-align: middle; }
+    .sev-tag { display: inline-flex; align-items: center; gap: .35rem; font-size: .78rem; font-weight: 700; }
+    .sev-tag.red { color: var(--red); }
+    .sev-tag.yellow { color: var(--yellow); }
+    .sev-tag.orange { color: var(--orange); }
+    .cover-tag { font-size: .78rem; font-weight: 700; padding: .18rem .55rem; border-radius: 100px; }
+    .cover-tag.full { background: rgba(124,240,189,.12); color: var(--green); border: 1px solid rgba(124,240,189,.25); }
+    .cover-tag.partial { background: rgba(255,211,122,.1); color: var(--yellow); border: 1px solid rgba(255,211,122,.25); }
+
+    /* Advantage section */
+    .adv-grid { display: grid; gap: .75rem; grid-template-columns: repeat(auto-fill, minmax(min(100%,310px), 1fr)); }
+    .adv-card { padding: 1rem 1.15rem; border-radius: .75rem; border: 1px solid rgba(124,240,189,.2); background: rgba(124,240,189,.05); }
+    .adv-card .adv-icon { font-size: 1.4rem; margin-bottom: .4rem; }
+    .adv-card strong { display: block; color: var(--green); margin-bottom: .3rem; font-size: .95rem; }
+    .adv-card p { font-size: .88rem; margin: 0; }
+
+    /* Gap cards */
+    .gap-grid { display: grid; gap: 1rem; }
+    .gap-card { padding: 1.1rem 1.3rem; border-radius: .75rem; border: 1px solid rgba(255,179,71,.2); background: rgba(255,179,71,.05); }
+    .gap-card .gap-title { font-weight: 700; color: var(--orange); margin-bottom: .4rem; font-size: .95rem; }
+    .gap-card p { font-size: .88rem; margin: 0 0 .4rem; }
+    .gap-card .gap-rec { color: var(--blue); font-size: .85rem; }
+
+    /* Conclusion */
+    .verdict { padding: 1.25rem 1.4rem; border-radius: .75rem; background: rgba(124,240,189,.07); border: 1px solid rgba(124,240,189,.3); }
+    .verdict strong { color: var(--green); }
+    .verdict-grid { display: grid; gap: .6rem; margin-top: .85rem; grid-template-columns: repeat(auto-fill, minmax(min(100%,320px), 1fr)); }
+    .verdict-item { padding: .7rem 1rem; border-radius: .6rem; background: rgba(0,0,0,.25); border: 1px solid rgba(124,240,189,.15); font-size: .88rem; }
+    .verdict-item strong { color: var(--green); display: block; margin-bottom: .2rem; }
+
+    footer { padding: 3rem 0; color: var(--muted); font-size: .82rem; border-top: 1px solid var(--line); margin-top: 2rem; }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="eyebrow">Research · 2025 年 7 月</div>
+  <h1>Agentic AI 社群痛點<br>vs. Agent Rider 設計分析</h1>
+  <p class="lede">
+    研究來源：Reddit (r/ClaudeAI, r/LocalLLaMA, r/OpenAI, r/programming)、GitHub Issues、dev.to、Medium (2024–2025)。
+    分析多視窗、跨裝置、跨地點 agentic AI 工作流的真實社群反饋，對照 Agent Rider 的設計是否能解決這些問題。
+  </p>
+</header>
+
+<main>
+
+  <!-- Section 1: Pain Points -->
+  <section>
+    <div class="eyebrow">Section 01</div>
+    <h2>社群真實反映的核心痛點</h2>
+
+    <div class="pain-grid">
+
+      <!-- P1 -->
+      <div class="pain-card p-red">
+        <div class="pain-card-header">
+          <span class="severity-dot red"></span>
+          <span class="pain-title">P1 — SSH 斷線 / Session 遺失</span>
+          <span class="coverage-badge full">✅ 完整解決</span>
+        </div>
+        <p>關了電腦蓋子（睡眠）→ SSH SIGHUP → Claude Code / Codex 進程死亡。從辦公室換到家裡後，session 完全不見。網路不穩時 WebSocket 斷線需從頭 re-authenticate。社群中充斥「關 SSH 前要記得開 tmux」的提示文，說明這是普遍問題。</p>
+        <div class="quote">"The most annoying thing is losing 30+ hours of autonomous coding context just because my laptop went to sleep."</div>
+        <div class="ar-solution"><strong>Agent Rider 解法：</strong> Store Backend 內建 tmux 管理，所有 TUI 代理（claude、codex、agy）均跑在 <code>tmux -L agent-rider</code> 的 persistent session。即使分頁關閉、網路斷線、甚至 store process 重啟，tmux session 仍在背景存活。重新打開瀏覽器即可重附。</div>
+      </div>
+
+      <!-- P2 -->
+      <div class="pain-card p-red">
+        <div class="pain-card-header">
+          <span class="severity-dot red"></span>
+          <span class="pain-title">P2 — 多視窗散亂，無法統一監控</span>
+          <span class="coverage-badge full">✅ 完整解決</span>
+        </div>
+        <p>開 5 個 Terminal Tab 分別跑不同 Claude 任務，完全不知道哪個在等 input、哪個跑完、哪個在 loop。Claude Code 靜悄悄等 approval prompt 但使用者沒注意到，浪費大量計算時間。社群出現 AgentView、Agent Deck 等工具但仍是「beta 體驗」。</p>
+        <div class="quote">"Managing several terminal tabs is chaotic — I can't tell which session is thinking, waiting for input, or finished."</div>
+        <div class="ar-solution"><strong>Agent Rider 解法：</strong> 每個代理 session 都是一張 Conversation Card，可同時展開多個 TUI 卡片在同一個瀏覽器視窗內，不需跳 Tab。</div>
+      </div>
+
+      <!-- P3 -->
+      <div class="pain-card p-red">
+        <div class="pain-card-header">
+          <span class="severity-dot red"></span>
+          <span class="pain-title">P3 — Session 狀態互相污染 / Race Condition</span>
+          <span class="coverage-badge partial">⚠️ 部分解決</span>
+        </div>
+        <p><code>.claude.json</code> 同時被兩個 terminal session 寫入 → 損壞。多個 Claude 實例指向同一目錄 → prompt 互相執行。Codex 多實例同時修改同一 file → 造成 drift。社群共識：必須用 git worktrees 才能安全並行。</p>
+        <div class="quote">"Race conditions from multiple sessions writing to the same .claude.json have crashed concurrent sessions."</div>
+        <div class="ar-solution"><strong>Agent Rider 解法：</strong> tmux session 以 (run-key, agent, cwd) 為單位建立；但若多個 card 指向同目錄，底層代理的 state file 衝突<strong>並未從根本解決</strong>。需加 git worktree 整合。</div>
+      </div>
+
+      <!-- P4 -->
+      <div class="pain-card p-red">
+        <div class="pain-card-header">
+          <span class="severity-dot red"></span>
+          <span class="pain-title">P4 — 跨裝置的「Cognitive Tax」</span>
+          <span class="coverage-badge full">✅ 完整解決</span>
+        </div>
+        <p>到咖啡廳想看 agent 進度 → 手機/平板無法查看 terminal。換到另一台電腦 → 要重新 SSH、重新 attach tmux、重新找是哪個 session。就算能 re-attach，也不知道 agent 決策過程的 context 是什麼。</p>
+        <div class="quote">"Re-authenticating, re-indexing the codebase, and re-establishing the agent's mental model creates significant downtime."</div>
+        <div class="ar-solution"><strong>Agent Rider 解法：</strong> 這是 Agent Rider 最大的價值主張。Web UI 透過 Tailscale 可從任何裝置、任何地點存取；SQLite 持久化 conversation history；無需 SSH 知識，瀏覽器即是介面。</div>
+      </div>
+
+      <!-- P5 -->
+      <div class="pain-card p-yellow">
+        <div class="pain-card-header">
+          <span class="severity-dot yellow"></span>
+          <span class="pain-title">P5 — Context Rot（長 Session 品質下降）</span>
+          <span class="coverage-badge partial">⚠️ 間接改善</span>
+        </div>
+        <p>Agent session 跑太久後開始「忘記」先前的決策，重新引入已修過的 bug，忽略 project 規則。跨多個 session 的 context 管理更困難。</p>
+        <div class="quote">"Context rot is real — after long sessions, the AI loses track of previous decisions."</div>
+        <div class="ar-solution"><strong>Agent Rider 解法：</strong> Conversation Card 的 SQLite 歷史讓使用者可查看過去 turn，但不會自動壓縮 context。設計文件提到 SIRA memory MCP server 作為共享記憶骨幹，<strong>若實作完成會直接解決此問題</strong>，目前尚未落地。</div>
+      </div>
+
+      <!-- P6 -->
+      <div class="pain-card p-yellow">
+        <div class="pain-card-header">
+          <span class="severity-dot yellow"></span>
+          <span class="pain-title">P6 — 遠端 Server 安裝/維運複雜</span>
+          <span class="coverage-badge full">✅ 完整解決</span>
+        </div>
+        <p>在遠端 server 跑 Claude Code 需要：SSH key、tmux 知識、Node/npm 安裝、permission 調整，新機器上手成本高，沒有統一管理多台 server 的方式。</p>
+        <div class="ar-solution"><strong>Agent Rider 解法：</strong> 一鍵安裝腳本 <code>pull-update.sh</code>，systemd 管理兩個服務，Tailscale 做網路層；安裝後只需維護一個 URL，不需再手動 SSH。</div>
+      </div>
+
+      <!-- P7 -->
+      <div class="pain-card p-yellow">
+        <div class="pain-card-header">
+          <span class="severity-dot yellow"></span>
+          <span class="pain-title">P7 — Agent Quota / 費用可視性不足</span>
+          <span class="coverage-badge full">✅ 有基礎實作</span>
+        </div>
+        <p>Claude、Codex 各有 quota 但散落在不同 CLI 工具裡。使用者不知道哪個 session 快額度用盡，也沒有跨 agent 的 usage dashboard。</p>
+        <div class="ar-solution"><strong>Agent Rider 解法：</strong> Store backend 實作 on-demand quota scraping，對 claude、codex、agy 各自注入 <code>/status</code> 指令到 tmux session 並擷取畫面。雖是 best-effort 而非即時串流，在社群中算是少見的整合方案。</div>
+      </div>
+
+      <!-- P8 -->
+      <div class="pain-card p-orange">
+        <div class="pain-card-header">
+          <span class="severity-dot orange"></span>
+          <span class="pain-title">P8 — 無 Mobile-Friendly 監控介面</span>
+          <span class="coverage-badge partial">⚠️ 部分解決</span>
+        </div>
+        <p>手機上無法舒適地監控長跑的 AI agent。社群有人用 Telegram Bot 作為替代，但需要額外設定。</p>
+        <div class="ar-solution"><strong>Agent Rider 解法：</strong> Web UI 原則上手機可用，但 TUI terminal card（xterm.js 渲染）在手機小螢幕上體驗不佳。監控（查看歷史、查狀態）可行；互動操控則較差。</div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- Section 2: Matrix -->
+  <section>
+    <div class="eyebrow">Section 02</div>
+    <h2>痛點覆蓋矩陣</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>痛點</th>
+          <th>嚴重度</th>
+          <th>Agent Rider 覆蓋</th>
+          <th>核心機制</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>P1 SSH 斷線 / Session 消失</strong></td>
+          <td><span class="sev-tag red">🔴 高</span></td>
+          <td><span class="cover-tag full">✅ 完整</span></td>
+          <td>tmux persistent sessions</td>
+        </tr>
+        <tr>
+          <td><strong>P2 多視窗無法統一監控</strong></td>
+          <td><span class="sev-tag red">🔴 高</span></td>
+          <td><span class="cover-tag full">✅ 完整</span></td>
+          <td>單瀏覽器多 Conversation Card</td>
+        </tr>
+        <tr>
+          <td><strong>P3 Session 狀態污染</strong></td>
+          <td><span class="sev-tag red">🔴 高</span></td>
+          <td><span class="cover-tag partial">⚠️ 部分</span></td>
+          <td>需 git worktree 整合補強</td>
+        </tr>
+        <tr>
+          <td><strong>P4 跨裝置 Cognitive Tax</strong></td>
+          <td><span class="sev-tag red">🔴 高</span></td>
+          <td><span class="cover-tag full">✅ 完整</span></td>
+          <td>Tailscale + SQLite 持久化</td>
+        </tr>
+        <tr>
+          <td><strong>P5 Context Rot</strong></td>
+          <td><span class="sev-tag yellow">🟡 中</span></td>
+          <td><span class="cover-tag partial">⚠️ 部分</span></td>
+          <td>SIRA MCP 待實作</td>
+        </tr>
+        <tr>
+          <td><strong>P6 安裝 / 維運複雜</strong></td>
+          <td><span class="sev-tag yellow">🟡 中</span></td>
+          <td><span class="cover-tag full">✅ 完整</span></td>
+          <td>pull-update.sh + systemd</td>
+        </tr>
+        <tr>
+          <td><strong>P7 Quota 可視性</strong></td>
+          <td><span class="sev-tag yellow">🟡 中</span></td>
+          <td><span class="cover-tag full">✅ 有基礎</span></td>
+          <td>on-demand tmux scraping</td>
+        </tr>
+        <tr>
+          <td><strong>P8 Mobile 監控</strong></td>
+          <td><span class="sev-tag orange">🟠 低</span></td>
+          <td><span class="cover-tag partial">⚠️ 部分</span></td>
+          <td>查看 OK，互動仍差</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- Section 3: Advantages -->
+  <section>
+    <div class="eyebrow">Section 03</div>
+    <h2>Agent Rider 的差異化優勢（vs 競品）</h2>
+    <div class="adv-grid">
+      <div class="adv-card">
+        <div class="adv-icon">🔒</div>
+        <strong>完全自托管</strong>
+        <p>資料不離開自己的 server，不依附 Anthropic 雲端或 GitHub 帳號。</p>
+      </div>
+      <div class="adv-card">
+        <div class="adv-icon">🌐</div>
+        <strong>瀏覽器即介面</strong>
+        <p>無需任何 client 安裝，任何裝置開瀏覽器即可存取。</p>
+      </div>
+      <div class="adv-card">
+        <div class="adv-icon">🤖</div>
+        <strong>多 Agent 廠牌統一視窗</strong>
+        <p>claude、codex、agy、devin 同一頁面並排監控，其他工具做不到。</p>
+      </div>
+      <div class="adv-card">
+        <div class="adv-icon">🔗</div>
+        <strong>Tailscale 零設定跨裝置</strong>
+        <p>不需 port forwarding 或 VPN 配置，tailnet 內任何裝置直接存取。</p>
+      </div>
+      <div class="adv-card">
+        <div class="adv-icon">🧩</div>
+        <strong>App Builder 擴充</strong>
+        <p>可自建 custom dashboard，資料來自同源 /store API，不需改動主程式。</p>
+      </div>
+      <div class="adv-card">
+        <div class="adv-icon">💾</div>
+        <strong>SQLite 持久對話歷史</strong>
+        <p>換裝置後對話歷史完整保留，不像 raw tmux 只有當下畫面。</p>
+      </div>
+    </div>
+
+    <br>
+    <p style="font-size:.85rem; color: var(--muted);">
+      <strong style="color:var(--text)">競品對比：</strong>
+      裸 tmux（無 UI、無跨裝置）、AgentView / AgentDeck（仍需本機 terminal）、GitHub Codespaces（雲端月費、資料不在本地）、Anthropic Remote（只限 Claude）、Custom Telegram Bot（無完整操作介面）。
+    </p>
+  </section>
+
+  <!-- Section 4: Gaps -->
+  <section>
+    <div class="eyebrow">Section 04</div>
+    <h2>目前設計的空缺（優先補強建議）</h2>
+    <div class="gap-grid">
+
+      <div class="gap-card">
+        <div class="gap-title">🚨 缺口 1：Agent 狀態即時指示器（最高優先）</div>
+        <p>社群需求：一眼看出哪個 agent 在 thinking / waiting / idle，這是多視窗監控最迫切的可視性需求。</p>
+        <p>現況：需打開 TUI card 自己觀察，無法一覽全局。</p>
+        <p class="gap-rec">→ 建議：在 Card title bar 加上 busy / idle / waiting badge，透過 tmux capture-pane 的 pattern matching 判斷（實作門檻低，效果顯著）。</p>
+      </div>
+
+      <div class="gap-card">
+        <div class="gap-title">⚡ 缺口 2：共享記憶 SIRA MCP（高優先）</div>
+        <p>社群需求：解決 context rot，讓 agent 跨 session 甚至跨裝置保留記憶與決策脈絡。</p>
+        <p>現況：設計文件 (DEISNG.md) 有完整藍圖，但尚未實作。Hermes、Agy、Codex、Claude 應能共用同一 memory surface。</p>
+        <p class="gap-rec">→ 建議：優先推進 SIRA memory MCP server，這是高頻且深度痛點，也是 Agent Rider 對「平台記憶層」的核心差異點。</p>
+      </div>
+
+      <div class="gap-card">
+        <div class="gap-title">🌿 缺口 3：Git Worktree 整合（中優先）</div>
+        <p>社群需求：並行 agent 各自獨立 working directory，避免 file collision 和 state file race condition。</p>
+        <p>現況：Agent Rider 不管 git worktree，使用者需手動建立，門檻高且容易忘記。</p>
+        <p class="gap-rec">→ 建議：在 Conversation Card 建立時，optionally 建立對應 git worktree 並自動設定 cwd。</p>
+      </div>
+
+      <div class="gap-card">
+        <div class="gap-title">📱 缺口 4：Mobile 輕量觀察模式（低優先）</div>
+        <p>社群需求：手機快速看 agent 進度，不需要完整 TUI 互動。</p>
+        <p>現況：xterm.js 在手機小螢幕體驗差，完整功能難以使用。</p>
+        <p class="gap-rec">→ 建議：獨立的「觀察模式」頁面，只顯示最新 N 行 stdout，不跑完整 xterm.js 渲染。</p>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- Section 5: Conclusion -->
+  <section>
+    <div class="eyebrow">Section 05</div>
+    <h2>結論</h2>
+    <div class="verdict">
+      <p><strong>Agent Rider 的設計方向與社群最迫切的痛點高度吻合。</strong> 在 8 個主要痛點中，5 個完整解決（P1、P2、P4、P6、P7），3 個部分解決（P3、P5、P8）。</p>
+      <div class="verdict-grid">
+        <div class="verdict-item">
+          <strong>✅ 核心差異點已建立</strong>
+          跨裝置斷線問題（P1, P4）完整解決，且比社群主流的「手動 tmux」體驗好很多。
+        </div>
+        <div class="verdict-item">
+          <strong>✅ 自托管隱私優勢明確</strong>
+          對比 Anthropic 雲端方案，完全自托管是不可替代的賣點。
+        </div>
+        <div class="verdict-item">
+          <strong>⚠️ Context 記憶層待補</strong>
+          SIRA MCP 若補上，Agent Rider 可宣稱解決多 agentic AI 工作流的全部主要痛點。
+        </div>
+        <div class="verdict-item">
+          <strong>⚠️ 最快見效的改進</strong>
+          Agent 狀態 badge（busy/idle/waiting）實作成本低但對使用者可見度提升最大。
+        </div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <p>Agent Rider Planning · 研究日期：2025 年 7 月 · 來源：Reddit, GitHub Issues, dev.to, Medium</p>
+</footer>
+
+</body>
+</html>
