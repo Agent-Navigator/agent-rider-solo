@@ -31,13 +31,15 @@ if [[ -z "$archive" || ! -f "$archive" ]]; then
   exit 1
 fi
 
-if [[ $EUID -ne 0 ]]; then
+if [[ $EUID -ne 0 && ${AGENT_RIDER_TEST_MODE:-0} != 1 ]]; then
   echo "This installer writes systemd units and should be run as root or through sudo." >&2
   exit 1
 fi
 
 APP_NAME=${APP_NAME:-agent-rider}
 ENV_FILE=${ENV_FILE:-/etc/default/agent-rider}
+SYSTEMD_DIR=${SYSTEMD_DIR:-/etc/systemd/system}
+SYSTEMD_RUNTIME_DIR=${SYSTEMD_RUNTIME_DIR:-/run/systemd/system}
 
 read_env_value() {
   local key=$1
@@ -65,7 +67,7 @@ APP_DIR=${APP_DIR:-${existing_app_dir:-/opt/agent-rider}}
 #      Conversation card greys them all out.
 #   3. the user behind this session: SUDO_USER (via sudo) or logname (login/su -)
 #   4. root
-store_unit=/etc/systemd/system/agent-rider-store.service
+store_unit=$SYSTEMD_DIR/agent-rider-store.service
 existing_service_user=''
 if [[ -r "$store_unit" ]]; then
   existing_service_user=$(awk -F= '/^User=/{print $2; exit}' "$store_unit")
@@ -105,7 +107,7 @@ fi
 BROWSE_ROOT=${BROWSE_ROOT:-${existing_browse_root:-$app_home}}
 
 systemd_available() {
-  command -v systemctl >/dev/null 2>&1 && [[ -d /run/systemd/system ]]
+  command -v systemctl >/dev/null 2>&1 && [[ -d $SYSTEMD_RUNTIME_DIR ]]
 }
 
 stop_existing_services() {
@@ -123,6 +125,7 @@ restart_services() {
 }
 
 install_packages() {
+  [[ ${AGENT_RIDER_SKIP_PREREQS:-0} == 1 ]] && return
   if command -v apt-get >/dev/null 2>&1; then
     apt-get update
     apt-get install -y ca-certificates curl git gnupg tar gzip tmux build-essential python3
@@ -143,6 +146,7 @@ install_packages() {
 }
 
 install_node_22() {
+  [[ ${AGENT_RIDER_SKIP_PREREQS:-0} == 1 ]] && return
   local major=0
   if command -v node >/dev/null 2>&1; then
     major=$(node -p "Number(process.versions.node.split('.')[0])" 2>/dev/null || echo 0)
@@ -248,6 +252,7 @@ sync_plugins() {
 }
 
 mkdir -p "$releases_dir" "$shared_data_dir" "$shared_plugins_dir" "$shared_dir/logs" "$release_dir"
+mkdir -p "$SYSTEMD_DIR" "$(dirname "$ENV_FILE")"
 tar -xzf "$archive" -C "$release_dir"
 if [[ ! -x "$release_dir/bin/agent-rider-store" ]]; then
   echo "Release is missing executable bin/agent-rider-store." >&2
@@ -335,7 +340,7 @@ old_current=$(readlink -f "$APP_DIR/current" 2>/dev/null || true)
 rollback_dir="$staging_dir/rollback"
 mkdir -p "$rollback_dir"
 [[ -f "$store_unit" ]] && cp -a "$store_unit" "$rollback_dir/store.service"
-[[ -f /etc/systemd/system/agent-rider-web.service ]] && cp -a /etc/systemd/system/agent-rider-web.service "$rollback_dir/web.service"
+[[ -f $SYSTEMD_DIR/agent-rider-web.service ]] && cp -a "$SYSTEMD_DIR/agent-rider-web.service" "$rollback_dir/web.service"
 [[ -f "$ENV_FILE" ]] && cp -a "$ENV_FILE" "$rollback_dir/environment"
 
 services_were_stopped=0
@@ -346,7 +351,7 @@ rollback_install() {
     echo "Deployment failed; restoring the previous release and systemd units." >&2
     if [[ -n "$old_current" && -d "$old_current" ]]; then ln -sfn "$old_current" "$APP_DIR/current"; else rm -f "$APP_DIR/current"; fi
     if [[ -f "$rollback_dir/store.service" ]]; then cp -a "$rollback_dir/store.service" "$store_unit"; else rm -f "$store_unit"; fi
-    if [[ -f "$rollback_dir/web.service" ]]; then cp -a "$rollback_dir/web.service" /etc/systemd/system/agent-rider-web.service; else rm -f /etc/systemd/system/agent-rider-web.service; fi
+    if [[ -f "$rollback_dir/web.service" ]]; then cp -a "$rollback_dir/web.service" "$SYSTEMD_DIR/agent-rider-web.service"; else rm -f "$SYSTEMD_DIR/agent-rider-web.service"; fi
     if [[ -f "$rollback_dir/environment" ]]; then cp -a "$rollback_dir/environment" "$ENV_FILE"; else rm -f "$ENV_FILE"; fi
     if systemd_available; then
       systemctl daemon-reload
@@ -362,7 +367,7 @@ services_were_stopped=1
 ln -sfn "$release_dir" "$APP_DIR/current"
 install -m 0644 "$new_env" "$ENV_FILE"
 install -m 0644 "$new_store_unit" "$store_unit"
-install -m 0644 "$new_web_unit" /etc/systemd/system/agent-rider-web.service
+install -m 0644 "$new_web_unit" "$SYSTEMD_DIR/agent-rider-web.service"
 restart_services
 
 healthy=0
