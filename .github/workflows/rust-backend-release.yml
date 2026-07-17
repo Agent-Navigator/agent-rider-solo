@@ -1,0 +1,68 @@
+name: Rust backend release
+
+on:
+  push:
+    branches: ['**']
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: Commit, branch, or tag to build
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.commit || github.sha }}
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+          components: clippy,rustfmt
+
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Check and test
+        run: |
+          cargo fmt --check
+          cargo clippy --all-targets -- -D warnings
+          cargo test
+          npm run test:contract
+          npm run build
+
+      - name: Build static backend archive
+        id: artifact
+        run: |
+          cargo build --locked --release --target x86_64-unknown-linux-musl
+          install -Dm755 target/x86_64-unknown-linux-musl/release/agent-rider-store staging/bin/agent-rider-store
+          archive=agent-rider-store-x86_64-unknown-linux-musl.tar.gz
+          tar -C staging -czf "$archive" bin/agent-rider-store
+          sha256sum "$archive" > "$archive.sha256"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "archive=$archive" >> "$GITHUB_OUTPUT"
+
+      - name: Publish commit prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ steps.artifact.outputs.sha }}
+          ARCHIVE: ${{ steps.artifact.outputs.archive }}
+        run: |
+          tag="build-$SHA"
+          gh release delete "$tag" --yes --cleanup-tag 2>/dev/null || true
+          gh release create "$tag" "$ARCHIVE" "$ARCHIVE.sha256" --target "$SHA" --prerelease --title "Agent Rider backend $SHA" --notes "Static Linux x86_64 backend built from $SHA."
