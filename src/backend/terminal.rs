@@ -114,7 +114,36 @@ fn tmux_exists(name: &str) -> bool {
         .status()
         .is_ok_and(|v| v.success())
 }
-pub fn usage(state: &AppState, body: &Value) -> Value {
+fn tmux_keys(name: &str, keys: &[&str]) {
+    let mut args = vec!["-L", "agent-rider", "send-keys", "-t", name];
+    args.extend_from_slice(keys);
+    let _ = std::process::Command::new("tmux")
+        .args(args)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+}
+fn tmux_capture(name: &str) -> String {
+    std::process::Command::new("tmux")
+        .args(["-L", "agent-rider", "capture-pane", "-t", name, "-p"])
+        .output()
+        .ok()
+        .map(|v| String::from_utf8_lossy(&v.stdout).to_string())
+        .unwrap_or_default()
+}
+fn parse_usage(agent: &str, text: &str) -> Vec<Value> {
+    match agent {
+        "claude" => regex::Regex::new(r"(?m)(Current[^\n]*)\n[^\n]*?(\d+)% used\s*\n\s*Resets ([^\n]+)").unwrap().captures_iter(text).map(|capture| {
+            let label=capture[1].trim(); json!({"label":label,"percentUsed":capture[2].parse::<f64>().unwrap_or(0.0),"resets":format!("resets {}",capture[3].trim()),"kind":if label.to_lowercase().contains("week"){"week"}else{"5h"}})
+        }).collect(),
+        "codex" => regex::Regex::new(r"Weekly limit:\s*\[[^\]]*\]\s*(\d+)% left \(resets ([^)]+)\)").unwrap().captures(text).map(|capture|vec![json!({"label":"Weekly","percentUsed":100.0-capture[1].parse::<f64>().unwrap_or(100.0),"resets":format!("resets {}",capture[2].trim()),"kind":"week"})]).unwrap_or_default(),
+        "agy" => regex::Regex::new(r"(?m)([A-Z][A-Z &]+MODELS)\n\s*Models within this group: [^\n]+\n\s*\n\s*Weekly Limit\n\s*\[[^\]]*\]\s*[\d.]+%\n\s*(\d+)% remaining · Refreshes in ([^\n]+)\n\s*\n\s*Five Hour Limit\n\s*\[[^\]]*\]\s*[\d.]+%\n\s*(\d+)% remaining · Refreshes in ([^\n]+)").unwrap().captures_iter(text).flat_map(|capture| {
+            let group=capture[1].trim(); [json!({"label":format!("{group} · weekly"),"percentUsed":100.0-capture[2].parse::<f64>().unwrap_or(100.0),"resets":format!("refreshes in {}",capture[3].trim()),"kind":"week"}),json!({"label":format!("{group} · 5h"),"percentUsed":100.0-capture[4].parse::<f64>().unwrap_or(100.0),"resets":format!("refreshes in {}",capture[5].trim()),"kind":"5h"})]
+        }).collect(),
+        _ => vec![],
+    }
+}
+pub async fn usage(state: &AppState, body: &Value) -> Value {
     let agent = body["agent"].as_str().unwrap_or("");
     if !["claude", "codex", "agy"].contains(&agent) {
         return json!({"available":false,"reason":"unsupported"});
@@ -124,10 +153,52 @@ pub fn usage(state: &AppState, body: &Value) -> Value {
         return json!({"available":false,"reason":"no-session"});
     }
     let cwd = safe_cwd(state, body["cwd"].as_str());
-    if !tmux_exists(&tmux_name(session, agent, &cwd)) {
+    let name = tmux_name(session, agent, &cwd);
+    if !tmux_exists(&name) {
         return json!({"available":false,"reason":"no-session"});
     }
-    json!({"available":false,"reason":"unparsed"})
+    let before = tmux_capture(&name);
+    if [
+        "esc to interrupt",
+        "Do you want to",
+        "(y/n)",
+        "Waiting for approval",
+    ]
+    .iter()
+    .any(|marker| before.contains(marker))
+    {
+        return json!({"available":false,"reason":"busy"});
+    }
+    let command = if agent == "agy" { "/usage" } else { "/status" };
+    tmux_keys(&name, &["-l", command]);
+    tmux_keys(&name, &["Enter"]);
+    tokio::time::sleep(Duration::from_millis(if agent == "claude" {
+        1500
+    } else {
+        700
+    }))
+    .await;
+    if agent != "claude" {
+        tmux_keys(&name, &["Enter"]);
+        tokio::time::sleep(Duration::from_millis(700)).await;
+    }
+    if agent == "claude" {
+        for _ in 0..2 {
+            tmux_keys(&name, &["-l", "\x1b[C"]);
+            tokio::time::sleep(Duration::from_millis(300)).await;
+        }
+        tokio::time::sleep(Duration::from_millis(600)).await;
+    }
+    let screen = tmux_capture(&name);
+    let meters = parse_usage(agent, &screen);
+    if agent != "codex" {
+        tmux_keys(&name, &["Escape"]);
+    }
+    if meters.is_empty() {
+        json!({"available":false,"reason":"unparsed"})
+    } else {
+        json!({"available":true,"agent":agent,"meters":meters,"fetchedAt":chrono::Utc::now().timestamp_millis()})
+    }
 }
 
 pub async fn ws_handler(
@@ -310,4 +381,15 @@ async fn terminal_socket(socket: WebSocket, state: Arc<AppState>, query: HashMap
         tokio::select! {Some(data)=rx.recv()=>{if sink.send(Message::Binary(data.into())).await.is_err(){break}},Some(Ok(message))=source.next()=>{match message{Message::Text(text)=>if let Ok(value)=serde_json::from_str::<Value>(&text){match value["type"].as_str(){Some("input")=>{let _=writer.lock().unwrap().write_all(value["data"].as_str().unwrap_or("").as_bytes());},Some("resize")=>{let c=value["cols"].as_u64().unwrap_or(100).clamp(20,240)as u16;let r=value["rows"].as_u64().unwrap_or(28).clamp(6,80)as u16;let _=master.lock().unwrap().resize(PtySize{rows:r,cols:c,pixel_width:0,pixel_height:0});},_=>{}}},Message::Close(_)=>break,_=>{} }},else=>break}
     }
     let _ = child.lock().unwrap().kill();
+}
+
+#[cfg(test)]
+mod usage_tests {
+    use super::*;
+    #[test]
+    fn parses_codex_quota() {
+        let meters = parse_usage("codex", "Weekly limit: [====] 74% left (resets Friday)");
+        assert_eq!(meters[0]["percentUsed"], 26.0);
+        assert_eq!(meters[0]["kind"], "week");
+    }
 }

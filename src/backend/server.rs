@@ -265,7 +265,7 @@ async fn dispatch(State(state): State<Arc<AppState>>, req: Request<Body>) -> Res
                 Ok(v) => v,
                 Err(v) => return v,
             };
-            response(200, terminal::usage(&state, &body))
+            response(200, terminal::usage(&state, &body).await)
         }
         (Method::POST, "/store/apps/order") => {
             let body = match json_body(req, 100_000).await {
