@@ -12,7 +12,6 @@ pub struct Config {
     pub browse_root: PathBuf,
     pub default_cwd: PathBuf,
     pub apps_dir: PathBuf,
-    pub hermes_target: String,
     pub agent_path: String,
 }
 
@@ -90,10 +89,6 @@ impl Config {
             browse_root,
             default_cwd,
             apps_dir,
-            hermes_target: env::var("HERMES_TARGET")
-                .ok()
-                .filter(|value| !value.trim().is_empty())
-                .unwrap_or_else(|| "hermes".into()),
             agent_path: paths.join(":"),
         }
     }

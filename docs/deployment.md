@@ -98,7 +98,7 @@ Migration refuses to proceed unless the current login matches the old
 lingering, records the old `current` pointer, environment file, and systemd
 units, stops and disables both old services, then copies persistent data and
 plugins into the rootless layout. It preserves `WEB_PORT` as
-`AGENT_RIDER_PORT`, along with `BROWSE_ROOT`, `HERMES_TARGET`, and allowed-host
+`AGENT_RIDER_PORT`, along with `BROWSE_ROOT` and allowed-host
 configuration.
 
 If the new health check fails, the user service is disabled and the old

@@ -63,7 +63,7 @@ run_installer() {
   local installer=$1 archive=$2
   local installer_env=(APP_DIR="$APP_DIR" AGENT_RIDER_DEPLOY_COMMIT="$commit" AGENT_RIDER_DEPLOY_SHORT_SHA="$short_sha" AGENT_RIDER_SOURCE_GIT="$SOURCE_GIT" AGENT_RIDER_SOURCE_REF="$SOURCE_REF")
   local name
-  for name in APP_USER APP_GROUP WEB_PORT STORE_PORT BROWSE_ROOT AGENT_RIDER_APPS_DIR HERMES_TARGET VITE_ALLOWED_HOSTS ENV_FILE; do [[ -n ${!name+x} ]] && installer_env+=("$name=${!name}"); done
+  for name in APP_USER APP_GROUP WEB_PORT STORE_PORT BROWSE_ROOT AGENT_RIDER_APPS_DIR VITE_ALLOWED_HOSTS ENV_FILE; do [[ -n ${!name+x} ]] && installer_env+=("$name=${!name}"); done
   if [[ $EUID -eq 0 ]]; then env "${installer_env[@]}" bash "$installer" "$archive"
   elif command -v sudo >/dev/null 2>&1; then sudo env "${installer_env[@]}" bash "$installer" "$archive"
   else env "${installer_env[@]}" bash "$installer" "$archive"; fi

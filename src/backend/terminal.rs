@@ -30,7 +30,7 @@ fn safe_cwd(state: &AppState, value: Option<&str>) -> PathBuf {
 
 pub fn agents(state: &AppState) -> Value {
     let mut result = serde_json::Map::new();
-    for name in ["hermes", "claude", "codex", "agy", "devin"] {
+    for name in ["claude", "codex", "agy", "devin"] {
         let path = state.config.resolve_command(name);
         result.insert(
             name.into(),

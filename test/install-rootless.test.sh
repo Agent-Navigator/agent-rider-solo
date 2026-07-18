@@ -129,7 +129,7 @@ legacy_env="$SANDBOX/legacy.env"
 mkdir -p "$legacy/shared/data" "$legacy/shared/plugins" "$legacy/current"
 printf '%s\n' saved-state > "$legacy/shared/data/state.txt"
 printf '%s\n' local-app > "$legacy/shared/plugins/app.txt"
-printf '%s\n' 'WEB_PORT=5199' "BROWSE_ROOT=$SANDBOX/browse" 'HERMES_TARGET=/usr/bin/hermes' \
+printf '%s\n' 'WEB_PORT=5199' "BROWSE_ROOT=$SANDBOX/browse" \
   > "$legacy_env"
 MOCK_LEGACY_USER="$(id -un)" run_installer migration \
   AGRIDER_LEGACY_ROOT="$legacy" AGRIDER_LEGACY_ENV="$legacy_env" >/dev/null

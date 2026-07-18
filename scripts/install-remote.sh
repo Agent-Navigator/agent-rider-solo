@@ -15,7 +15,6 @@ Environment:
   STORE_PORT          Local store backend port. Default: 5174
   BROWSE_ROOT         File browser root. Default: APP_USER home
   AGENT_RIDER_APPS_DIR Local Agent Apps root. Default: APP_DIR/shared/plugins
-  HERMES_TARGET       Hermes ACP executable. Default: hermes resolved from PATH.
   VITE_ALLOWED_HOSTS  Comma-separated hosts, or "all". Default: all
 USAGE
 }
@@ -83,16 +82,10 @@ existing_web_port=$(read_env_value WEB_PORT || true)
 existing_store_port=$(read_env_value STORE_PORT || true)
 existing_browse_root=$(read_env_value BROWSE_ROOT || true)
 existing_apps_dir=$(read_env_value AGENT_RIDER_APPS_DIR || true)
-existing_hermes_target=$(read_env_value HERMES_TARGET || true)
 existing_allowed_hosts=$(read_env_value VITE_ALLOWED_HOSTS || true)
 WEB_HOST=${WEB_HOST:-${existing_web_host:-127.0.0.1}}
 WEB_PORT=${WEB_PORT:-${existing_web_port:-5173}}
 STORE_PORT=${STORE_PORT:-${existing_store_port:-5174}}
-# Retire the old external WebUI URL; the Rust backend expects an ACP executable.
-if [[ "${existing_hermes_target:-}" == "http://127.0.0.1:8789" ]]; then
-  existing_hermes_target=''
-fi
-HERMES_TARGET=${HERMES_TARGET:-${existing_hermes_target:-hermes}}
 VITE_ALLOWED_HOSTS=${VITE_ALLOWED_HOSTS:-${existing_allowed_hosts:-all}}
 
 if ! id "$APP_USER" >/dev/null 2>&1; then
@@ -293,7 +286,6 @@ AGENT_RIDER_APPS_DIR=$AGENT_RIDER_APPS_DIR
 WEB_HOST=$WEB_HOST
 STORE_PORT=$STORE_PORT
 WEB_PORT=$WEB_PORT
-HERMES_TARGET=$HERMES_TARGET
 VITE_ALLOWED_HOSTS=$VITE_ALLOWED_HOSTS
 EOF
 

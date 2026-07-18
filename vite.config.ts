@@ -1,4 +1,4 @@
-import { defineConfig, type ProxyOptions } from 'vite'
+import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { execSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
@@ -20,7 +20,7 @@ const splitCsv = (value: string | undefined) =>
     .map((item) => item.trim())
     .filter(Boolean)
 
-const defaultAllowedHosts = ['dev-agent-rider.aicrmtech.com', 'hermes-agent-yen.tailf0a6a7.ts.net']
+const defaultAllowedHosts = ['dev-agent-rider.aicrmtech.com']
 const envAllowedHosts = splitCsv(process.env.VITE_ALLOWED_HOSTS)
 const allowedHosts = process.env.VITE_ALLOWED_HOSTS === 'all'
   ? true
@@ -28,24 +28,7 @@ const allowedHosts = process.env.VITE_ALLOWED_HOSTS === 'all'
     ? envAllowedHosts
     : defaultAllowedHosts
 const storeTarget = `http://127.0.0.1:${process.env.STORE_PORT || '5174'}`
-// Hermes conversations are served by the store backend's embedded ACP server
-// (server/hermesAcp.mjs) by default — no external hermes-webui deployment
-// needed. Set HERMES_TARGET to point /api at an external Hermes WebUI instead.
-const hermesTarget = process.env.HERMES_TARGET || storeTarget
-
-const apiProxy: Record<string, ProxyOptions> = {
-  '/api': {
-    target: hermesTarget,
-    changeOrigin: true,
-    ws: true,
-    rewriteWsOrigin: true,
-    configure: (proxy: { on: (event: string, cb: (req: { removeHeader: (name: string) => void }) => void) => void }) => {
-      proxy.on('proxyReq', (proxyReq) => {
-        proxyReq.removeHeader('origin')
-        proxyReq.removeHeader('referer')
-      })
-    },
-  },
+const apiProxy = {
   // Local SQLite persistence backend (server/store.mjs)
   '/store': {
     target: storeTarget,

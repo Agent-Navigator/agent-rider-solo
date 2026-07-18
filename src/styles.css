@@ -3325,7 +3325,7 @@ button { cursor: pointer; }
   filter: blur(22px) saturate(1.25);
   opacity: 0.72;
   transform: translate3d(-8%, -4%, 0) rotate(0deg) scale(1.05);
-  animation: hermesComposerAurora 9s ease-in-out infinite alternate;
+  animation: agentComposerAurora 9s ease-in-out infinite alternate;
   pointer-events: none;
 }
 
@@ -3434,7 +3434,7 @@ button { cursor: pointer; }
     0 0 0 1px rgba(255, 255, 255, 0.08) inset;
 }
 
-@keyframes hermesComposerAurora {
+@keyframes agentComposerAurora {
   0% {
     transform: translate3d(-8%, -4%, 0) rotate(0deg) scale(1.05);
   }
@@ -4480,7 +4480,7 @@ button { cursor: pointer; }
   box-shadow: 0 3px 0 -1px var(--win-accent), 0 2px 12px rgba(0, 0, 0, 0.25);
 }
 
-/* ── Hermes turn activity: plan, tool calls, reasoning ───────────────────── */
+/* ── Agent turn activity: plan, tool calls, reasoning ───────────────────── */
 .term-activity {
   display: flex;
   flex-direction: column;
@@ -4550,7 +4550,7 @@ button { cursor: pointer; }
 .term-tool-output { font-size: 11px; line-height: 1.6; }
 .term-thinking-body { font-style: italic; line-height: 1.7; }
 
-/* Images: the ones Hermes produced (served from the workspace by path) and the
+/* Images produced by an agent (served from the workspace by path) and the
    ones the user attached (inline data URLs, echoed back in their own bubble). */
 .term-tool-images,
 .term-prompt-images,

@@ -62,8 +62,8 @@ ${XDG_CONFIG_HOME:-~/.config}/agrider/env   service configuration
 ```
 
 The server listens on `127.0.0.1:5173` by default. Configuration values include
-`AGENT_RIDER_PORT`, `BROWSE_ROOT`, `HERMES_TARGET`, and
-`AGENT_RIDER_APPS_DIR`. After editing the environment file, run:
+`AGENT_RIDER_PORT`, `BROWSE_ROOT`, and `AGENT_RIDER_APPS_DIR`. After editing
+the environment file, run:
 
 ```bash
 systemctl --user restart agrider
@@ -80,7 +80,7 @@ journalctl --user -u agrider -f
 
 The installer detects the former two-service deployment. It verifies that the
 invoking user matches the old systemd `User=`, preserves ports, browse root,
-Hermes target, SQLite data, and local apps, and creates a complete migration
+SQLite data, and local apps, and creates a complete migration
 backup before enabling the new user service. A failed health check restores and
 starts both former system services.
 

@@ -78,9 +78,6 @@ before(async () => {
   await writeFile(join(webDist, 'index.html'), '<!doctype html><title>Agent Rider Fixture</title>')
   await writeFile(join(webDist, 'assets', 'fixture.js'), 'console.log("fixture")\n')
 
-  const fakeHermes = join(bin, 'hermes')
-  await writeFile(fakeHermes, `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(join(ROOT, 'test', 'fixtures', 'fake-hermes-acp.mjs'))} "$@"\n`)
-  await chmod(fakeHermes, 0o755)
   for (const agent of ['codex', 'claude', 'agy', 'devin']) {
     const executable = join(bin, agent)
     await writeFile(executable, '#!/bin/sh\nprintf fixture-agent\\n\n')
@@ -105,8 +102,9 @@ before(async () => {
       BROWSE_ROOT: workspace,
       AGENT_RIDER_APPS_DIR: apps,
       AGENT_RIDER_WEB_ROOT: webDist,
+      AGENT_RIDER_DATA_DIR: join(sandbox, 'data'),
       APP_DIR: sandbox,
-      HERMES_TARGET: fakeHermes,
+      AGENT_RIDER_PORT: String(port),
       STORE_PORT: String(port),
     },
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -214,14 +212,13 @@ test('state API persists full state and reconciles deleted rows', async () => {
     }],
   })
 
-  // Databases from before agent_type was introduced contain NULL here. Those
-  // rows were Hermes conversations and must not silently become Codex on an
-  // upgrade, or the UI would hide their saved transcript behind a new TUI.
+  // Databases from before agent_type was introduced default to the standard
+  // Codex CLI card when restored.
   const legacyDb = new DatabaseSync(join(sandbox, 'data', 'agent-rider.db'))
   legacyDb.prepare('UPDATE runs SET agent_type = NULL WHERE id = ?').run('run-1')
   legacyDb.close()
   const legacy = await json('/store/state')
-  assert.equal(legacy.body.runs[0].agentType, 'hermes')
+  assert.equal(legacy.body.runs[0].agentType, 'codex')
 
   const cleared = await json('/store/save', {
     method: 'POST',
@@ -416,7 +413,7 @@ test('filesystem mutations and app metadata writes preserve response contracts',
 test('agent availability and terminal HTTP contracts are stable', async () => {
   const agents = await json('/store/agents', { headers: { Cookie: cookie } })
   assert.equal(agents.response.status, 200)
-  assert.deepEqual(agents.body.agents, { hermes: true, claude: true, codex: true, agy: true, devin: true })
+  assert.deepEqual(agents.body.agents, { claude: true, codex: true, agy: true, devin: true })
 
   const terminal = await json('/store/terminal/run', {
     method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: cookie },
@@ -433,64 +430,4 @@ test('agent availability and terminal HTTP contracts are stable', async () => {
     body: JSON.stringify({ agent: 'codex', session: 'missing', cwd: join(sandbox, 'workspace') }),
   })
   assert.deepEqual(usage.body, { available: false, reason: 'no-session' })
-})
-
-test('Hermes ACP REST, SSE replay, exclusivity, cancel, and recovery contracts', async () => {
-  const sessionResponse = await json('/api/session/new', {
-    method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: cookie },
-    body: JSON.stringify({ workspace: join(sandbox, 'workspace') }),
-  })
-  assert.equal(sessionResponse.response.status, 200)
-  const sessionId = sessionResponse.body.session.session_id
-  assert.equal(sessionResponse.body.session.model, 'hermes-test')
-
-  const models = await json('/api/models', { headers: { Cookie: cookie } })
-  assert.equal(models.body.default_model, 'hermes-test')
-  assert.equal(models.body.active_provider, 'fixture')
-
-  const started = await json('/api/chat/start', {
-    method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: cookie },
-    body: JSON.stringify({ session_id: sessionId, message: 'contract', workspace: join(sandbox, 'workspace') }),
-  })
-  assert.equal(started.response.status, 200)
-  const streamId = started.body.stream_id
-  await sleep(75)
-  const replay = await request(`/api/chat/stream?stream_id=${encodeURIComponent(streamId)}`, { headers: { Cookie: cookie } })
-  const replayText = await replay.text()
-  assert.match(replayText, /event: thought[\s\S]*fixture thought/)
-  assert.match(replayText, /event: token[\s\S]*echo: contract/)
-  assert.match(replayText, /event: stream_end/)
-
-  const waiting = await json('/api/chat/start', {
-    method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: cookie },
-    body: JSON.stringify({ session_id: sessionId, message: 'wait for cancel', workspace: join(sandbox, 'workspace') }),
-  })
-  const conflict = await json('/api/chat/start', {
-    method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: cookie },
-    body: JSON.stringify({ session_id: sessionId, message: 'second', workspace: join(sandbox, 'workspace') }),
-  })
-  assert.equal(conflict.response.status, 409)
-  assert.equal(conflict.body.active_stream_id, waiting.body.stream_id)
-  const cancelled = await json(`/api/chat/cancel?stream_id=${encodeURIComponent(waiting.body.stream_id)}`, { method: 'POST', headers: { Cookie: cookie } })
-  assert.deepEqual(cancelled.body, { cancelled: true })
-  await sleep(25)
-  const cancelledReplay = await request(`/api/chat/stream?stream_id=${encodeURIComponent(waiting.body.stream_id)}`, { headers: { Cookie: cookie } })
-  assert.match(await cancelledReplay.text(), /event: cancel/)
-
-  const reasoning = await json('/api/reasoning', { headers: { Cookie: cookie } })
-  assert.deepEqual(reasoning.body, { supported_efforts: [], reasoning_effort: '' })
-
-  const crashing = await json('/api/chat/start', {
-    method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: cookie },
-    body: JSON.stringify({ session_id: sessionId, message: 'crash', workspace: join(sandbox, 'workspace') }),
-  })
-  assert.equal(crashing.response.status, 200)
-  await sleep(75)
-  const crashReplay = await request(`/api/chat/stream?stream_id=${encodeURIComponent(crashing.body.stream_id)}`, { headers: { Cookie: cookie } })
-  assert.match(await crashReplay.text(), /event: (?:app)?error/)
-  const recovered = await json('/api/session/new', {
-    method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: cookie },
-    body: JSON.stringify({ workspace: join(sandbox, 'workspace') }),
-  })
-  assert.equal(recovered.response.status, 200)
 })

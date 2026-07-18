@@ -181,7 +181,7 @@ fn get_state(conn: &Connection) -> rusqlite::Result<Value> {
         "workspacePath":text(r,"workspace_path")?,"task":text(r,"task")?,"job":text(r,"job")?,"jobStatus":text(r,"job_status")?,
         "resourceIds":parse(text(r,"resource_ids")?,json!([])),"model":text(r,"model")?.unwrap_or_default(),
         "modelProvider":text(r,"model_provider")?,"reasoningEffort":text(r,"reasoning_effort")?.unwrap_or_default(),
-        "sessionId":text(r,"session_id")?,"agentType":text(r,"agent_type")?.filter(|v|!v.is_empty()).unwrap_or_else(||"hermes".into()),
+        "sessionId":text(r,"session_id")?,"agentType":text(r,"agent_type")?.filter(|v|!v.is_empty()).unwrap_or_else(||"codex".into()),
         "agentCommand":text(r,"agent_command")?.unwrap_or_default(),"column":r.get::<_,Option<i64>>("col_index")?.unwrap_or(0),"createdAt":text(r,"created_at")?
     })))?.collect::<rusqlite::Result<Vec<_>>>()?;
     let mut stmt = conn.prepare("SELECT * FROM turns ORDER BY created_at ASC,rowid ASC")?;

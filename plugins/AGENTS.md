@@ -73,7 +73,6 @@ there; do not create another nested `plugins/<slug>/` folder.
 - `GET /store/state` → `{ runs, turns }` (conversation data)
 - `GET /store/apps` → installed apps plus `appsRoot`
 - `GET /store/fs/list?path=…` → browse files under the allowed root
-- `/api/*` → the Hermes agent runtime
 Use only what you declare in `dataScopes`.
 
 ## Workflow

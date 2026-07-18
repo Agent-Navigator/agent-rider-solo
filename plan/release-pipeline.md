@@ -133,7 +133,7 @@ The staging compose service should:
 - Use a temporary SQLite database and dedicated test fixture browse root.
 - Mount no user home directory, real workspace, or production data.
 - Select the tested runtime bundle for the host architecture.
-- Use a dedicated test-only Hermes/agent identity with narrowly scoped access.
+- Use a dedicated test-only agent identity with narrowly scoped access.
 
 Planned commands:
 
@@ -150,7 +150,7 @@ Agent testing has two layers:
 
 1. Deterministic, release-blocking tests: API contracts, file isolation,
    WebSocket/SSE behavior, installation, upgrade, and rollback. Reuse the
-   existing fake Hermes ACP fixture for CI.
+   terminal-agent fixture for CI.
 2. Agent evaluation: predefined tasks run against isolated fixtures, with
    Playwright/API assertions and an archived report. Start this as a
    non-blocking quality signal; only make it release-blocking after the task

@@ -141,12 +141,10 @@ env_quote() {
 write_config() {
   config_port=${AGENT_RIDER_PORT:-5173}
   config_browse=${BROWSE_ROOT:-$HOME_DIR}
-  config_hermes=${HERMES_TARGET:-hermes}
   config_hosts=${VITE_ALLOWED_HOSTS:-all}
   if [ "$LEGACY" -eq 1 ]; then
     config_port=${AGENT_RIDER_PORT:-$(read_env WEB_PORT "$LEGACY_ENV" || printf 5173)}
     config_browse=${BROWSE_ROOT:-$(read_env BROWSE_ROOT "$LEGACY_ENV" || printf %s "$HOME_DIR")}
-    config_hermes=${HERMES_TARGET:-$(read_env HERMES_TARGET "$LEGACY_ENV" || printf hermes)}
     config_hosts=${VITE_ALLOWED_HOSTS:-$(read_env VITE_ALLOWED_HOSTS "$LEGACY_ENV" || printf all)}
   fi
   {
@@ -157,7 +155,6 @@ write_config() {
     printf 'AGENT_RIDER_HOST="127.0.0.1"\n'
     printf 'AGENT_RIDER_PORT="%s"\n' "$(env_quote "$config_port")"
     printf 'BROWSE_ROOT="%s"\n' "$(env_quote "$config_browse")"
-    printf 'HERMES_TARGET="%s"\n' "$(env_quote "$config_hermes")"
     printf 'VITE_ALLOWED_HOSTS="%s"\n' "$(env_quote "$config_hosts")"
   } > "$CONFIG_FILE"
 }

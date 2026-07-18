@@ -90,26 +90,20 @@ After the first interaction, the app should feel like a live system:
 
 ---
 
-## Hermes integration
+## Agent integration
 
-The current design assumes Hermes is the execution backend.
+Conversation cards host persistent CLI sessions in embedded terminals.
 
 ### Runtime approach
-- chat input forwards messages to Hermes
-- Hermes creates or resumes a session
-- prompt submission triggers agent execution
-- streamed events update the transcript / status state
-
-### Preferred behavior
-- keep Hermes integration **read-only** in the UI surface by default
-- do **not** expose gateway control actions unless explicitly required
-- if Hermes is busy, queue the next prompt locally and replay it after the current turn completes
+- each card launches the selected CLI in its workspace
+- the terminal remains the source of truth for prompts, output, and status
+- switching workspace or agent creates a distinct persistent session
 
 ### Shared memory via MCP
 
 This project should include a built-in **SIRA memory MCP server** as a shared memory backbone.
 
-- Hermes, Agy, Codex, and Claude can all connect to the same memory surface through MCP.
+- Agy, Codex, and Claude can all connect to the same memory surface through MCP.
 - The memory server acts as the common source of truth for reusable context.
 - Keep the interface thin and explicit: remember, search, forget, sync_turn, and prefetch.
 - Prefer MCP-based memory access over agent-specific isolated memory silos.
@@ -202,7 +196,7 @@ The UI should communicate:
 - Make the blank canvas elegant.
 - Let the hierarchy emerge from chat, not from navigation.
 - Keep the resource system distinct from task content.
-- Keep Hermes integration separate from the visual model.
+- Keep agent integrations separate from the visual model.
 
 ---
 
@@ -214,8 +208,7 @@ This document describes the **current design direction** of the app:
 - chat-driven growth
 - Category → Project → Workspace → Task → Job hierarchy
 - dedicated resource view
-- Hermes-connected runtime behavior
-- no gateway control surface
+- terminal-backed agent runtime behavior
 
 ---
 

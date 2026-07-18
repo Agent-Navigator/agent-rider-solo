@@ -29,7 +29,6 @@ import typescript from 'highlight.js/lib/languages/typescript'
 import xml from 'highlight.js/lib/languages/xml'
 import yaml from 'highlight.js/lib/languages/yaml'
 import '@xterm/xterm/css/xterm.css'
-import { HermesActiveStreamError, HermesBridge, type HermesConnectionState, type PromptImage } from './hermesBridge'
 import {
   loadPersistedState,
   persistState,
@@ -67,42 +66,18 @@ type ResourceHealth = 'Ready' | 'Needs setup' | 'Draft'
 
 type ChatRole = 'user' | 'assistant'
 
-// Which agent backend drives a conversation card. 'hermes' streams turns over
-// /api (the default); the others run an interactive TUI CLI in an embedded
-// terminal (see WebTerminal + the /store/terminal/ws `agent` param).
-type AgentType = 'hermes' | 'claude' | 'codex' | 'agy' | 'devin' | 'custom'
-type TuiAgentType = Exclude<AgentType, 'hermes'>
+// Conversation cards run an interactive TUI CLI in an embedded terminal.
+type AgentType = 'claude' | 'codex' | 'agy' | 'devin' | 'custom'
+type TuiAgentType = AgentType
 type RunCardKind = 'conversation' | 'app-builder'
 
-interface HermesModel {
-  id: string
-  label: string
-}
-
-interface HermesModelGroup {
-  provider: string
-  providerId: string | null
-  models: HermesModel[]
-}
-
-interface HermesModelCatalog {
-  groups: HermesModelGroup[]
-  defaultModel: string
-  activeProvider: string | null
-}
-
 const AGENT_OPTIONS: { value: AgentType; label: string }[] = [
-  { value: 'hermes', label: 'Hermes Agent' },
   { value: 'claude', label: 'Claude (CLI)' },
   { value: 'codex', label: 'Codex (CLI)' },
   { value: 'agy', label: 'Agy (CLI)' },
   { value: 'devin', label: 'Devin (CLI)' },
   { value: 'custom', label: 'Custom command' },
 ]
-
-// New Conversation Cards are CLI-only. Hermes remains available to
-// grandfathered Hermes cards restored from an older installation.
-const CONVERSATION_AGENT_OPTIONS = AGENT_OPTIONS.filter((option) => option.value !== 'hermes')
 
 function isTuiAgent(agent: AgentType): agent is TuiAgentType {
   return agent === 'claude' || agent === 'codex' || agent === 'agy' || agent === 'devin' || agent === 'custom'
@@ -197,7 +172,6 @@ const USAGE_UNAVAILABLE_LABEL: Record<Exclude<UsageResult, { available: true }>[
 }
 
 const AGENT_SHORT_LABEL: Record<AgentType, string> = {
-  hermes: 'Hermes',
   claude: 'Claude',
   codex: 'Codex',
   agy: 'Agy',
@@ -253,17 +227,17 @@ function AgentUsageToolbarButton({ agent, cwd, session }: { agent: AgentType; cw
 // card shares one fetch. Fails open — if the endpoint is unavailable nothing
 // gets disabled.
 let agentAvailabilityCache: Record<string, boolean> | null = null
-let agentAvailabilityPromise: Promise<Record<string, boolean>> | null = null
+let agentAvailabilityPromise: Promise<Record<string, boolean> | null> | null = null
 function useAgentAvailability(): Record<string, boolean> | null {
   const [availability, setAvailability] = useState(agentAvailabilityCache)
   useEffect(() => {
     if (agentAvailabilityCache) return
-    agentAvailabilityPromise ??= fetch('/store/agents')
+    const availabilityPromise = agentAvailabilityPromise ??= fetch('/store/agents')
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => ((data as { agents?: Record<string, boolean> } | null)?.agents ?? null))
       .catch(() => null)
     let cancelled = false
-    void agentAvailabilityPromise.then((agents) => {
+    void availabilityPromise.then((agents) => {
       if (!agents) {
         // Failed (e.g. fetched while the page was still locked) — don't cache,
         // so a later mount retries instead of never disabling anything.
@@ -304,68 +278,6 @@ function scrollToFocusTarget(target: HTMLElement | null) {
 
 function assistantBubbleBottomId(turnId: string) {
   return `assistant-bubble-bottom-${turnId}`
-}
-
-function modelSelectValue(model: string, provider: string | null = null) {
-  return JSON.stringify([provider ?? '', model])
-}
-
-function parseModelSelectValue(value: string) {
-  if (!value) return { model: '', modelProvider: null }
-  try {
-    const parsed = JSON.parse(value) as unknown
-    if (!Array.isArray(parsed)) return { model: '', modelProvider: null }
-    const [provider, model] = parsed
-    return {
-      model: String(model ?? '').trim(),
-      modelProvider: String(provider ?? '').trim() || null,
-    }
-  } catch {
-    return { model: '', modelProvider: null }
-  }
-}
-
-/** `refresh` makes the server re-ask hermes instead of serving its cached
- *  catalog — the way to pick up a provider switch made in the hermes CLI. */
-async function fetchHermesModelCatalog(refresh = false, workspace = ''): Promise<HermesModelCatalog> {
-  const query = refresh ? `?refresh=1${workspace ? `&workspace=${encodeURIComponent(workspace)}` : ''}` : ''
-  const res = await fetch(`/api/models${query}`)
-  if (!res.ok) throw new Error(`models failed (${res.status})`)
-  const data = (await res.json()) as Record<string, unknown>
-  const rawGroups = Array.isArray(data.groups) ? data.groups : []
-  const groups = rawGroups.map((group) => {
-    const item = group as Record<string, unknown>
-    const provider = String(item.provider ?? 'Provider').trim() || 'Provider'
-    const providerId = String(item.provider_id ?? '').trim() || null
-    const rawModels = Array.isArray(item.models) ? item.models : []
-    return {
-      provider,
-      providerId,
-      models: rawModels.map((model) => {
-        const modelItem = model as Record<string, unknown>
-        const id = String(modelItem.id ?? '').trim()
-        return { id, label: String(modelItem.label ?? id).trim() || id }
-      }).filter((model) => model.id),
-    }
-  }).filter((group) => group.models.length)
-
-  return {
-    groups,
-    defaultModel: String(data.default_model ?? '').trim(),
-    activeProvider: String(data.active_provider ?? '').trim() || null,
-  }
-}
-
-async function fetchHermesReasoningEfforts() {
-  const res = await fetch('/api/reasoning')
-  if (!res.ok) throw new Error(`reasoning failed (${res.status})`)
-  const data = (await res.json()) as Record<string, unknown>
-  const supported = Array.isArray(data.supported_efforts) ? data.supported_efforts : []
-  const efforts = supported.map((effort) => String(effort).trim()).filter(Boolean)
-  return {
-    efforts: efforts.length ? efforts : DEFAULT_REASONING_EFFORTS,
-    defaultEffort: String(data.reasoning_effort ?? '').trim(),
-  }
 }
 
 function hasTextSelectionInside(element: HTMLElement) {
@@ -415,10 +327,6 @@ interface RunNode {
   job: string
   jobStatus: JobStatus
   resourceIds: string[]
-  model?: string
-  modelProvider?: string | null
-  reasoningEffort?: string
-  sessionId?: string | null
   agentType: AgentType
   agentCommand?: string
   cardKind?: RunCardKind
@@ -435,123 +343,6 @@ interface ResourceItem {
   health: ResourceHealth
   assignedRunIds: string[]
   assignedTaskIds: string[]
-}
-
-/** One tool Hermes ran during a turn, as reported over ACP. A call starts with
- *  no status and is only sometimes given a terminal `tool_call_update`, so a
- *  'pending' entry is reconciled when the turn finishes. */
-interface ToolActivity {
-  id: string
-  title: string
-  kind: string
-  status: 'pending' | 'completed' | 'failed'
-  locations?: string[]
-  output?: string
-  // Image files the tool produced (screenshots, generated images), as paths the
-  // store can serve. Hermes reports these as text, never as image blocks.
-  images?: string[]
-}
-
-// Anthropic's vision guidance: a long edge past ~1568px buys no accuracy and
-// only costs tokens. Downscaling here also keeps the prompt body — and the
-// saved conversation state — from ballooning with raw camera-sized captures.
-const MAX_IMAGE_EDGE = 1568
-const MAX_PROMPT_IMAGES = 8
-
-function workspaceFileUrl(path: string) {
-  return `/store/fs/view/${path.split('/').map(encodeURIComponent).join('/')}`
-}
-
-/** Read an image file into a downscaled data URL. PNGs stay PNG so screenshots
- *  keep their crisp text; anything else re-encodes as JPEG. */
-async function toPromptImage(file: File): Promise<PromptImage | null> {
-  if (!file.type.startsWith('image/')) return null
-  const dataUrl = await new Promise<string>((done, fail) => {
-    const reader = new FileReader()
-    reader.onload = () => done(String(reader.result ?? ''))
-    reader.onerror = () => fail(reader.error ?? new Error('could not read file'))
-    reader.readAsDataURL(file)
-  })
-
-  const image = await new Promise<HTMLImageElement | null>((done) => {
-    const element = new Image()
-    element.onload = () => done(element)
-    element.onerror = () => done(null)
-    element.src = dataUrl
-  })
-
-  const base = { id: makeId('img'), name: file.name || 'pasted image' }
-  // SVG has no intrinsic raster size to scale, and an unreadable image is still
-  // worth sending as-is rather than dropping silently.
-  const scale = image ? Math.min(1, MAX_IMAGE_EDGE / Math.max(image.width, image.height)) : 1
-  if (!image || file.type === 'image/svg+xml' || scale === 1) {
-    return { ...base, mimeType: file.type, dataUrl }
-  }
-
-  const canvas = document.createElement('canvas')
-  canvas.width = Math.round(image.width * scale)
-  canvas.height = Math.round(image.height * scale)
-  const context = canvas.getContext('2d')
-  if (!context) return { ...base, mimeType: file.type, dataUrl }
-  context.drawImage(image, 0, 0, canvas.width, canvas.height)
-  const mimeType = file.type === 'image/png' ? 'image/png' : 'image/jpeg'
-  return { ...base, mimeType, dataUrl: canvas.toDataURL(mimeType, 0.85) }
-}
-
-/** Images carried by a paste or drop, if any. */
-function imageFilesFrom(transfer: DataTransfer | null): File[] {
-  if (!transfer) return []
-  return Array.from(transfer.files ?? []).filter((file) => file.type.startsWith('image/'))
-}
-
-interface PlanEntry {
-  content: string
-  status: string
-}
-
-/** ACP tool status → our three states, never regressing a settled call back to
- *  pending (a late update carrying no status must not un-complete it). */
-function normalizeToolStatus(raw: unknown, previous?: ToolActivity['status']): ToolActivity['status'] {
-  const value = String(raw ?? '')
-  if (value === 'completed') return 'completed'
-  if (value === 'failed' || value === 'error') return 'failed'
-  return previous && previous !== 'pending' ? previous : 'pending'
-}
-
-/** Hermes does not always send a terminal tool_call_update for every tool_call,
- *  so a call left 'pending' when the turn ends would spin forever. Settle it:
- *  the turn is over, so nothing is still running. */
-function settleTools(turn: TurnItem, fallback: ToolActivity['status']): ToolActivity[] | undefined {
-  if (!turn.tools?.length) return turn.tools
-  return turn.tools.map((tool) => (tool.status === 'pending' ? { ...tool, status: fallback } : tool))
-}
-
-interface TurnItem {
-  id: string
-  prompt: string
-  response: string
-  status: JobStatus
-  runId: string
-  parentTurnId?: string | null
-  createdAt: string
-  // Activity timeline (Hermes only): reasoning, tool calls and plan updates that
-  // led to `response`. Absent on turns from agents that stream plain text.
-  thinking?: string
-  tools?: ToolActivity[]
-  plan?: PlanEntry[]
-  // Images the user attached to `prompt`, shown back in their own bubble.
-  images?: PromptImage[]
-}
-
-interface QueuedPromptEntry {
-  turnId: string
-  runId: string
-  prompt: string
-  workspace: string
-  model?: string
-  modelProvider?: string | null
-  reasoningEffort?: string
-  images?: PromptImage[]
 }
 
 interface CategoryRule {
@@ -588,8 +379,6 @@ const AGENT_TERMINAL_STATE_PREFIX = 'agent-terminal:'
 const TUI_WHEEL_PAGE_DELTA = 80
 const TUI_PAGE_UP = '\x1b[5~'
 const TUI_PAGE_DOWN = '\x1b[6~'
-const DEFAULT_REASONING_EFFORTS = ['minimal', 'low', 'medium', 'high', 'xhigh']
-const EMPTY_MODEL_CATALOG: HermesModelCatalog = { groups: [], defaultModel: '', activeProvider: null }
 const LEGACY_APP_BUILDER_PANEL_ID = 'app-builder'
 const LEGACY_APP_BUILDER_PANEL_PREFIX = 'app-builder:'
 const LEGACY_APP_BUILDER_RUN_ID = 'run-app-builder'
@@ -598,6 +387,26 @@ const RETIRED_PLUGIN_PANEL_IDS = new Set([
   'plugin:hermes-webui',
   'plugin:local-desktop-guacamole',
 ])
+
+function timeLabel(value: string) {
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString()
+}
+
+function windowStatusTone(status: JobStatus, draft: boolean) {
+  if (draft || status === 'queued') return { dot: '#e6b25a' }
+  if (status === 'running') return { dot: '#68a8ff' }
+  if (status === 'done') return { dot: '#5fd39b' }
+  if (status === 'error') return { dot: '#ff7777' }
+  return { dot: '#a0a0a0' }
+}
+
+function connectionStatusTone(state: 'connecting' | 'connected' | 'closed' | 'error') {
+  if (state === 'connected') return { dot: '#5fd39b', color: '#5fd39b', label: 'connected' }
+  if (state === 'connecting') return { dot: '#e6b25a', color: '#e6b25a', label: 'connecting' }
+  if (state === 'error') return { dot: '#ff7777', color: '#ff7777', label: 'error' }
+  return { dot: '#a0a0a0', color: '#a0a0a0', label: 'disconnected' }
+}
 
 // cardKind is not a persisted run column, so retired builder runs are still
 // recognized by id and kept hidden rather than resurfacing as conversations.
@@ -966,7 +775,7 @@ function deriveRunFields(prompt: string, overrides: RunOverrides = {}, defaultWo
     project,
     workspace: `${project} workspace`,
     workspacePath,
-    job: 'Hermes run',
+    job: 'Agent run',
   }
 }
 
@@ -977,146 +786,6 @@ function conversationTitle(run: RunNode) {
 // Chronological order: oldest at the top, newest at the bottom (like a chat
 // log), so it reads top-to-bottom with the prompt bar pinned below it. Within a
 // thread the parent comes before its follow-ups.
-function buildLinearTurns(turns: TurnItem[]) {
-  const byId = new Map(turns.map((turn) => [turn.id, turn]))
-  const childrenByParent = new Map<string, TurnItem[]>()
-  const roots: TurnItem[] = []
-  const oldestFirst = (a: TurnItem, b: TurnItem) => a.createdAt.localeCompare(b.createdAt)
-
-  for (const turn of turns) {
-    const parentId = turn.parentTurnId ?? null
-    if (parentId && byId.has(parentId)) {
-      const children = childrenByParent.get(parentId) ?? []
-      children.push(turn)
-      childrenByParent.set(parentId, children)
-    } else {
-      roots.push(turn)
-    }
-  }
-
-  for (const children of childrenByParent.values()) children.sort(oldestFirst)
-  roots.sort(oldestFirst)
-
-  const ordered: TurnItem[] = []
-  const visited = new Set<string>()
-
-  function appendWithFollowUps(turn: TurnItem) {
-    if (visited.has(turn.id)) return
-    visited.add(turn.id)
-    ordered.push(turn)
-    for (const child of childrenByParent.get(turn.id) ?? []) appendWithFollowUps(child)
-  }
-
-  for (const root of roots) appendWithFollowUps(root)
-  for (const turn of [...turns].sort(oldestFirst)) appendWithFollowUps(turn)
-
-  return ordered
-}
-
-function timeLabel(iso: string) {
-  return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-}
-
-function StatusPill({ state, detail }: { state: HermesConnectionState | JobStatus; detail: string }) {
-  const tone =
-    state === 'ready' || state === 'done' || state === 'cancelled'
-      ? 'done'
-      : state === 'busy' || state === 'running'
-        ? 'running'
-        : state === 'queued'
-          ? 'queued'
-          : state === 'error'
-            ? 'error'
-            : 'idle'
-
-  return <span className={`pill ${tone}`}>{detail}</span>
-}
-
-function headerStatusText(state: HermesConnectionState, detail: string) {
-  if (state === 'ready') return 'Hermes ready'
-  if (state === 'busy') return 'Hermes running'
-  if (state === 'connecting') return 'Hermes connecting'
-  if (state === 'error') return detail || 'Hermes error'
-  return 'Hermes disconnected'
-}
-
-function TreeRow({ label, value, depth }: { label: string; value: string; depth: number }) {
-  return (
-    <div className={`tree-row depth-${depth}`}>
-      <span className="tree-label">{label}</span>
-      <strong className="tree-value">{value}</strong>
-    </div>
-  )
-}
-
-// A tiny ASCII spinner so a running/queued turn reads as "alive" even when no
-// output is streaming yet. Cycles the classic |/-\ frames on a fixed interval.
-const ASCII_SPINNER_FRAMES = ['|', '/', '-', '\\']
-function AsciiSpinner() {
-  const [frame, setFrame] = useState(0)
-  useEffect(() => {
-    const id = window.setInterval(() => setFrame((n) => (n + 1) % ASCII_SPINNER_FRAMES.length), 120)
-    return () => window.clearInterval(id)
-  }, [])
-  return (
-    <span className="ascii-spinner" aria-hidden="true">
-      {ASCII_SPINNER_FRAMES[frame]}
-    </span>
-  )
-}
-
-function turnRoleLabel(status: JobStatus) {
-  return status === 'queued'
-    ? 'Queued'
-    : status === 'error'
-      ? 'Error'
-      : status === 'cancelled'
-        ? 'Stopped'
-        : status === 'done'
-          ? 'Done'
-          : 'Running'
-}
-
-// --- Window chrome (reference design) helpers -------------------------------
-// Every workspace block — conversation, TUI agent, tool, app — renders as a
-// "window": a 34px titlebar (grip · status dot · mono title · meta · status ·
-// actions), a dark body, and (for chat windows) a prompt bar + footer.
-
-interface WindowStatusTone {
-  label: string
-  dot: string
-  color: string
-}
-
-function windowStatusTone(status: JobStatus, isDraft: boolean): WindowStatusTone {
-  if (isDraft) return { label: 'idle', dot: '#5c6470', color: '#7a828f' }
-  switch (status) {
-    case 'running':
-      return { label: 'running', dot: '#e0a33e', color: '#e6b25a' }
-    case 'queued':
-      return { label: 'queued', dot: '#e0a33e', color: '#e6b25a' }
-    case 'error':
-      return { label: 'error', dot: '#ef6d6d', color: '#ff9d9d' }
-    case 'cancelled':
-      return { label: 'stopped', dot: '#5c6470', color: '#7a828f' }
-    default:
-      return { label: 'ready', dot: '#46c98b', color: '#5fd39b' }
-  }
-}
-
-function connectionStatusTone(state: 'connecting' | 'connected' | 'closed' | 'error'): WindowStatusTone {
-  switch (state) {
-    case 'connected':
-      return { label: 'connected', dot: '#46c98b', color: '#5fd39b' }
-    case 'connecting':
-      return { label: 'connecting', dot: '#e0a33e', color: '#e6b25a' }
-    case 'error':
-      return { label: 'error', dot: '#ef6d6d', color: '#ff9d9d' }
-    default:
-      return { label: 'closed', dot: '#5c6470', color: '#7a828f' }
-  }
-}
-
 function WinGrip() {
   return (
     <span className="win-grip" aria-hidden>
@@ -2110,110 +1779,21 @@ function DraggablePanel({
   )
 }
 
-const TOOL_STATUS_MARK: Record<ToolActivity['status'], string> = {
-  pending: '·',
-  completed: '✓',
-  failed: '✗',
-}
-
-function planMark(status: string) {
-  if (status === 'completed') return '✓'
-  if (status === 'in_progress') return '▸'
-  return '○'
-}
-
-/** What Hermes did on the way to its answer: plan, tool calls, reasoning. This
- *  is the only window into a Hermes turn — unlike the TUI agents, its work does
- *  not show up in a terminal — and it doubles as the audit trail for tools that
- *  ran without a permission prompt. Everything is collapsed by default so the
- *  answer stays the focus. */
-function TurnActivity({ turn }: { turn: TurnItem }) {
-  const tools = turn.tools ?? []
-  const plan = turn.plan ?? []
-  const thinking = (turn.thinking ?? '').trim()
-  if (!tools.length && !plan.length && !thinking) return null
-
-  return (
-    <div className="term-activity">
-      {plan.length ? (
-        <ul className="term-plan">
-          {plan.map((entry, index) => (
-            <li key={index} className={`term-plan-item ${entry.status}`}>
-              <span className="term-plan-mark" aria-hidden>{planMark(entry.status)}</span>
-              <span>{entry.content}</span>
-            </li>
-          ))}
-        </ul>
-      ) : null}
-
-      {tools.map((tool) => (
-        <details key={tool.id} className={`term-tool ${tool.status}`}>
-          <summary className="term-tool-head">
-            <span className="term-tool-mark" aria-hidden>{TOOL_STATUS_MARK[tool.status]}</span>
-            <span className="term-tool-kind">{tool.kind}</span>
-            <span className="term-tool-title">{tool.title}</span>
-          </summary>
-          {tool.locations?.length ? (
-            <div className="term-tool-locations">{tool.locations.join('\n')}</div>
-          ) : null}
-          {tool.images?.length ? (
-            <div className="term-tool-images">
-              {tool.images.map((path) => (
-                <a key={path} href={workspaceFileUrl(path)} target="_blank" rel="noreferrer">
-                  <img src={workspaceFileUrl(path)} alt={path} loading="lazy" />
-                </a>
-              ))}
-            </div>
-          ) : null}
-          {tool.output ? <pre className="term-tool-output">{tool.output}</pre> : null}
-        </details>
-      ))}
-
-      {thinking ? (
-        <details className="term-thinking">
-          <summary className="term-tool-head">
-            <span className="term-tool-mark" aria-hidden>~</span>
-            <span className="term-tool-kind">reasoning</span>
-          </summary>
-          <div className="term-thinking-body">{thinking}</div>
-        </details>
-      ) : null}
-    </div>
-  )
-}
-
 function ConversationCard({
   run,
-  turns,
   collapsed,
   metaCollapsed,
   active,
-  embedded = false,
-  hideHeader = false,
-  hideContext = false,
   isNewDone,
-  onMarkRead,
   onToggle,
   onMetaCollapsedChange,
-  onSend,
   onTitleChange,
   onCategoryChange,
   onProjectChange,
   onAgentChange,
   onAgentCommandChange,
-  modelCatalog,
-  modelsRefreshing,
-  onRefreshModels,
-  reasoningEfforts,
-  onModelChange,
-  onReasoningEffortChange,
   onOpenPicker,
   onClose,
-  onDeleteTurn,
-  stoppableTurnId,
-  refreshableTurnId,
-  onStopTurn,
-  onRefreshTurn,
   dragging,
   dragActive,
   onDragStartCard,
@@ -2225,891 +1805,121 @@ function ConversationCard({
   onToggleMaximize,
 }: {
   run: RunNode
-  turns: TurnItem[]
   collapsed: boolean
   metaCollapsed: boolean
   active: boolean
-  embedded?: boolean
-  hideHeader?: boolean
-  hideContext?: boolean
   isNewDone: boolean
-  onMarkRead: (runId: string) => void
   onToggle: () => void
   onMetaCollapsedChange: (collapsed: boolean) => void
-  onSend: (text: string, parentTurnId?: string | null, images?: PromptImage[]) => string | null
   onTitleChange: (value: string) => void
   onCategoryChange: (value: string) => void
   onProjectChange: (value: string) => void
   onAgentChange: (value: AgentType) => void
   onAgentCommandChange: (value: string) => void
-  modelCatalog: HermesModelCatalog
-  modelsRefreshing: boolean
-  onRefreshModels: () => void
-  reasoningEfforts: string[]
-  onModelChange: (model: string, modelProvider: string | null) => void
-  onReasoningEffortChange: (effort: string) => void
   onOpenPicker: () => void
   onClose: () => void
-  onDeleteTurn: (turnId: string) => void
-  stoppableTurnId: string | null
-  refreshableTurnId: string | null
-  onStopTurn: (turnId: string) => void
-  onRefreshTurn: (turnId: string) => void
-  /** True while THIS card is the one being dragged. */
   dragging: boolean
-  /** True while SOME other card is being dragged (enables drop targets). */
   dragActive: boolean
   onDragStartCard: () => void
   onDragEndCard: () => void
-  /** Drop the dragged card before (after=false) or after (after=true) this one. */
   onDropOnCard: (after: boolean) => void
   agentTerminalState?: WorkspacePanelState
   onAgentTerminalStateChange: (patch: WorkspacePanelState) => void
-  /** Whether this card is the single block currently filling the workspace. */
   maximized?: boolean
   onToggleMaximize?: () => void
 }) {
-  // Existing Hermes cards are grandfathered so upgrades keep their transcript
-  // and session continuity. New general Conversation Cards still default to a
-  // CLI agent and cannot switch back to Hermes after leaving the legacy type.
-  const agentType: AgentType = run.agentType ?? (run.cardKind === 'app-builder' ? 'hermes' : 'codex')
   const agentAvailability = useAgentAvailability()
-  const tui = isTuiAgent(agentType)
   const customAgentCommand = (run.agentCommand ?? '').trim()
-  const selectedModelValue = run.model ? modelSelectValue(run.model, run.modelProvider ?? null) : ''
-  const selectedReasoningEffort = run.reasoningEffort ?? ''
   const cardRef = useRef<HTMLElement | null>(null)
   const [fileBrowserOpen, setFileBrowserOpen] = useState(false)
   const [dragOver, setDragOver] = useState(false)
-  // Whether the hovering drop would land after (below) this card vs before.
-  // Ref mirrors it for a staleness-free read in the drop handler.
   const [dragOverAfter, setDragOverAfter] = useState(false)
   const dragOverAfterRef = useRef(false)
-  const [draft, setDraft] = useState('')
-  const [attachments, setAttachments] = useState<PromptImage[]>([])
   const [customCommandDraft, setCustomCommandDraft] = useState(run.agentCommand ?? '')
-  const [askParentId, setAskParentId] = useState<string | null>(null)
-  const [askDraft, setAskDraft] = useState('')
-  const [copiedTurnId, setCopiedTurnId] = useState<string | null>(null)
-  const [collapsedTurnIds, setCollapsedTurnIds] = useState<Set<string>>(new Set())
-  const [focusTurnId, setFocusTurnId] = useState<string | null>(null)
-  const linearTurns = useMemo(() => buildLinearTurns(turns), [turns])
-  const status = run.jobStatus
-  const isDraft = turns.length === 0
-  const tone = windowStatusTone(status, isDraft)
-  // Turns now render oldest→newest, so the newest (default focus) is the last.
-  const newestTurnId = linearTurns[linearTurns.length - 1]?.id ?? null
-  const focusedTurnId = focusTurnId && linearTurns.some((turn) => turn.id === focusTurnId) ? focusTurnId : newestTurnId
-  const focusedTurnRef = useRef<HTMLDivElement | null>(null)
-  const askMoreFormRef = useRef<HTMLFormElement | null>(null)
-  const askMoreTextareaRef = useRef<HTMLTextAreaElement | null>(null)
-  const promptTextareaRef = useRef<HTMLTextAreaElement | null>(null)
+  const tone = windowStatusTone(run.jobStatus, false)
 
-  // Grow the prompt box to fit its content (typed or pasted), capped by the CSS
-  // max-height (past which it scrolls). Done in JS so it works in browsers
-  // without CSS `field-sizing`. Runs whenever the draft changes.
-  useLayoutEffect(() => {
-    const el = promptTextareaRef.current
-    if (!el) return
-    el.style.height = 'auto'
-    el.style.height = `${el.scrollHeight}px`
-  }, [draft])
-
-  useEffect(() => {
-    setCustomCommandDraft(run.agentCommand ?? '')
-  }, [run.id, run.agentCommand])
-
-  // Keep the viewport anchored to the most relevant visible bubble.
-  // If Ask Here is open, the inline form becomes the focus target instead.
-  useEffect(() => {
-    if (askParentId) {
-      const frame = requestAnimationFrame(() => {
-        scrollToFocusTarget(askMoreFormRef.current)
-        askMoreTextareaRef.current?.focus({ preventScroll: true })
-      })
-      return () => cancelAnimationFrame(frame)
-    }
-
-    if (!focusedTurnId) return
-    setCollapsedTurnIds(new Set(turns.filter((turn) => turn.id !== focusedTurnId).map((turn) => turn.id)))
-    const frame = requestAnimationFrame(() => {
-      scrollToFocusTarget(focusedTurnRef.current)
-    })
-    return () => cancelAnimationFrame(frame)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [focusedTurnId, askParentId])
-
-  // Strict "read": clear the unread dot only once the end of the newest reply
-  // actually scrolls into the viewport — not merely on opening/selecting the card.
-  useEffect(() => {
-    if (!isNewDone || collapsed || !focusedTurnId) return
-    const sentinel = document.getElementById(assistantBubbleBottomId(focusedTurnId))
-    if (!sentinel) return
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((entry) => entry.isIntersecting)) onMarkRead(run.id)
-      },
-      { threshold: 0 },
-    )
-    observer.observe(sentinel)
-    return () => observer.disconnect()
-  }, [isNewDone, collapsed, focusedTurnId, run.id, onMarkRead])
-
-  function hideAllTurns() {
-    setCollapsedTurnIds(new Set(turns.map((turn) => turn.id)))
-    setAskParentId(null)
-    setAskDraft('')
-  }
-
-  function dropFilePathIntoTextarea(
-    event: DragEvent<HTMLTextAreaElement>,
-    setValue: (value: string) => void,
-  ) {
-    // Image files dropped from the desktop become attachments; a path dragged
-    // from the built-in file browser still inserts as text.
-    const images = imageFilesFrom(event.dataTransfer)
-    if (images.length) {
-      event.preventDefault()
-      event.stopPropagation()
-      void attachImages(images)
-      return
-    }
-    const filePath = filePathFromDrag(event)
-    if (!filePath) return
-    event.preventDefault()
-    event.stopPropagation()
-    setValue(insertIntoTextarea(event.currentTarget, filePath))
-  }
-
-  async function attachImages(files: File[]) {
-    if (!files.length) return
-    const room = MAX_PROMPT_IMAGES - attachments.length
-    if (room <= 0) return
-    const added = (await Promise.all(files.slice(0, room).map(toPromptImage))).filter(
-      (image): image is PromptImage => image !== null,
-    )
-    if (added.length) setAttachments((current) => [...current, ...added].slice(0, MAX_PROMPT_IMAGES))
-  }
-
-  function pasteIntoPrompt(event: ClipboardEvent<HTMLTextAreaElement>) {
-    const images = imageFilesFrom(event.clipboardData)
-    if (!images.length) return // plain text paste: leave it to the browser
-    event.preventDefault()
-    void attachImages(images)
-  }
-
-  function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    const text = draft.trim()
-    // An image on its own is a legitimate prompt ("what is this?" is implied).
-    if (!text && !attachments.length) return
-    const images = attachments
-    setDraft('')
-    setAttachments([])
-    const turnId = onSend(text, null, images)
-    if (turnId) setFocusTurnId(turnId)
-  }
-
-  function toggleTurnCollapsed(turnId: string) {
-    setCollapsedTurnIds((current) => {
-      const next = new Set(current)
-      if (next.has(turnId)) next.delete(turnId)
-      else next.add(turnId)
-      return next
-    })
-    if (askParentId === turnId) {
-      setAskParentId(null)
-      setAskDraft('')
-    }
-  }
-
-  function toggleTurnFromKey(event: KeyboardEvent<HTMLDivElement>, turnId: string) {
-    if (event.key !== 'Enter' && event.key !== ' ') return
-    event.preventDefault()
-    toggleTurnCollapsed(turnId)
-  }
-
-  function submitAskMore(event: FormEvent<HTMLFormElement>, parentTurnId: string) {
-    event.preventDefault()
-    const text = askDraft.trim()
-    if (!text) return
-    setAskDraft('')
-    setAskParentId(null)
-    const turnId = onSend(text, parentTurnId)
-    if (turnId) setFocusTurnId(turnId)
-  }
+  useEffect(() => setCustomCommandDraft(run.agentCommand ?? ''), [run.id, run.agentCommand])
 
   function commitCustomAgentCommand() {
     const next = customCommandDraft.trim()
-    if (next === (run.agentCommand ?? '').trim()) return
-    onAgentCommandChange(next)
+    if (next !== (run.agentCommand ?? '').trim()) onAgentCommandChange(next)
   }
-
-  function handleCustomAgentCommandKeyDown(event: KeyboardEvent<HTMLInputElement>) {
-    if (event.key === 'Enter') {
-      event.preventDefault()
-      commitCustomAgentCommand()
-      event.currentTarget.blur()
-      return
-    }
-    if (event.key === 'Escape') {
-      event.preventDefault()
-      setCustomCommandDraft(run.agentCommand ?? '')
-      event.currentTarget.blur()
-    }
-  }
-
-  async function copyPrompt(turn: TurnItem) {
-    try {
-      await copyToClipboard(turn.prompt)
-      setCopiedTurnId(turn.id)
-      window.setTimeout(() => {
-        setCopiedTurnId((current) => (current === turn.id ? null : current))
-      }, 1200)
-    } catch {
-      // Clipboard access can be blocked by browser settings.
-    }
-  }
-
-  function scrollAssistantBubbleToBottom(turnId: string) {
-    scrollToFocusTarget(document.getElementById(assistantBubbleBottomId(turnId)))
-  }
-
-  function renderTurn(turn: TurnItem): ReactNode {
-    const canAskMore = turn.status !== 'running' && turn.status !== 'queued'
-    const canDelete = turn.status !== 'running' && turn.status !== 'queued'
-    const canStop = turn.status === 'running' && turn.id === stoppableTurnId
-    const canRefresh = turn.status === 'running' && turn.id === refreshableTurnId
-    const isTurnCollapsed = collapsedTurnIds.has(turn.id)
-
-    return (
-      <div
-        key={turn.id}
-        ref={turn.id === focusedTurnId ? focusedTurnRef : undefined}
-        className={`term-turn ${turn.status}`}
-      >
-        <div
-          className={`term-prompt-line ${isTurnCollapsed ? 'collapsed' : ''}`}
-          role="button"
-          tabIndex={0}
-          aria-expanded={!isTurnCollapsed}
-          onClick={(event) => {
-            if (hasTextSelectionInside(event.currentTarget)) return
-            toggleTurnCollapsed(turn.id)
-          }}
-          onKeyDown={(event) => toggleTurnFromKey(event, turn.id)}
-        >
-          <span className="term-prompt-mark" aria-hidden>›</span>
-          <span className="term-prompt-text">{turn.prompt}</span>
-          <span className="term-turn-actions">
-            <button
-              type="button"
-              className="term-action"
-              onKeyDown={(event) => event.stopPropagation()}
-              onClick={(event) => {
-                event.stopPropagation()
-                void copyPrompt(turn)
-              }}
-            >
-              {copiedTurnId === turn.id ? 'copied' : 'copy'}
-            </button>
-            <button
-              type="button"
-              className="term-action danger"
-              disabled={!canDelete}
-              title={canDelete ? 'Delete this Q/A turn' : 'Stop the running turn before deleting it'}
-              onKeyDown={(event) => event.stopPropagation()}
-              onClick={(event) => {
-                event.stopPropagation()
-                if (canDelete) onDeleteTurn(turn.id)
-              }}
-            >
-              delete
-            </button>
-          </span>
-        </div>
-        {turn.images?.length && !isTurnCollapsed ? (
-          <div className="term-prompt-images">
-            {turn.images.map((image) => (
-              <a key={image.id} href={image.dataUrl} target="_blank" rel="noreferrer">
-                <img src={image.dataUrl} alt={image.name} loading="lazy" />
-              </a>
-            ))}
-          </div>
-        ) : null}
-        {!isTurnCollapsed ? (
-          <div className="term-response">
-            <div className="term-response-head">
-              <span className="term-response-role">hermes · {turnRoleLabel(turn.status).toLowerCase()}</span>
-              <span className="term-turn-actions always">
-                {canStop ? (
-                  <button type="button" className="term-action danger" onClick={() => onStopTurn(turn.id)} aria-label="Stop Hermes">
-                    stop
-                  </button>
-                ) : null}
-                {canRefresh ? (
-                  <button type="button" className="term-action" onClick={() => onRefreshTurn(turn.id)} aria-label="Refresh Hermes stream">
-                    refresh
-                  </button>
-                ) : null}
-                <button
-                  type="button"
-                  className="term-action"
-                  onClick={() => scrollAssistantBubbleToBottom(turn.id)}
-                  aria-label="Scroll to bottom of this reply"
-                >
-                  to bottom
-                </button>
-                <button
-                  type="button"
-                  className="term-action"
-                  disabled={!canAskMore}
-                  title="Ask a follow-up from this reply"
-                  onClick={() => {
-                    setAskParentId(turn.id)
-                    setAskDraft('')
-                  }}
-                >
-                  ask here
-                </button>
-              </span>
-            </div>
-            <TurnActivity turn={turn} />
-            <div className="md-body term-md">
-              <ReactMarkdown
-                remarkPlugins={richMarkdownPlugins.remark}
-                rehypePlugins={richMarkdownPlugins.rehype}
-                components={richMarkdownComponents}
-              >
-                {turn.response || '…'}
-              </ReactMarkdown>
-              {turn.status === 'running' || turn.status === 'queued' ? (
-                <div className="term-response-wait">
-                  <AsciiSpinner />
-                  <span>{turn.status === 'queued' ? 'waiting in queue' : 'working'}…</span>
-                  {canRefresh ? (
-                    <button
-                      type="button"
-                      className="term-response-wait-refresh"
-                      onClick={() => onRefreshTurn(turn.id)}
-                      title="Hermes may have finished — reconnect to pull the latest"
-                    >
-                      refresh
-                    </button>
-                  ) : null}
-                </div>
-              ) : null}
-            </div>
-            {askParentId === turn.id ? (
-              <form ref={askMoreFormRef} className="ask-more-form" onSubmit={(event) => submitAskMore(event, turn.id)}>
-                <textarea
-                  ref={askMoreTextareaRef}
-                  value={askDraft}
-                  onChange={(event) => setAskDraft(event.target.value)}
-                  onDragOver={(event) => {
-                    if (event.dataTransfer.types.includes('application/x-agent-rider-file-path')) event.preventDefault()
-                  }}
-                  onDrop={(event) => dropFilePathIntoTextarea(event, setAskDraft)}
-                  placeholder="Ask a follow-up from this reply…"
-                  rows={2}
-                />
-                <div className="ask-more-controls">
-                  <button
-                    type="button"
-                    className="term-action"
-                    onClick={() => {
-                      setAskParentId(null)
-                      setAskDraft('')
-                    }}
-                  >
-                    cancel
-                  </button>
-                  <button type="submit" className="term-action accent">
-                    send
-                  </button>
-                </div>
-              </form>
-            ) : null}
-            <div id={assistantBubbleBottomId(turn.id)} className="assistant-bubble-bottom" aria-hidden />
-          </div>
-        ) : null}
-      </div>
-    )
-  }
-
-  // In full-window TUI mode the terminal is a fixed overlay covering the card,
-  // so the context fields rendered in the card body sit hidden behind it. Render
-  // them inside the overlay (below its titlebar) instead so "Show context" works.
-  // A stale persisted full-window flag must not hide a collapsed card's only
-  // mounted titlebar. Once the card expands, the same flag can safely mount
-  // the terminal overlay and its replacement titlebar.
-  const isTuiFullWindow = Boolean(tui && agentTerminalState?.fullWindow && !collapsed)
-  const contextFields = (
-    <div className="conv-meta-fields">
-      <div className="conv-meta-row">
-        <span className="tree-label">Category</span>
-        <input
-          className="conv-input"
-          list="known-categories"
-          value={run.category}
-          onChange={(event) => onCategoryChange(event.target.value)}
-          placeholder="Auto from prompt — or type / pick"
-        />
-      </div>
-      <div className="conv-meta-row">
-        <span className="tree-label">Project</span>
-        <input
-          className="conv-input"
-          list="known-projects"
-          value={run.project}
-          onChange={(event) => onProjectChange(event.target.value)}
-          placeholder="Auto from prompt — or type / pick"
-        />
-      </div>
-      <div className="conv-meta-row">
-        <span className="tree-label">Title</span>
-        <input
-          className="conv-input"
-          value={run.task}
-          onChange={(event) => onTitleChange(event.target.value)}
-          placeholder="Conversation title"
-        />
-      </div>
-      <div className="conv-meta-row">
-        <span className="tree-label">Agent</span>
-        <select
-          className="conv-input conv-agent-select"
-          value={agentType}
-          onChange={(event) => onAgentChange(event.target.value as AgentType)}
-          aria-label="Conversation agent"
-        >
-          {renderAgentOptions(
-            agentAvailability,
-            run.cardKind === 'app-builder' || agentType === 'hermes' ? AGENT_OPTIONS : CONVERSATION_AGENT_OPTIONS,
-          )}
-        </select>
-      </div>
-      {agentType === 'custom' ? (
-        <div className="conv-meta-row">
-          <span className="tree-label">Command</span>
-          <div className="conv-agent-command-editor">
-            <input
-              className="conv-input conv-agent-command"
-              value={customCommandDraft}
-              onChange={(event) => setCustomCommandDraft(event.target.value)}
-              onKeyDown={handleCustomAgentCommandKeyDown}
-              placeholder="bash command, e.g. claude --permission-mode auto"
-              spellCheck={false}
-              autoCapitalize="off"
-              autoCorrect="off"
-            />
-            <button
-              type="button"
-              className="conv-agent-command-apply"
-              disabled={customCommandDraft.trim() === (run.agentCommand ?? '').trim()}
-              onClick={commitCustomAgentCommand}
-            >
-              Apply
-            </button>
-          </div>
-        </div>
-      ) : null}
-      <div className="conv-meta-row">
-        <span className="tree-label">Workspace</span>
-        <button type="button" className="conv-workspace-btn" onClick={onOpenPicker} title={run.workspacePath}>
-          <span className="conv-workspace-path">{run.workspacePath}</span>
-          <span className="conv-workspace-action">Change…</span>
-        </button>
-      </div>
-    </div>
-  )
-
-  const toggleCollapsedState = onToggle
 
   return (
     <article
       id={`conversation-${run.id}`}
       ref={cardRef}
-      className={`conv-card ${embedded ? 'embedded' : ''} ${collapsed ? 'collapsed' : ''} ${active ? 'active' : ''} ${dragging ? 'dragging' : ''} ${dragOver ? (dragOverAfter ? 'drag-over after' : 'drag-over') : ''}`}
+      className={`conv-card ${collapsed ? 'collapsed' : ''} ${active ? 'active' : ''} ${dragging ? 'dragging' : ''} ${dragOver ? (dragOverAfter ? 'drag-over after' : 'drag-over') : ''}`}
       onMouseDown={(event) => {
-        if (embedded) return
-        // Toggle draggable synchronously on the element so the browser's
-        // drag-vs-select decision for THIS press is correct: off over inputs
-        // (so they stay selectable), on everywhere else.
         const target = event.target as HTMLElement
         if (!cardRef.current) return
         const canDrag = !target.closest(DRAG_EXCLUDE)
         cardRef.current.draggable = canDrag
         if (canDrag) resetDraggableAfterPointerSettles(cardRef.current)
       }}
-      onMouseUp={() => {
-        if (embedded) return
-        if (cardRef.current) cardRef.current.draggable = false
-      }}
+      onMouseUp={() => { if (cardRef.current) cardRef.current.draggable = false }}
       onDragStart={(event) => {
-        if (embedded) {
-          event.preventDefault()
-          return
-        }
         const target = event.target as HTMLElement
-        if (target.closest(DRAG_EXCLUDE)) {
-          event.preventDefault()
-          return
-        }
+        if (target.closest(DRAG_EXCLUDE)) return event.preventDefault()
         beginElementDrag(event, cardRef.current, run.id)
         onDragStartCard()
       }}
       onDragEnd={() => {
-        if (embedded) return
         if (cardRef.current) cardRef.current.draggable = false
         setDragOver(false)
         onDragEndCard()
       }}
       onDragOver={(event) => {
-        if (embedded) return
         if (!dragActive) return
         event.preventDefault()
         const rect = event.currentTarget.getBoundingClientRect()
         const after = event.clientY > rect.top + rect.height / 2
         dragOverAfterRef.current = after
-        if (!dragOver) setDragOver(true)
-        if (after !== dragOverAfter) setDragOverAfter(after)
+        setDragOver(true)
+        setDragOverAfter(after)
       }}
       onDragLeave={(event) => {
-        if (embedded) return
-        // Ignore leaves into child elements.
-        if (event.currentTarget.contains(event.relatedTarget as Node)) return
-        setDragOver(false)
+        if (!event.currentTarget.contains(event.relatedTarget as Node)) setDragOver(false)
       }}
       onDrop={(event) => {
-        if (embedded) return
         if (!dragActive) return
         event.preventDefault()
-        event.stopPropagation()
         setDragOver(false)
-        // Use the position computed during dragover (the drop event's clientY
-        // is unreliable across browsers) so it matches the indicator shown.
         onDropOnCard(dragOverAfterRef.current)
       }}
     >
-      {/* In full-window mode the titlebar is rendered inside the WebTerminal
-          overlay so the two stay visually connected as one element. */}
-      {isTuiFullWindow ? null : (
-      <div
-        className="win-titlebar"
-        onDoubleClick={toggleCollapsedState}
-        title="Drag to reorder · double-click to collapse"
-      >
+      <div className="win-titlebar" onDoubleClick={onToggle} title="Drag to reorder · double-click to collapse">
         <WinGrip />
         <span className="win-dot" style={{ background: tone.dot }} aria-hidden />
-        <input
-          className="win-title-input"
-          value={run.task}
-          onChange={(event) => onTitleChange(event.target.value)}
-          onClick={(event) => event.stopPropagation()}
-          placeholder="untitled"
-          aria-label="Conversation title"
-          size={Math.max(4, Math.min(28, (run.task || 'untitled').length + 1))}
-        />
-        <span className="win-meta" title={timeLabel(run.createdAt)}>
-          {run.category || '···'} | {run.project || '···'}
-        </span>
+        <input className="win-title-input" value={run.task} onChange={(event) => onTitleChange(event.target.value)} onClick={(event) => event.stopPropagation()} placeholder="untitled" aria-label="Conversation title" />
+        <span className="win-meta" title={timeLabel(run.createdAt)}>{run.category || '···'} | {run.project || '···'}</span>
         <div className="win-spacer" />
         {isNewDone ? <span className="new-dot" title="New result" /> : null}
-        <button
-          type="button"
-          className={`win-btn ${fileBrowserOpen ? 'active' : ''}`}
-          title={fileBrowserOpen ? 'Hide file browser' : 'Browse files'}
-          aria-label={fileBrowserOpen ? 'Hide file browser' : 'Browse files'}
-          aria-expanded={fileBrowserOpen}
-          onClick={(event) => {
-            event.stopPropagation()
-            setFileBrowserOpen((current) => !current)
-          }}
-        >
-          <WinFilesIcon />
-        </button>
-        {hideContext ? null : (
-          <button
-            type="button"
-            className={`win-btn ${metaCollapsed ? '' : 'active'}`}
-            title={metaCollapsed ? 'Show context (category / project / agent / workspace)' : 'Hide context'}
-            aria-label="Toggle context fields"
-            aria-expanded={!metaCollapsed}
-            onClick={(event) => {
-              event.stopPropagation()
-              onMetaCollapsedChange(!metaCollapsed)
-            }}
-          >
-            <WinContextIcon />
-          </button>
-        )}
-        <button
-          type="button"
-          className="win-btn"
-          title={collapsed ? 'Expand window' : 'Collapse window'}
-          aria-label={collapsed ? 'Expand window' : 'Collapse window'}
-          aria-expanded={!collapsed}
-          onClick={(event) => {
-            event.stopPropagation()
-            toggleCollapsedState()
-          }}
-        >
-          {collapsed ? <WinConversationExpandIcon /> : <WinConversationCollapseIcon />}
-        </button>
-        {onToggleMaximize ? (
-          <button
-            type="button"
-            className="win-btn"
-            title={maximized || isTuiFullWindow ? 'Restore' : (tui ? 'Full window' : 'Maximize in grid')}
-            aria-label={maximized || isTuiFullWindow ? 'Restore' : (tui ? 'Full window' : 'Maximize in grid')}
-            onClick={(event) => {
-              event.stopPropagation()
-              onToggleMaximize()
-            }}
-          >
-            {tui ? (
-              <WinFullscreenIcon active={isTuiFullWindow} />
-            ) : (
-              <WinMaximizeIcon active={maximized} />
-            )}
-          </button>
-        ) : null}
-        <button
-          type="button"
-          className="win-btn win-btn-close"
-          title="Close window"
-          aria-label="Close window"
-          onClick={(event) => {
-            event.stopPropagation()
-            onClose()
-          }}
-        >
-          <WinCloseIcon />
-        </button>
+        <button type="button" className={`win-btn ${fileBrowserOpen ? 'active' : ''}`} title={fileBrowserOpen ? 'Hide file browser' : 'Browse files'} onClick={(event) => { event.stopPropagation(); setFileBrowserOpen((current) => !current) }}><WinFilesIcon /></button>
+        <button type="button" className={`win-btn ${metaCollapsed ? '' : 'active'}`} title={metaCollapsed ? 'Show context' : 'Hide context'} onClick={(event) => { event.stopPropagation(); onMetaCollapsedChange(!metaCollapsed) }}><WinContextIcon /></button>
+        <button type="button" className="win-btn" title={collapsed ? 'Expand window' : 'Collapse window'} onClick={(event) => { event.stopPropagation(); onToggle() }}>{collapsed ? <WinConversationExpandIcon /> : <WinConversationCollapseIcon />}</button>
+        {onToggleMaximize ? <button type="button" className="win-btn" title={maximized ? 'Restore' : 'Full window'} onClick={(event) => { event.stopPropagation(); onToggleMaximize() }}><WinFullscreenIcon active={Boolean(agentTerminalState?.fullWindow)} /></button> : null}
+        <button type="button" className="win-btn win-btn-close" title="Close window" onClick={(event) => { event.stopPropagation(); onClose() }}><WinCloseIcon /></button>
       </div>
-      )}
 
       {!collapsed ? (
         <div className="conv-card-body">
-          {hideContext || metaCollapsed || isTuiFullWindow ? null : (
-          <div className="conv-meta">
-            {contextFields}
-          </div>
-          )}
-
-          <div className={`conv-content-shell ${tui ? 'tui-content-shell' : ''} ${tui && agentTerminalState?.fullWindow ? 'file-browser-full-window' : ''}`}>
-            <FileBrowser
-              rootPath={run.workspacePath}
-              open={fileBrowserOpen}
-              onToggle={() => setFileBrowserOpen((current) => !current)}
-              showOwnToggle={false}
-            />
-
-            {tui && (agentType !== 'custom' || customAgentCommand) ? (
-              <div className="conv-agent-terminal">
-                <WebTerminal
-                  // Re-attach (not restart) on agent/workspace change — the tmux
-                  // session persists in the background, keyed by run + agent + cwd.
-                  key={`${agentType}:${customAgentCommand}:${run.workspacePath}`}
-                  agent={agentType}
-                  customCommand={agentType === 'custom' ? customAgentCommand : undefined}
-                  sessionKey={run.id}
-                  initialCwd={run.workspacePath}
-                  eyebrow={`Agent · ${agentLabel(agentType)} · persistent`}
-                  title={agentType === 'custom' ? customAgentCommand : `${agentType} — interactive`}
-                  showClose={false}
-                  onClose={() => {}}
-                  collapsible={false}
-                  frameless
-                  titleBar={tui && !hideHeader ? (
-                    <>
-                    <div className="win-titlebar" onDoubleClick={toggleCollapsedState} title="Drag to reorder · double-click to collapse">
-                      <WinGrip />
-                      <span className="win-dot" style={{ background: tone.dot }} aria-hidden />
-                      <input className="win-title-input" value={run.task} onChange={(event) => onTitleChange(event.target.value)} onClick={(event) => event.stopPropagation()} placeholder="untitled" aria-label="Conversation title" size={Math.max(4, Math.min(28, (run.task || 'untitled').length + 1))} />
-                      <span className="win-meta" title={timeLabel(run.createdAt)}>{run.category || '···'} | {run.project || '···'}</span>
-                      <div className="win-spacer" />
-                      {isNewDone ? <span className="new-dot" title="New result" /> : null}
-                      <button type="button" className={`win-btn ${fileBrowserOpen ? 'active' : ''}`} title={fileBrowserOpen ? 'Hide file browser' : 'Browse files'} aria-label={fileBrowserOpen ? 'Hide file browser' : 'Browse files'} aria-expanded={fileBrowserOpen} onClick={(event) => { event.stopPropagation(); setFileBrowserOpen((current) => !current) }}><WinFilesIcon /></button>
-                      {hideContext ? null : <button type="button" className={`win-btn ${metaCollapsed ? '' : 'active'}`} title={metaCollapsed ? 'Show context' : 'Hide context'} aria-label="Toggle context fields" aria-expanded={!metaCollapsed} onClick={(event) => { event.stopPropagation(); onMetaCollapsedChange(!metaCollapsed) }}><WinContextIcon /></button>}
-                      <button type="button" className="win-btn" title={collapsed ? 'Expand window' : 'Collapse window'} aria-label={collapsed ? 'Expand window' : 'Collapse window'} aria-expanded={!collapsed} onClick={(event) => { event.stopPropagation(); toggleCollapsedState() }}>{collapsed ? <WinConversationExpandIcon /> : <WinConversationCollapseIcon />}</button>
-                      {onToggleMaximize ? <button type="button" className="win-btn" title={maximized || agentTerminalState?.fullWindow ? 'Restore' : 'Full window'} aria-label={maximized || agentTerminalState?.fullWindow ? 'Restore' : 'Full window'} onClick={(event) => { event.stopPropagation(); onToggleMaximize() }}><WinFullscreenIcon active={agentTerminalState?.fullWindow} /></button> : null}
-                      <button type="button" className="win-btn win-btn-close" title="Close window" aria-label="Close window" onClick={(event) => { event.stopPropagation(); onClose() }}><WinCloseIcon /></button>
-                    </div>
-                    {hideContext || metaCollapsed ? null : (
-                      <div className="conv-meta conv-meta-overlay">
-                        {contextFields}
-                      </div>
-                    )}
-                    </>
-                  ) : undefined}
-                  fullWindow={agentTerminalState?.fullWindow}
-                  onStateChange={onAgentTerminalStateChange}
-                  notepad={agentTerminalState?.notepad}
-                  onNotepadChange={(text) => onAgentTerminalStateChange({ notepad: text })}
-                  // Rendered inside WebTerminal's own box (not a sibling) so it
-                  // stays visible/clickable in full-window mode, where the section
-                  // becomes `position: fixed` and covers any sibling elements.
-                  headerLeading={
-                    <button
-                      type="button"
-                      className={`terminal-clear file-browser-toggle-inline ${fileBrowserOpen ? 'active' : ''}`}
-                      aria-expanded={fileBrowserOpen}
-                      title={fileBrowserOpen ? 'Hide file browser' : 'Browse files'}
-                      onClick={(event) => {
-                        event.stopPropagation()
-                        setFileBrowserOpen((current) => !current)
-                      }}
-                    >
-                      Files
-                    </button>
-                  }
-                />
+          {!metaCollapsed ? (
+            <div className="conv-meta">
+              <div className="conv-meta-fields">
+                <div className="conv-meta-row"><span className="tree-label">Category</span><input className="conv-input" list="known-categories" value={run.category} onChange={(event) => onCategoryChange(event.target.value)} /></div>
+                <div className="conv-meta-row"><span className="tree-label">Project</span><input className="conv-input" list="known-projects" value={run.project} onChange={(event) => onProjectChange(event.target.value)} /></div>
+                <div className="conv-meta-row"><span className="tree-label">Agent</span><select className="conv-input conv-agent-select" value={run.agentType} onChange={(event) => onAgentChange(event.target.value as AgentType)}>{renderAgentOptions(agentAvailability)}</select></div>
+                {run.agentType === 'custom' ? <div className="conv-meta-row"><span className="tree-label">Command</span><input className="conv-input conv-agent-command" value={customCommandDraft} onChange={(event) => setCustomCommandDraft(event.target.value)} onBlur={commitCustomAgentCommand} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); commitCustomAgentCommand(); event.currentTarget.blur() } }} placeholder="bash command" /></div> : null}
+                <div className="conv-meta-row"><span className="tree-label">Workspace</span><button type="button" className="conv-workspace-btn" onClick={onOpenPicker} title={run.workspacePath}><span className="conv-workspace-path">{run.workspacePath}</span><span className="conv-workspace-action">Change…</span></button></div>
               </div>
-            ) : tui ? (
-              <div className="conv-agent-command-empty">
-                Enter a bash command to launch the custom TUI agent.
-              </div>
-            ) : (
-              <>
-                <div className="win-body conv-transcript">
-                  {turns.length ? (
-                    <>
-                      <div className="feed-toolbar">
-                        <span className="feed-toolbar-label">
-                          {turns.length} {turns.length === 1 ? 'turn' : 'turns'}
-                        </span>
-                        <button
-                          type="button"
-                          className="term-action"
-                          onClick={hideAllTurns}
-                          title="Collapse every turn in this conversation"
-                        >
-                          hide all
-                        </button>
-                      </div>
-                      {linearTurns.map((turn) => renderTurn(turn))}
-                    </>
-                  ) : (
-                    <div className="win-body-empty">
-                      New conversation.
-                      {'\n'}Awaiting first message…
-                    </div>
-                  )}
-                </div>
-
-                {attachments.length ? (
-                  <ul className="win-attachments">
-                    {attachments.map((image) => (
-                      <li key={image.id} className="win-attachment">
-                        <img src={image.dataUrl} alt={image.name} />
-                        <button
-                          type="button"
-                          className="win-attachment-remove"
-                          title={`Remove ${image.name}`}
-                          onClick={() => setAttachments((current) => current.filter((item) => item.id !== image.id))}
-                        >
-                          ×
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                ) : null}
-
-                <form className="win-promptbar" onSubmit={submit}>
-                  <span className="win-prompt-mark" aria-hidden>›</span>
-                  {draft || attachments.length ? null : <span className="win-cursor" aria-hidden />}
-                  <textarea
-                    ref={promptTextareaRef}
-                    value={draft}
-                    rows={1}
-                    onChange={(event) => setDraft(event.target.value)}
-                    onPaste={pasteIntoPrompt}
-                    onDragOver={(event) => {
-                      if (
-                        event.dataTransfer.types.includes('application/x-agent-rider-file-path')
-                        || event.dataTransfer.types.includes('Files')
-                      ) event.preventDefault()
-                    }}
-                    onDrop={(event) => dropFilePathIntoTextarea(event, setDraft)}
-                    placeholder={isDraft ? 'Describe the task to start this conversation…' : `Reply to ${conversationTitle(run)}…`}
-                    aria-label="Message"
-                    style={draft || attachments.length ? undefined : { caretColor: 'transparent' }}
-                  />
-                  <label className="win-attach" title="Attach an image (or paste one)">
-                    <input
-                      type="file"
-                      accept="image/*"
-                      multiple
-                      onChange={(event) => {
-                        void attachImages(Array.from(event.target.files ?? []))
-                        event.target.value = ''
-                      }}
-                    />
-                    <WinImageIcon />
-                  </label>
-                  {draft || attachments.length ? (
-                    <button type="submit" className="term-action accent win-send" title="Send">
-                      send ↵
-                    </button>
-                  ) : null}
-                </form>
-
-                <div className="win-footer">
-                  <label className="win-footer-control" title="Model">
-                    <select
-                      value={selectedModelValue}
-                      onChange={(event) => {
-                        const next = parseModelSelectValue(event.target.value)
-                        onModelChange(next.model, next.modelProvider)
-                      }}
-                      aria-label="Model"
-                    >
-                      <option value="">
-                        {modelCatalog.defaultModel ? `default · ${modelCatalog.defaultModel}` : 'default model'}
-                      </option>
-                      {modelCatalog.groups.map((group) => (
-                        <optgroup key={`${group.providerId ?? group.provider}:${group.provider}`} label={group.provider}>
-                          {group.models.map((model) => (
-                            <option key={`${group.providerId ?? group.provider}:${model.id}`} value={modelSelectValue(model.id, group.providerId)}>
-                              {model.label}
-                            </option>
-                          ))}
-                        </optgroup>
-                      ))}
-                    </select>
-                  </label>
-                  <button
-                    type="button"
-                    className="term-action win-models-refresh"
-                    disabled={modelsRefreshing}
-                    title="Reload the model list from hermes (after switching provider in the CLI)"
-                    onClick={() => onRefreshModels()}
-                  >
-                    {modelsRefreshing ? '…' : '↻'}
-                  </button>
-                  <label className="win-footer-control" title="Reasoning effort">
-                    <select
-                      value={selectedReasoningEffort}
-                      onChange={(event) => onReasoningEffortChange(event.target.value)}
-                      aria-label="Reasoning effort"
-                    >
-                      <option value="">default effort</option>
-                      {reasoningEfforts.map((effort) => (
-                        <option key={effort} value={effort}>
-                          {effort}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <div className="win-spacer" />
-                  <button type="button" className="win-footer-path" onClick={onOpenPicker} title={`${run.workspacePath} — change workspace`}>
-                    {run.workspacePath}
-                  </button>
-                </div>
-            </>
-          )}
+            </div>
+          ) : null}
+          <div className={`conv-content-shell tui-content-shell ${agentTerminalState?.fullWindow ? 'file-browser-full-window' : ''}`}>
+            <FileBrowser rootPath={run.workspacePath} open={fileBrowserOpen} onToggle={() => setFileBrowserOpen((current) => !current)} showOwnToggle={false} />
+            {run.agentType !== 'custom' || customAgentCommand ? (
+              <div className="conv-agent-terminal"><WebTerminal key={`${run.agentType}:${customAgentCommand}:${run.workspacePath}`} agent={run.agentType} customCommand={run.agentType === 'custom' ? customAgentCommand : undefined} sessionKey={run.id} initialCwd={run.workspacePath} eyebrow={`Agent · ${agentLabel(run.agentType)} · persistent`} title={run.agentType === 'custom' ? customAgentCommand : `${run.agentType} — interactive`} showClose={false} onClose={() => {}} collapsible={false} frameless fullWindow={agentTerminalState?.fullWindow} onStateChange={onAgentTerminalStateChange} notepad={agentTerminalState?.notepad} onNotepadChange={(text) => onAgentTerminalStateChange({ notepad: text })} /></div>
+            ) : <div className="conv-agent-command-empty">Enter a bash command to launch the custom TUI agent.</div>}
           </div>
         </div>
       ) : null}
@@ -4319,32 +3129,13 @@ function WorkspacePicker({
 }
 
 export default function App() {
-  const bridgeRef = useRef<HermesBridge | null>(null)
-  const activeTurnRef = useRef<string | null>(null)
-  const activeRunRef = useRef<string | null>(null)
   const hydratedRef = useRef(false)
-  const queuedPromptsRef = useRef<QueuedPromptEntry[]>([])
-  const assistantBufferRef = useRef('')
-  const thinkingBufferRef = useRef('')
-  const turnsRef = useRef<TurnItem[]>([])
   const runsRef = useRef<RunNode[]>([])
-  const [activeHermesTurnId, setActiveHermesTurnId] = useState<string | null>(null)
-  const [activeHermesStreamId, setActiveHermesStreamId] = useState<string | null>(null)
-  // Each conversation (run) keeps its own Hermes session for multi-turn context.
-  const sessionByRunRef = useRef<Map<string, string>>(new Map())
 
-  const [turns, setTurns] = useState<TurnItem[]>([])
   const [runs, setRuns] = useState<RunNode[]>([])
   const [resources, setResources] = useState<ResourceItem[]>([])
-  const [connectionState, setConnectionState] = useState<HermesConnectionState>('disconnected')
-  const [connectionDetail, setConnectionDetail] = useState('Disconnected')
-  const [sessionId, setSessionId] = useState<string | null>(null)
-  const [sessionInfoText, setSessionInfoText] = useState('No Hermes session yet')
   const [error, setError] = useState<string | null>(null)
   const [workspaceRoot, setWorkspaceRoot] = useState(DEFAULT_WORKSPACE_CWD)
-  const [modelCatalog, setModelCatalog] = useState<HermesModelCatalog>(EMPTY_MODEL_CATALOG)
-  const [modelsRefreshing, setModelsRefreshing] = useState(false)
-  const [reasoningEfforts, setReasoningEfforts] = useState<string[]>(DEFAULT_REASONING_EFFORTS)
   const [passwordStatus, setPasswordStatus] = useState<PasswordStatus | null>(null)
   const [passwordDialogOpen, setPasswordDialogOpen] = useState(false)
 
@@ -4418,10 +3209,6 @@ export default function App() {
   const [panelStates, setPanelStates] = useState<Record<string, WorkspacePanelState>>({})
   // Runtime Agent Apps (auto-discovered from the store backend).
   const { listing: appListing, reorder: reorderApps, rename: renameAppLabel } = useAgentApps(Boolean(passwordStatus?.authenticated))
-
-  useEffect(() => {
-    turnsRef.current = turns
-  }, [turns])
 
   useEffect(() => {
     runsRef.current = runs
@@ -4553,10 +3340,6 @@ export default function App() {
       job: 'Draft',
       jobStatus: 'queued',
       resourceIds: [],
-      model: '',
-      modelProvider: null,
-      reasoningEffort: '',
-      sessionId: null,
       agentType: 'codex',
       agentCommand: '',
       cardKind: 'conversation',
@@ -4584,18 +3367,7 @@ export default function App() {
   }
 
   function changeRunWorkspace(runId: string, path: string) {
-    // Hermes can't move a live session's cwd, so reset this conversation's
-    // session — the next turn runs in the newly chosen folder.
-    sessionByRunRef.current.delete(runId)
-    updateRunContext(runId, { workspacePath: path, sessionId: null })
-  }
-
-  function updateRunHermesModel(runId: string, model: string, modelProvider: string | null) {
-    updateRunContext(runId, { model, modelProvider })
-  }
-
-  function updateRunReasoningEffort(runId: string, reasoningEffort: string) {
-    updateRunContext(runId, { reasoningEffort })
+    updateRunContext(runId, { workspacePath: path })
   }
 
   // ── Unified block ordering (cards + panels) ────────────────────────────────
@@ -4693,17 +3465,6 @@ export default function App() {
   }, [runs])
 
   // Group turns by conversation, oldest first within each card.
-  const turnsByRun = useMemo(() => {
-    const map = new Map<string, TurnItem[]>()
-    for (const turn of turns) {
-      const list = map.get(turn.runId) ?? []
-      list.push(turn)
-      map.set(turn.runId, list)
-    }
-    for (const list of map.values()) list.sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-    return map
-  }, [turns])
-
   const knownProjects = useMemo(() => {
     const set = new Set<string>()
     for (const run of runs) if (run.project) set.add(run.project)
@@ -4757,12 +3518,6 @@ export default function App() {
   }
 
   function deleteConversation(runId: string) {
-    if (activeRunRef.current === runId) {
-      activeRunRef.current = null
-      activeTurnRef.current = null
-      assistantBufferRef.current = ''
-    }
-
     if (pickerRunId === runId) {
       setPickerRunId(null)
     }
@@ -4771,11 +3526,7 @@ export default function App() {
       setActiveRunId(null)
     }
 
-    sessionByRunRef.current.delete(runId)
-    queuedPromptsRef.current = queuedPromptsRef.current.filter((entry) => entry.runId !== runId)
-
     setRuns((current) => current.filter((run) => run.id !== runId))
-    setTurns((current) => current.filter((turn) => turn.runId !== runId))
     setClosedRunIds((current) => {
       if (!current.has(runId)) return current
       const next = new Set(current)
@@ -4806,43 +3557,6 @@ export default function App() {
       if (!(key in current)) return current
       const next = { ...current }
       delete next[key]
-      return next
-    })
-  }
-
-  function deleteConversationTurn(runId: string, turnId: string) {
-    const runTurns = turnsRef.current.filter((turn) => turn.runId === runId)
-    const childrenByParent = new Map<string, TurnItem[]>()
-    for (const turn of runTurns) {
-      if (!turn.parentTurnId) continue
-      const children = childrenByParent.get(turn.parentTurnId) ?? []
-      children.push(turn)
-      childrenByParent.set(turn.parentTurnId, children)
-    }
-
-    const idsToDelete = new Set<string>()
-    const visit = (id: string) => {
-      if (idsToDelete.has(id)) return
-      idsToDelete.add(id)
-      for (const child of childrenByParent.get(id) ?? []) visit(child.id)
-    }
-    visit(turnId)
-
-    if ([...idsToDelete].some((id) => id === activeTurnRef.current)) return
-
-    queuedPromptsRef.current = queuedPromptsRef.current.filter((entry) => !idsToDelete.has(entry.turnId))
-    setTurns((current) => current.filter((turn) => !idsToDelete.has(turn.id)))
-    setRuns((current) =>
-      current.map((run) => {
-        if (run.id !== runId) return run
-        const hasRemainingTurns = runTurns.some((turn) => !idsToDelete.has(turn.id))
-        return hasRemainingTurns ? run : { ...run, jobStatus: 'queued' }
-      }),
-    )
-    setNewDoneIds((current) => {
-      if (!current.has(runId)) return current
-      const next = new Set(current)
-      next.delete(runId)
       return next
     })
   }
@@ -4894,259 +3608,10 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    const bridge = new HermesBridge({ title: DEFAULT_TITLE, cwd: DEFAULT_CWD, source: 'web' })
-    bridgeRef.current = bridge
-
-    const removeStatus = bridge.onStatus((state, detail) => {
-      setConnectionState(state)
-      setConnectionDetail(detail)
-    })
-
-    const removeEvent = bridge.onEvent((event) => {
-      if (event.type === 'gateway.ready') {
-        const skin = String(event.payload?.skin ?? '').trim()
-        if (skin) setSessionInfoText(`Hermes gateway ready · skin ${skin}`)
-        return
-      }
-
-      if (event.type === 'session.info') {
-        const info = event.payload ?? {}
-        const infoParts = [
-          String(info.model ?? '').trim(),
-          String(info.cwd ?? '').trim(),
-          String(info.branch ?? '').trim(),
-        ].filter(Boolean)
-        if (infoParts.length) setSessionInfoText(infoParts.join(' · '))
-        const maybeSessionId = String(info.session_id ?? event.session_id ?? '').trim()
-        if (maybeSessionId) setSessionId(maybeSessionId)
-        return
-      }
-
-      if (event.type === 'status.update') {
-        const text = String(event.payload?.text ?? '').trim()
-        if (text) setConnectionDetail(text)
-        return
-      }
-
-      if (event.type === 'message.delta') {
-        const delta = String(event.payload?.text ?? '')
-        if (!delta) return
-        assistantBufferRef.current += delta
-        const turnId = activeTurnRef.current
-        if (!turnId) return
-        const currentText = assistantBufferRef.current
-        setTurns((current) =>
-          current.map((turn) => (turn.id === turnId ? { ...turn, response: currentText, status: 'running' } : turn)),
-        )
-        return
-      }
-
-      if (event.type === 'message.thought') {
-        const delta = String(event.payload?.text ?? '')
-        if (!delta) return
-        thinkingBufferRef.current += delta
-        const turnId = activeTurnRef.current
-        if (!turnId) return
-        const thinking = thinkingBufferRef.current
-        setTurns((current) =>
-          current.map((turn) => (turn.id === turnId ? { ...turn, thinking, status: 'running' } : turn)),
-        )
-        return
-      }
-
-      if (event.type === 'message.tool') {
-        const turnId = activeTurnRef.current
-        const id = String(event.payload?.id ?? '')
-        if (!turnId || !id) return
-        const patch = event.payload as Record<string, unknown>
-        setTurns((current) =>
-          current.map((turn) => {
-            if (turn.id !== turnId) return turn
-            const tools = turn.tools ?? []
-            const existing = tools.find((tool) => tool.id === id)
-            // tool_call and tool_call_update share this event; an update carries
-            // only the fields that changed, so merge rather than replace.
-            const merged: ToolActivity = {
-              id,
-              title: String(patch.title ?? existing?.title ?? id),
-              kind: String(patch.kind ?? existing?.kind ?? 'other'),
-              status: normalizeToolStatus(patch.status, existing?.status),
-              locations: (patch.locations as string[] | undefined) ?? existing?.locations,
-              output: String(patch.output ?? '') || existing?.output,
-              images: (patch.images as string[] | undefined) ?? existing?.images,
-            }
-            return {
-              ...turn,
-              status: 'running',
-              tools: existing
-                ? tools.map((tool) => (tool.id === id ? merged : tool))
-                : [...tools, merged],
-            }
-          }),
-        )
-        return
-      }
-
-      if (event.type === 'message.plan') {
-        const turnId = activeTurnRef.current
-        const entries = Array.isArray(event.payload?.entries) ? (event.payload.entries as PlanEntry[]) : []
-        if (!turnId) return
-        setTurns((current) =>
-          current.map((turn) => (turn.id === turnId ? { ...turn, plan: entries, status: 'running' } : turn)),
-        )
-        return
-      }
-
-      if (event.type === 'message.complete') {
-        const turnId = activeTurnRef.current
-        const currentText = assistantBufferRef.current.trim()
-        if (turnId) {
-          setTurns((current) =>
-            current.map((turn) =>
-              turn.id === turnId
-                ? { ...turn, response: currentText || turn.response, status: 'done', tools: settleTools(turn, 'completed') }
-                : turn,
-            ),
-          )
-        }
-
-        const runId = activeRunRef.current
-        if (runId) {
-          setRuns((current) => current.map((item) => (item.id === runId ? { ...item, jobStatus: 'done' } : item)))
-          // Flag a "new result" dot (cleared once the reply scrolls into view).
-          setNewDoneIds((current) => {
-            const next = new Set(current)
-            next.add(runId)
-            return next
-          })
-        }
-
-        activeTurnRef.current = null
-        activeRunRef.current = null
-        assistantBufferRef.current = ''
-        thinkingBufferRef.current = ''
-        setActiveHermesTurnId(null)
-        setActiveHermesStreamId(null)
-        setConnectionState('ready')
-        setConnectionDetail('Assistant response complete')
-        void flushQueue()
-      }
-
-      if (event.type === 'message.cancelled') {
-        finishStoppedTurn(String(event.payload?.message ?? 'Task stopped.'))
-        return
-      }
-
-      if (event.type === 'message.error') {
-        const message = String(event.payload?.error ?? 'Hermes stream error')
-        const turnId = activeTurnRef.current
-        const runId = activeRunRef.current
-        const currentText = assistantBufferRef.current.trim()
-        if (turnId) {
-          setTurns((current) =>
-            current.map((turn) =>
-              turn.id === turnId
-                ? { ...turn, response: currentText || message, status: 'error', tools: settleTools(turn, 'failed') }
-                : turn,
-            ),
-          )
-        }
-        if (runId) {
-          setRuns((current) => current.map((item) => (item.id === runId ? { ...item, jobStatus: 'error' } : item)))
-        }
-        setError(message)
-        activeTurnRef.current = null
-        activeRunRef.current = null
-        assistantBufferRef.current = ''
-        thinkingBufferRef.current = ''
-        setActiveHermesTurnId(null)
-        setActiveHermesStreamId(null)
-        void flushQueue()
-      }
-
-      // Hermes closes the stream after an application-level error (rate limit,
-      // silent provider failure, crash, ...) without ever sending stream_end/done.
-      // If tokens already streamed in before it, the turn is effectively done —
-      // finish it normally instead of clobbering a good reply with an error and
-      // leaving the card stuck on "Hermes running…" forever.
-      if (event.type === 'message.apperror') {
-        const message = String(event.payload?.error ?? 'Hermes reported an application error')
-        const hint = event.payload?.hint ? String(event.payload.hint) : ''
-        const turnId = activeTurnRef.current
-        const runId = activeRunRef.current
-        const currentText = assistantBufferRef.current.trim()
-        const hasContent = currentText.length > 0
-        if (turnId) {
-          setTurns((current) =>
-            current.map((turn) =>
-              turn.id === turnId
-                ? hasContent
-                  ? { ...turn, response: currentText, status: 'done', tools: settleTools(turn, 'completed') }
-                  : { ...turn, response: [message, hint].filter(Boolean).join('\n\n'), status: 'error', tools: settleTools(turn, 'failed') }
-                : turn,
-            ),
-          )
-        }
-        if (runId) {
-          setRuns((current) => current.map((item) => (item.id === runId ? { ...item, jobStatus: hasContent ? 'done' : 'error' } : item)))
-          if (hasContent) {
-            setNewDoneIds((current) => {
-              const next = new Set(current)
-              next.add(runId)
-              return next
-            })
-          }
-        }
-        if (!hasContent) setError(message)
-        activeTurnRef.current = null
-        activeRunRef.current = null
-        assistantBufferRef.current = ''
-        thinkingBufferRef.current = ''
-        setActiveHermesTurnId(null)
-        setActiveHermesStreamId(null)
-        setConnectionState(hasContent ? 'ready' : 'error')
-        setConnectionDetail(hasContent ? 'Assistant response complete' : message)
-        void flushQueue()
-      }
-    })
-
-    void bridge.connect().catch((error) => {
-      setError(error instanceof Error ? error.message : String(error))
-    })
-
-    return () => {
-      removeEvent()
-      removeStatus()
-      bridge.close()
-    }
-  }, [])
-
-  useEffect(() => {
     let cancelled = false
     void listDir('').then((listing) => {
       if (!cancelled && listing?.path) setWorkspaceRoot(listing.path)
     })
-    return () => {
-      cancelled = true
-    }
-  }, [])
-
-  useEffect(() => {
-    let cancelled = false
-    void fetchHermesModelCatalog()
-      .then((catalog) => {
-        if (!cancelled) setModelCatalog(catalog)
-      })
-      .catch(() => {
-        if (!cancelled) setModelCatalog(EMPTY_MODEL_CATALOG)
-      })
-    void fetchHermesReasoningEfforts()
-      .then(({ efforts }) => {
-        if (!cancelled) setReasoningEfforts(efforts)
-      })
-      .catch(() => {
-        if (!cancelled) setReasoningEfforts(DEFAULT_REASONING_EFFORTS)
-      })
     return () => {
       cancelled = true
     }
@@ -5159,8 +3624,7 @@ export default function App() {
       const next = current.map((run) => {
         if (run.workspacePath !== DEFAULT_WORKSPACE_CWD) return run
         changed = true
-        sessionByRunRef.current.delete(run.id)
-        return { ...run, workspacePath: workspaceRoot, sessionId: null }
+        return { ...run, workspacePath: workspaceRoot }
       })
       return changed ? next : current
     })
@@ -5176,20 +3640,14 @@ export default function App() {
         const layout = state.layout
         // Merge defensively: never clobber content the user already created this session.
         if (state.runs.length) {
-          // General Conversation Cards are CLI-only for new work, but existing
-          // Hermes cards remain Hermes so an upgrade preserves their visible
-          // transcript and can resume the saved session. A run with no stored
-          // type predates agent selection and therefore used Hermes.
+          // Legacy Hermes cards are migrated to the default Codex CLI card.
           const restored = (state.runs as RunNode[]).map((run) => {
             const cardKind = isAppBuilderRunId(run.id) ? 'app-builder' : run.cardKind ?? 'conversation'
-            const storedAgent = run.agentType ?? 'hermes'
+            const storedAgent = (run.agentType as string | undefined) === 'hermes' ? 'codex' : run.agentType ?? 'codex'
             return {
               ...run,
               agentType: storedAgent,
               column: Number.isFinite(run.column) ? run.column : 0,
-              model: typeof run.model === 'string' ? run.model : '',
-              modelProvider: typeof run.modelProvider === 'string' ? run.modelProvider : null,
-              reasoningEffort: typeof run.reasoningEffort === 'string' ? run.reasoningEffort : '',
               agentCommand: typeof run.agentCommand === 'string' ? run.agentCommand : '',
               cardKind,
             }
@@ -5217,12 +3675,7 @@ export default function App() {
           if (restoredUnreadRunIds) {
             setNewDoneIds((current) => (current.size ? current : restoredUnreadRunIds))
           }
-          // Restore each conversation's Hermes session so follow-ups continue the same thread.
-          for (const run of restored) {
-            if (run.sessionId) sessionByRunRef.current.set(run.id, run.sessionId)
-          }
         }
-        if (state.turns.length) setTurns((current) => (current.length ? current : (state.turns as TurnItem[])))
         // Restore the workspace layout: which tool/app panels were open, their
         // order, and the column count.
         if (layout) {
@@ -5280,11 +3733,11 @@ export default function App() {
     }
   }, [passwordStatus?.authenticated])
 
-  // Debounced auto-save of runs/turns + layout to the local SQLite backend.
+  // Debounced auto-save of cards and layout to the local SQLite backend.
   useEffect(() => {
     if (!hydratedRef.current || !passwordStatus?.authenticated) return
     const handle = setTimeout(() => {
-      void persistState(runs, turns, sessionId, {
+      void persistState(runs, [], null, {
         panelOrder,
         panelColumns,
         layoutOrder,
@@ -5300,329 +3753,16 @@ export default function App() {
       })
     }, 700)
     return () => clearTimeout(handle)
-  }, [runs, turns, sessionId, panelOrder, panelColumns, layoutOrder, layoutPreset, freeRows, freeCols, sidebarCollapsed, closedRunIds, collapsedIds, metaCollapsedIds, newDoneIds, panelStates, passwordStatus?.authenticated])
-
-  async function flushQueue() {
-    if (activeTurnRef.current) return
-    const nextEntry = queuedPromptsRef.current.shift()
-    if (!nextEntry) return
-    await startTurn(nextEntry)
-  }
-
-  function recoverActiveHermesStream(entry: QueuedPromptEntry, activeStreamId: string) {
-    const bridge = bridgeRef.current
-    const ownerTurn = turnsRef.current.find((turn) =>
-      turn.runId === entry.runId && turn.id !== entry.turnId && turn.status === 'running')
-    // The reconnected stream must be bound to a REAL turn so its deltas/terminal
-    // event land somewhere. Prefer a still-running earlier turn (it owns the
-    // stream); otherwise adopt the just-submitted turn itself, so the recovered
-    // output is shown and its completion flushes the queue — instead of binding a
-    // null active turn (which dropped deltas and stranded the card forever).
-    const boundTurnId = ownerTurn?.id ?? entry.turnId
-
-    if (ownerTurn) {
-      // An earlier turn owns the active stream; the new prompt waits behind it.
-      queuedPromptsRef.current.push(entry)
-      setTurns((current) =>
-        current.map((turn) =>
-          turn.id === entry.turnId
-            ? { ...turn, status: 'queued', response: 'Queued until the active Hermes stream finishes...' }
-            : turn,
-        ),
-      )
-    } else {
-      // Desync: server reports an active stream but no local turn is running.
-      // Adopt this turn so the recovered stream resolves it rather than deadlocking.
-      setTurns((current) =>
-        current.map((turn) =>
-          turn.id === entry.turnId
-            ? { ...turn, status: 'running', response: isThinkingPlaceholder(turn.response) ? 'Thinking…' : turn.response }
-            : turn,
-        ),
-      )
-    }
-
-    activeTurnRef.current = boundTurnId
-    activeRunRef.current = entry.runId
-    assistantBufferRef.current = ownerTurn && !isThinkingPlaceholder(ownerTurn.response) ? ownerTurn.response : ''
-    // The server replays a recovered stream from its first frame, so reasoning
-    // rebuilds itself from the replayed thought chunks; seeding it here would
-    // double the text. Tool events are merged by id, so they replay idempotently.
-    thinkingBufferRef.current = ''
-    setActiveHermesTurnId(boundTurnId)
-    setActiveHermesStreamId(activeStreamId)
-    setConnectionState('busy')
-    setConnectionDetail('Reconnected to active Hermes stream...')
-    setRuns((current) => current.map((item) => (item.id === entry.runId ? { ...item, jobStatus: 'running' } : item)))
-    if (bridge?.reconnectStream(activeStreamId)) return
-
-    // Reconnect failed: resolve the bound turn to an error state and flush the
-    // queue so the card never sits stuck on a stream we can't reach.
-    const message = 'Hermes reported an active stream, but it could not be reconnected.'
-    queuedPromptsRef.current = queuedPromptsRef.current.filter((queued) => queued.turnId !== entry.turnId)
-    setTurns((current) =>
-      current.map((turn) =>
-        turn.id === boundTurnId ? { ...turn, status: 'error', response: turn.response || message } : turn,
-      ),
-    )
-    setRuns((current) => current.map((item) => (item.id === entry.runId ? { ...item, jobStatus: 'error' } : item)))
-    activeTurnRef.current = null
-    activeRunRef.current = null
-    assistantBufferRef.current = ''
-    setActiveHermesTurnId(null)
-    setActiveHermesStreamId(null)
-    setError(message)
-    setConnectionState('error')
-    setConnectionDetail(message)
-    void flushQueue()
-  }
-
-  /** Pull the model list from hermes again. The hermes CLI can be repointed at
-   *  another provider at any time, and nothing tells the running server. */
-  async function refreshModelCatalog(workspace: string) {
-    setModelsRefreshing(true)
-    try {
-      setModelCatalog(await fetchHermesModelCatalog(true, workspace))
-    } catch (error) {
-      setError(`Could not refresh the model list: ${error instanceof Error ? error.message : String(error)}`)
-    } finally {
-      setModelsRefreshing(false)
-    }
-  }
-
-  async function startTurn(entry: QueuedPromptEntry) {
-    const bridge = bridgeRef.current
-    if (!bridge) return
-
-    const { turnId, runId, prompt, workspace, model, modelProvider, reasoningEffort, images } = entry
-
-    activeTurnRef.current = turnId
-    activeRunRef.current = runId
-    assistantBufferRef.current = ''
-    thinkingBufferRef.current = ''
-    try {
-      // Reuse this conversation's session, or create one rooted at its workspace.
-      let session = sessionByRunRef.current.get(runId)
-      if (!session) {
-        session = await bridge.createSession(workspace)
-        sessionByRunRef.current.set(runId, session)
-        setRuns((current) => current.map((item) => (item.id === runId ? { ...item, sessionId: session ?? null } : item)))
-        // session/new is when hermes re-reports its models, so this is the free
-        // moment to notice that the CLI was pointed at a different provider.
-        void fetchHermesModelCatalog().then(setModelCatalog).catch(() => {})
-      }
-      setSessionId(session)
-      setSessionInfoText(`Hermes session ${session}`)
-      const promptOptions = {
-        model,
-        modelProvider,
-        images,
-      }
-      if (reasoningEffort?.trim()) await bridge.setReasoningEffort(reasoningEffort, promptOptions)
-      await bridge.submitPrompt(session, prompt, workspace, promptOptions)
-      setActiveHermesTurnId(turnId)
-      setActiveHermesStreamId(bridge.activeStreamId)
-      setConnectionState('busy')
-      setConnectionDetail('Hermes is running…')
-      setTurns((current) => current.map((item) => (item.id === turnId ? { ...item, status: 'running', response: 'Thinking…' } : item)))
-      setRuns((current) => current.map((item) => (item.id === runId ? { ...item, jobStatus: 'running' } : item)))
-    } catch (error) {
-      if (error instanceof HermesActiveStreamError) {
-        recoverActiveHermesStream(entry, error.activeStreamId)
-        return
-      }
-
-      if (isBusyError(error)) {
-        queuedPromptsRef.current.push(entry)
-        setTurns((current) => current.map((item) => (item.id === turnId ? { ...item, status: 'queued', response: 'Queued until Hermes finishes the current turn…' } : item)))
-        setRuns((current) => current.map((item) => (item.id === runId ? { ...item, jobStatus: 'queued' } : item)))
-        activeTurnRef.current = null
-        activeRunRef.current = null
-        return
-      }
-
-      const message = error instanceof Error ? error.message : String(error)
-      setError(message)
-      setConnectionState('error')
-      setConnectionDetail(message)
-      activeTurnRef.current = null
-      activeRunRef.current = null
-      setActiveHermesTurnId(null)
-      setActiveHermesStreamId(null)
-      setTurns((current) => current.map((item) => (item.id === turnId ? { ...item, status: 'error', response: message } : item)))
-      setRuns((current) => current.map((item) => (item.id === runId ? { ...item, jobStatus: 'error' } : item)))
-    }
-  }
-
-  function finishStoppedTurn(message = 'Task stopped.') {
-    const turnId = activeTurnRef.current
-    const runId = activeRunRef.current
-    const response = assistantBufferRef.current.trim() || message
-    if (turnId) {
-      setTurns((current) =>
-        current.map((turn) =>
-          turn.id === turnId ? { ...turn, response, status: 'cancelled', tools: settleTools(turn, 'failed') } : turn,
-        ),
-      )
-    }
-    if (runId) {
-      setRuns((current) => current.map((item) => (item.id === runId ? { ...item, jobStatus: 'cancelled' } : item)))
-    }
-    activeTurnRef.current = null
-    activeRunRef.current = null
-    assistantBufferRef.current = ''
-    thinkingBufferRef.current = ''
-    setActiveHermesTurnId(null)
-    setActiveHermesStreamId(null)
-    setConnectionState('ready')
-    setConnectionDetail('Hermes stopped')
-    void flushQueue()
-  }
-
-  async function stopHermesTurn(turnId: string) {
-    if (turnId !== activeTurnRef.current) return
-    const bridge = bridgeRef.current
-    if (!bridge) return
-    setError(null)
-    setConnectionDetail('Stopping Hermes…')
-    try {
-      const cancelled = await bridge.cancelActiveStream()
-      if (!cancelled && activeTurnRef.current === turnId) finishStoppedTurn('Hermes stream is no longer active.')
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      setError(message)
-      setConnectionState('error')
-      setConnectionDetail(message)
-    }
-  }
-
-  function refreshHermesTurn(turnId: string) {
-    const bridge = bridgeRef.current
-    if (!bridge || turnId !== activeHermesTurnId || !activeHermesStreamId) return
-    setError(null)
-    setConnectionDetail('Reconnecting to Hermes stream...')
-    const reconnected = bridge.reconnectStream(activeHermesStreamId)
-    if (!reconnected) {
-      const message = 'Hermes stream is no longer available.'
-      setError(message)
-      setConnectionState('error')
-      setConnectionDetail(message)
-      setTurns((current) => current.map((item) => (item.id === turnId ? { ...item, status: 'error', response: item.response || message } : item)))
-      setRuns((current) => current.map((item) => (item.id === activeRunRef.current ? { ...item, jobStatus: 'error' } : item)))
-      activeTurnRef.current = null
-      activeRunRef.current = null
-      setActiveHermesTurnId(null)
-      setActiveHermesStreamId(null)
-      assistantBufferRef.current = ''
-      return
-    }
-    setConnectionState('busy')
-  }
-
-  // Queue a turn if Hermes is busy, otherwise start it immediately.
-  function enqueueOrStart(entry: QueuedPromptEntry) {
-    const busy = connectionState === 'busy' || activeTurnRef.current !== null
-    if (busy) {
-      queuedPromptsRef.current.push(entry)
-      setTurns((current) => current.map((item) => (item.id === entry.turnId ? { ...item, status: 'queued', response: 'Queued until Hermes is ready…' } : item)))
-      setRuns((current) => current.map((item) => (item.id === entry.runId ? { ...item, jobStatus: 'queued' } : item)))
-      return
-    }
-    void startTurn(entry)
-  }
-
-  function newTurn(
-    runId: string,
-    prompt: string,
-    parentTurnId: string | null = null,
-    images: PromptImage[] = [],
-  ): { turn: TurnItem; turnId: string } {
-    const turnId = makeId('turn')
-    return {
-      turnId,
-      turn: {
-        id: turnId,
-        prompt,
-        response: 'Thinking…',
-        status: 'running',
-        runId,
-        parentTurnId,
-        createdAt: new Date().toISOString(),
-        images: images.length ? images : undefined,
-      },
-    }
-  }
-
-  // Send a message inside a conversation card. The first turn derives the
-  // card's metadata from the prompt (honoring any context the user set).
-  function sendInConversation(
-    runId: string,
-    prompt: string,
-    parentTurnId: string | null = null,
-    images: PromptImage[] = [],
-  ) {
-    if (!bridgeRef.current) {
-      setError('Hermes bridge is not ready yet.')
-      return null
-    }
-    const run = runs.find((item) => item.id === runId)
-    if (!run) return null
-
-    setActiveRunId(runId)
-    const model = (run.model ?? '').trim()
-    const modelProvider = (run.modelProvider ?? '').trim() || null
-    const reasoningEffort = (run.reasoningEffort ?? '').trim()
-    const hasTurns = turns.some((turn) => turn.runId === runId)
-    let workspace = run.workspacePath
-    if (!hasTurns) {
-      const fields = deriveRunFields(prompt, {
-        category: run.category,
-        project: run.project,
-        workspace: run.workspacePath,
-      }, workspaceRoot)
-      workspace = fields.workspacePath
-      setRuns((current) =>
-        current.map((item) =>
-          item.id === runId ? { ...item, ...fields, task: item.task.trim() || fields.project, jobStatus: 'running' } : item,
-        ),
-      )
-    } else {
-      setRuns((current) => current.map((item) => (
-        item.id === runId
-          ? {
-            ...item,
-            jobStatus: 'running',
-          }
-          : item
-      )))
-    }
-
-    const { turn, turnId } = newTurn(runId, prompt, parentTurnId, images)
-    setTurns((current) => [turn, ...current])
-    setError(null)
-    enqueueOrStart({
-      turnId,
-      runId,
-      prompt,
-      workspace,
-      model,
-      modelProvider,
-      reasoningEffort,
-      images,
-    })
-    return turnId
-  }
+  }, [runs, panelOrder, panelColumns, layoutOrder, layoutPreset, freeRows, freeCols, sidebarCollapsed, closedRunIds, collapsedIds, metaCollapsedIds, newDoneIds, panelStates, passwordStatus?.authenticated])
 
   const renderRunCard = (run: RunNode) => (
     <ConversationCard
       key={run.id}
       run={run}
-      turns={turnsByRun.get(run.id) ?? []}
       collapsed={collapsedIds.has(run.id)}
       metaCollapsed={metaCollapsedIds.has(run.id)}
       active={activeRunId === run.id}
       isNewDone={newDoneIds.has(run.id)}
-      onMarkRead={markConversationRead}
       dragging={draggingKey === run.id}
       dragActive={draggingKey !== null && draggingKey !== run.id}
       onDragStartCard={() => setDraggingKey(run.id)}
@@ -5630,25 +3770,13 @@ export default function App() {
       onDropOnCard={(after) => handleDropOnBlock(run.id, after)}
       onToggle={() => toggleCollapse(run.id)}
       onMetaCollapsedChange={(collapsed) => setMetaCollapsed(run.id, collapsed)}
-      onSend={(text, parentTurnId, images) => sendInConversation(run.id, text, parentTurnId ?? null, images)}
       onTitleChange={(value) => updateRunContext(run.id, { task: value })}
       onCategoryChange={(value) => updateRunContext(run.id, { category: value, categoryTags: tagsForCategory(value) })}
       onProjectChange={(value) => updateRunProject(run.id, value)}
       onAgentChange={(value) => updateRunContext(run.id, { agentType: value })}
       onAgentCommandChange={(value) => updateRunContext(run.id, { agentCommand: value })}
-      modelCatalog={modelCatalog}
-      modelsRefreshing={modelsRefreshing}
-      onRefreshModels={() => void refreshModelCatalog(run.workspacePath)}
-      reasoningEfforts={reasoningEfforts}
-      onModelChange={(model, modelProvider) => updateRunHermesModel(run.id, model, modelProvider)}
-      onReasoningEffortChange={(reasoningEffort) => updateRunReasoningEffort(run.id, reasoningEffort)}
       onOpenPicker={() => setPickerRunId(run.id)}
       onClose={() => closeConversation(run.id)}
-      onDeleteTurn={(turnId) => deleteConversationTurn(run.id, turnId)}
-      stoppableTurnId={activeHermesStreamId ? activeHermesTurnId : null}
-      refreshableTurnId={activeHermesStreamId ? activeHermesTurnId : null}
-      onStopTurn={(turnId) => void stopHermesTurn(turnId)}
-      onRefreshTurn={refreshHermesTurn}
       agentTerminalState={panelStates[agentTerminalStateKey(run.id)]}
       onAgentTerminalStateChange={(patch) => updatePanelState(agentTerminalStateKey(run.id), patch)}
       maximized={maximizedKey === run.id}
@@ -6194,7 +4322,7 @@ export default function App() {
             </div>
 
             <p className="confirm-copy">
-              Delete this conversation and all {turnsByRun.get(deleteTargetRun.id)?.length ?? 0} turn(s)? This cannot be undone.
+              Delete this conversation? This cannot be undone.
             </p>
 
             <div className="picker-actions confirm-actions">
