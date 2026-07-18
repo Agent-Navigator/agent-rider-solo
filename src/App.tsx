@@ -3558,8 +3558,6 @@ function WebTerminal({
   headerLeading,
   frameless = false,
   titleBar,
-  maximized,
-  onToggleMaximize,
   notepad,
   onNotepadChange,
 }: {
@@ -3591,11 +3589,7 @@ function WebTerminal({
   frameless?: boolean
   /** Host card's titlebar rendered inside the full-window overlay. */
   titleBar?: ReactNode
-  /** True while this panel is the single block filling the workspace grid. */
-  maximized?: boolean
-  /** Toggles this panel as the single block filling the workspace grid. */
-  onToggleMaximize?: () => void
-  /** TUI cards only: persisted scratch draft (see WorkspacePanelState.notepad). */
+  /** Persisted scratch draft (see WorkspacePanelState.notepad). */
   notepad?: string
   onNotepadChange?: (text: string) => void
 }) {
@@ -3612,7 +3606,7 @@ function WebTerminal({
   const terminalCollapsed = collapsible ? (collapsed ?? internalCollapsed) : false
   const terminalFullWindow = fullWindow ?? internalFullWindow
   const agentTerminal = Boolean(agent)
-  const notepadEnabled = agentTerminal && typeof onNotepadChange === 'function'
+  const notepadEnabled = typeof onNotepadChange === 'function'
   const [notepadOpen, setNotepadOpen] = useState(false)
   const [notepadCopied, setNotepadCopied] = useState(false)
   const usageSupported = Boolean(agent && USAGE_SUPPORTED_AGENTS.has(agent))
@@ -3867,21 +3861,7 @@ function WebTerminal({
             aria-expanded={!terminalCollapsed}
             onClick={() => setTerminalCollapsedState((current) => !current)}
           >
-            <span className={`conv-caret ${terminalCollapsed ? '' : 'open'}`} aria-hidden>{terminalCollapsed ? '▼' : '▲'}</span>
-          </button>
-        ) : null}
-        {onToggleMaximize ? (
-          <button
-            type="button"
-            className="win-btn"
-            title={maximized ? 'Restore grid layout' : 'Maximize in grid'}
-            aria-label={maximized ? 'Restore grid layout' : 'Maximize in grid'}
-            onClick={(event) => {
-              event.stopPropagation()
-              onToggleMaximize()
-            }}
-          >
-            <WinMaximizeIcon active={maximized} />
+            {terminalCollapsed ? <WinConversationExpandIcon /> : <WinConversationCollapseIcon />}
           </button>
         ) : null}
         <button
@@ -4013,7 +3993,9 @@ function WebTerminal({
               Notepad{(notepad ?? '').trim().length ? ' •' : ''}
             </button>
           ) : null}
-          <span className="terminal-cwd">{initialCwd === DEFAULT_TERMINAL_CWD ? '~/' : initialCwd}</span>
+          {agentTerminal ? (
+            <span className="terminal-cwd">{initialCwd === DEFAULT_TERMINAL_CWD ? '~/' : initialCwd}</span>
+          ) : null}
           <button
             type="button"
             className="terminal-clear"
@@ -5684,8 +5666,8 @@ export default function App() {
           collapsed={panelStates[panelId]?.collapsed}
           fullWindow={panelStates[panelId]?.fullWindow}
           onStateChange={(patch) => updatePanelState(panelId, patch)}
-          maximized={panelMaximized}
-          onToggleMaximize={togglePanelMaximize}
+          notepad={panelStates[panelId]?.notepad}
+          onNotepadChange={(text) => updatePanelState(panelId, { notepad: text })}
         />
       )
     } else if (panelId.startsWith('plugin:')) {

@@ -3288,14 +3288,6 @@ button { cursor: pointer; }
   flex-shrink: 0;
 }
 
-.conv-caret {
-  flex-shrink: 0;
-  color: var(--muted);
-  font-size: 12px;
-  transition: transform 150ms ease;
-}
-.conv-caret.open { transform: rotate(180deg); }
-
 .conv-card-body {
   padding: 0 16px 16px;
   border-top: 1px solid rgba(148, 163, 184, 0.1);
@@ -3871,8 +3863,6 @@ button { cursor: pointer; }
 .win-btn:hover { background: rgba(255, 255, 255, 0.06); color: var(--win-text); }
 .win-btn.active { color: var(--win-accent); background: var(--win-accent-soft); }
 .win-btn-close:hover { background: rgba(239, 109, 109, 0.14); color: #ff9d9d; }
-.win-btn .conv-caret { margin: 0; font-size: 11px; }
-
 .win-usage-btn {
   width: auto;
   min-width: 26px;
