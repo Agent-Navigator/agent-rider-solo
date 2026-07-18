@@ -3760,6 +3760,26 @@ function WebTerminal({
     onStateChange?.({ fullWindow: next })
   }
 
+  function toggleTerminalCollapsedState() {
+    const next = !terminalCollapsed
+    // A hidden terminal cannot meaningfully remain full-window. Keep these
+    // states mutually exclusive so expanding it later never reveals an empty
+    // full-window shell.
+    if (next && terminalFullWindow) setTerminalFullWindowState(false)
+    setTerminalCollapsedState(next)
+  }
+
+  function toggleTerminalFullWindowState() {
+    if (terminalCollapsed) {
+      // Clicking Full Window on a collapsed terminal means expand and enter
+      // full-window in one transition, matching conversation-card behavior.
+      setTerminalCollapsedState(false)
+      setTerminalFullWindowState(true)
+      return
+    }
+    setTerminalFullWindowState((current) => !current)
+  }
+
   function pasteIntoTerminal(value: string) {
     terminalRef.current?.focus()
     if (socketRef.current?.readyState === WebSocket.OPEN) {
@@ -3859,7 +3879,7 @@ function WebTerminal({
             title={terminalCollapsed ? 'Expand window' : 'Collapse window'}
             aria-label={terminalCollapsed ? 'Expand window' : 'Collapse window'}
             aria-expanded={!terminalCollapsed}
-            onClick={() => setTerminalCollapsedState((current) => !current)}
+            onClick={toggleTerminalCollapsedState}
           >
             {terminalCollapsed ? <WinConversationExpandIcon /> : <WinConversationCollapseIcon />}
           </button>
@@ -3871,7 +3891,7 @@ function WebTerminal({
           aria-label={terminalFullWindow ? 'Exit full window' : 'Expand to full window'}
           onClick={(event) => {
             event.stopPropagation()
-            setTerminalFullWindowState((current) => !current)
+            toggleTerminalFullWindowState()
           }}
         >
           <WinFullscreenIcon active={terminalFullWindow} />
