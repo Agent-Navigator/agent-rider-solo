@@ -1,0 +1,187 @@
+name: Build staging candidate
+
+on:
+  push:
+    branches: [dev]
+  workflow_dispatch:
+
+# The final job force-updates the private artifact-only staging branch. No job
+# in this workflow accesses or publishes to the public distribution repository.
+permissions:
+  contents: write
+
+concurrency:
+  group: staging-dev
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy,rustfmt
+
+      - name: Verify synchronized release version
+        shell: bash
+        run: |
+          cargo_version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n1)
+          package_version=$(node -p "require('./package.json').version")
+          lock_version=$(node -p "require('./package-lock.json').packages[''].version")
+          test "$cargo_version" = "$package_version"
+          test "$cargo_version" = "$lock_version"
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Verify source and contracts
+        run: |
+          cargo fmt --check
+          cargo clippy --all-targets -- -D warnings
+          cargo test --locked
+          npm run build
+          npm run test:contract
+          npm run test:upgrade
+          test/install-rootless.test.sh
+
+      - name: Upload frontend build
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend
+          path: dist
+          if-no-files-found: error
+          retention-days: 3
+
+  build:
+    needs: test
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-musl
+            platform: linux-x86_64
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+            platform: linux-aarch64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install musl build tools
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Download frontend build
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend
+          path: bundle/frontend
+
+      - name: Build source-free runtime bundle
+        env:
+          TARGET: ${{ matrix.target }}
+          PLATFORM: ${{ matrix.platform }}
+          AGENT_RIDER_SOURCE_COMMIT: ${{ github.sha }}
+        shell: bash
+        run: |
+          version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n1)
+          cargo build --locked --release --target "$TARGET"
+          install -Dm755 "target/$TARGET/release/agrider" bundle/agrider
+          bundle/agrider --version | grep -F "agrider $version ($GITHUB_SHA)"
+          printf '{"version":"%s","source_commit":"%s","platform":"%s"}\n' \
+            "$version" "$GITHUB_SHA" "$PLATFORM" > bundle/release.json
+          archive="agrider-$PLATFORM.tar.gz"
+          tar -C bundle -czf "$archive" agrider frontend release.json
+          if tar -tzf "$archive" | grep -E '(^|/)(Cargo\.toml|Cargo\.lock|[^/]+\.rs)$'; then
+            echo 'runtime bundle unexpectedly contains Rust source' >&2
+            exit 1
+          fi
+          mkdir -p artifacts
+          mv "$archive" artifacts/
+
+      - name: Upload runtime bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: bundle-${{ matrix.platform }}
+          path: artifacts/*.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+
+  publish-staging:
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download runtime bundles
+        uses: actions/download-artifact@v4
+        with:
+          pattern: bundle-*
+          path: staging-output/bundles
+          merge-multiple: true
+
+      - name: Materialize source-free staging tree
+        env:
+          STAGING_DIR: ${{ runner.temp }}/agent-rider-staging
+        shell: bash
+        run: |
+          rm -rf "$STAGING_DIR"
+          mkdir -p "$STAGING_DIR" "$STAGING_DIR/scripts"
+          cp index.html package.json package-lock.json tsconfig.json tsconfig.node.json vite.config.ts "$STAGING_DIR/"
+          cp -a src "$STAGING_DIR/src"
+          find "$STAGING_DIR/src" -type f -name '*.rs' -delete
+          find "$STAGING_DIR/src" -type d -empty -delete
+          cp -a plugins "$STAGING_DIR/plugins"
+          cp staging/Dockerfile "$STAGING_DIR/Dockerfile"
+          cp staging/docker-compose.staging.yml "$STAGING_DIR/docker-compose.staging.yml"
+          cp staging/README.md "$STAGING_DIR/README.md"
+          cp -a staging/fixtures "$STAGING_DIR/fixtures"
+          cp scripts/staging-smoke.mjs "$STAGING_DIR/scripts/staging-smoke.mjs"
+          mv staging-output/bundles "$STAGING_DIR/bundles"
+          sha256sum "$STAGING_DIR"/bundles/*.tar.gz > "$STAGING_DIR/checksums.txt"
+          version=$(node -p "require('./package.json').version")
+          jq -cn \
+            --arg version "$version" \
+            --arg commit "$GITHUB_SHA" \
+            --arg created_at "$(date -u +%FT%TZ)" \
+            --arg x86 "$(awk '/agrider-linux-x86_64.tar.gz$/ { print $1 }' "$STAGING_DIR/checksums.txt")" \
+            --arg arm "$(awk '/agrider-linux-aarch64.tar.gz$/ { print $1 }' "$STAGING_DIR/checksums.txt")" \
+            '{schema:1,version:$version,source_commit:$commit,created_at:$created_at,assets:[
+              {platform:"linux-x86_64",archive:"bundles/agrider-linux-x86_64.tar.gz",sha256:$x86},
+              {platform:"linux-aarch64",archive:"bundles/agrider-linux-aarch64.tar.gz",sha256:$arm}
+            ]}' > "$STAGING_DIR/candidate.json"
+          if find "$STAGING_DIR" -type f \( -name '*.rs' -o -name Cargo.toml -o -name Cargo.lock \) -print -quit | grep -q .; then
+            echo 'staging tree unexpectedly contains Rust source' >&2
+            exit 1
+          fi
+
+      - name: Replace the artifact-only staging branch
+        env:
+          STAGING_DIR: ${{ runner.temp }}/agent-rider-staging
+        shell: bash
+        run: |
+          git -C "$STAGING_DIR" init --initial-branch=staging
+          git -C "$STAGING_DIR" config user.name 'github-actions[bot]'
+          git -C "$STAGING_DIR" config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git -C "$STAGING_DIR" add --all
+          git -C "$STAGING_DIR" commit -m "staging: $GITHUB_SHA"
+          git -C "$STAGING_DIR" remote add origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git -C "$STAGING_DIR" push --force origin HEAD:refs/heads/staging

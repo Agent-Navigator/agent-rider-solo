@@ -11,7 +11,8 @@
     "preview": "vite preview",
     "store": "AGENT_RIDER_PORT=${STORE_PORT:-5174} cargo run --bin agrider -- serve",
     "test:contract": "cargo build && AGENT_RIDER_CONTRACT_BACKEND=rust node --test test/contract-store.test.mjs",
-    "test:upgrade": "cargo build && node --test test/upgrade.test.mjs"
+    "test:upgrade": "cargo build && node --test test/upgrade.test.mjs",
+    "test:smoke:staging": "node scripts/staging-smoke.mjs"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",

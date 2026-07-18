@@ -32,8 +32,8 @@ or any other private source file.
 
 ### `dev`
 
-`dev` replaces the current `master` branch as the private default branch. It
-contains all source code and receives daily work through pull requests.
+`dev` is the private default branch. It contains all source code and receives
+daily work through pull requests.
 
 Required checks:
 
@@ -50,23 +50,29 @@ pushes, and require explicit review where the GitHub plan supports it.
 ### `staging`
 
 `staging` is a private, artifact-only branch. It is not merged from `dev`;
-merging would preserve the complete source history. Create it as an orphan
-history and allow only the release workflow bot to update it.
+merging would preserve the complete source history. The workflow recreates it
+as a single orphan commit for every successful `dev` candidate and only the
+workflow bot may update it.
 
-It contains deployment metadata, not source or large binaries:
+It contains prebuilt runtime bundles, deployment metadata, and the frontend
+TypeScript/JavaScript source needed for frontend-specific staging work:
 
 ```text
+Dockerfile
 docker-compose.staging.yml
+bundles/agrider-linux-x86_64.tar.gz
+bundles/agrider-linux-aarch64.tar.gz
 candidate.json
 checksums.txt
-image-digest.txt
-test-report/
+src/**/*.ts
+src/**/*.tsx
+plugins/
 ```
 
-The actual compiled binary and frontend are stored in a private GHCR Docker
-image and/or private release artifact. `candidate.json` records the source
-commit, binary SHA-256, frontend hash, Docker image digest, and all test
-results.
+The runtime bundles contain only `agrider`, compiled frontend assets, and
+release metadata. The staging snapshot must never contain `*.rs`, `Cargo.toml`,
+or `Cargo.lock`. `candidate.json` records the source commit, bundle SHA-256,
+and candidate creation time.
 
 ### Public distribution repository
 
@@ -99,43 +105,46 @@ Pull request -> dev
 
 1. A pull request is merged into `dev` only after all deterministic checks
    pass.
-2. A candidate workflow builds the Rust binaries, frontend, checksums, and a
-   private Docker image tagged by commit SHA and pinned by digest.
-3. The workflow writes `candidate.json` and updates the private `staging`
-   branch with the exact image digest and test metadata.
-4. The staging environment runs tests against that image.
-5. After approval, the promotion workflow copies the exact tested archives to
-   `ytk77/agent-rider` as a public GitHub Release. It must not recompile them.
+2. A candidate workflow builds the Rust binaries, frontend, and checksums.
+3. The workflow writes `candidate.json` and force-updates the private,
+   source-free `staging` branch with the exact runtime bundles and frontend
+   TypeScript/JavaScript source.
+4. The staging environment builds its Docker runtime from the tested x86_64 or
+   arm64 bundle, then runs tests against that image.
+5. After explicit approval, the promotion workflow copies the exact tested
+   archives to `Agent-Navigator/agent-rider` as a public GitHub Release. It
+   must not recompile them.
 6. The workflow creates the matching private-source tag `vX.Y.Z` on the `dev`
    commit and includes that commit in the release manifest.
 
-Promotion must validate that the candidate's commit SHA, archive checksums,
-and image digest match its recorded metadata. This guarantees production uses
-the same bits that passed staging, rather than a later rebuild.
+Promotion must validate that the candidate's commit SHA and archive checksums
+match its recorded metadata. This guarantees production uses the same bits that
+passed staging, rather than a later rebuild.
 
 ## Local Staging and Agent Tests
 
 Create a runtime-only Docker image and compose configuration. The runtime image
-copies in the prebuilt `agrider` binary and `frontend/`; it does not contain
-Rust, Cargo, Node.js, npm, or the source checkout.
+extracts the prebuilt `agrider` bundle and `frontend/`; it does not contain
+Rust, Cargo, Node.js, npm, or the frontend source checkout.
 
 The staging compose service should:
 
 - Bind only to `127.0.0.1:15173` to avoid the development service.
 - Use a temporary SQLite database and dedicated test fixture browse root.
 - Mount no user home directory, real workspace, or production data.
-- Pin the tested GHCR image by digest.
+- Select the tested runtime bundle for the host architecture.
 - Use a dedicated test-only Hermes/agent identity with narrowly scoped access.
 
 Planned commands:
 
 ```bash
-docker compose -f docker-compose.staging.yml --project-name agent-rider-staging pull
-docker compose -f docker-compose.staging.yml --project-name agent-rider-staging up -d
+docker compose -f docker-compose.staging.yml --project-name agent-rider-staging up --build -d
 npm run test:smoke:staging
-npm run test:agent-evals
 docker compose -f docker-compose.staging.yml --project-name agent-rider-staging down -v
 ```
+
+Agent evaluation is added after a dedicated test-only agent credential and task
+fixtures exist; it must never run against user files or production credentials.
 
 Agent testing has two layers:
 
@@ -154,13 +163,13 @@ user data.
 
 ## GitHub Configuration
 
-- Rename `master` to `dev` and set `dev` as the default branch in the private
-  source repository.
-- Update `.github/workflows/release.yml` to use `dev` rather than `master`.
+- Set `dev` as the default branch in the private source repository.
+- The `Build staging candidate` workflow must have `contents: write` only for
+  force-updating the private `staging` branch.
 - Add branch rules for `dev` and the artifact-only `staging` branch.
 - Store a fine-grained, write-only distribution token as
   `DISTRIBUTION_REPO_TOKEN` in the private source repository. Scope it only to
-  publishing releases in `ytk77/agent-rider`.
+  publishing releases in `Agent-Navigator/agent-rider`.
 - Protect the final public-release workflow environment with a reviewer where
   supported by the selected GitHub plan.
 - Enable immutable releases in the public distribution repository before the
@@ -170,11 +179,11 @@ user data.
 
 ## Existing Baseline
 
-The current `release.yml` already builds static Linux x86_64 and arm64 binaries
-and packages the frontend. It creates `checksums.txt`, `manifest.json`, and
-`install.sh`, then uploads them to `ytk77/agent-rider`. The next implementation
-work should change it from a tag-triggered rebuild into a candidate-and-promote
-workflow so staging and public release use the exact same artifact.
+`staging.yml` builds static Linux x86_64 and arm64 bundles after every
+successful `dev` push, then force-updates the private staging snapshot. The
+existing public-release workflow remains a separate future migration: it must
+be updated to promote the tested staging bundles only after an explicit user
+instruction.
 
 ## Reference Documentation
 

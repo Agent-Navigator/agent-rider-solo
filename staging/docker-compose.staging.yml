@@ -1,0 +1,17 @@
+services:
+  agent-rider:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        BUNDLE: ${AGRIDER_STAGING_BUNDLE:-agrider-linux-x86_64.tar.gz}
+    ports:
+      - "127.0.0.1:${AGENT_RIDER_STAGING_PORT:-15173}:5173"
+    environment:
+      HERMES_TARGET: ${HERMES_TARGET:-hermes}
+    volumes:
+      - ./fixtures:/workspace:rw
+    # Staging state must disappear when the compose stack is stopped; no user
+    # home directory or production data is mounted into this container.
+    tmpfs:
+      - /var/lib/agent-rider
