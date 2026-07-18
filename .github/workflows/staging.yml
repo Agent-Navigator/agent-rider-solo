@@ -176,6 +176,7 @@ jobs:
       - name: Replace the artifact-only staging branch
         env:
           STAGING_DIR: ${{ runner.temp }}/agent-rider-staging
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
           git -C "$STAGING_DIR" init --initial-branch=staging
