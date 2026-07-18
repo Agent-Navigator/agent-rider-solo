@@ -9,3 +9,9 @@ Guidance for agents working in this repository.
   a single commit.
 - Write a clear, concise commit message describing what changed and why.
 - Do not automatically reinstall or restart the app.
+
+## Public distribution
+
+- Do not publish, push, upload, or otherwise release any content to the public
+  binary distribution repository `Agent-Navigator/agent-rider` unless the user
+  explicitly instructs you to do so.
