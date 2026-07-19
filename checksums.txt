@@ -1,0 +1,2 @@
+19c2988f69cb9717808087c9738b4b4163b00dbd45f503b53a654c6a295f696a  /home/runner/work/_temp/agent-rider-staging/bundles/agrider-linux-aarch64.tar.gz
+3be62445639e44d8dcc30bc40211bc3a2397b546ba3a573233639611adf638bf  /home/runner/work/_temp/agent-rider-staging/bundles/agrider-linux-x86_64.tar.gz
