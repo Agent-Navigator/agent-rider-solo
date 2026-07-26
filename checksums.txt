@@ -1,0 +1,2 @@
+cb406ecbc092fe3ab2ca374f547e61504ffb27754030f345a9985742ece66b48  bundles/agrider-linux-aarch64.tar.gz
+9e29c5a577ec52ee924beb84bc95f04c01b0f248274109cc29b35e87c1e85dce  bundles/agrider-linux-x86_64.tar.gz
