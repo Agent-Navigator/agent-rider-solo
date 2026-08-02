@@ -1,0 +1,42 @@
+{
+  "name": "agent-workspace-ui",
+  "private": true,
+  "version": "0.2.5",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "release": "bash scripts/release.sh",
+    "deploy:scp": "bash scripts/deploy-scp.sh",
+    "preview": "vite preview",
+    "store": "AGENT_RIDER_PORT=${STORE_PORT:-5174} cargo run --bin agrider -- serve",
+    "test:contract": "cargo build && AGENT_RIDER_CONTRACT_BACKEND=rust node --test test/contract-store.test.mjs",
+    "test:agent-app": "node --test test/agent-app.test.mjs",
+    "test:rich-view": "node --test test/auto-rich-view.test.mjs",
+    "test:browser": "node --test test/app-build.test.mjs test/selkies-client.test.mjs test/browser-address.test.mjs test/browser-session.test.mjs test/browser-mode.test.mjs test/browser-prompt.test.mjs test/state-save-queue.test.mjs test/usage-visibility.test.mjs test/workspace-upgrade-persistence.test.mjs",
+    "test:upgrade": "cargo build && node --test test/upgrade.test.mjs",
+    "test:smoke:staging": "node scripts/staging-smoke.mjs"
+  },
+  "dependencies": {
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "highlight.js": "^11.11.1",
+    "katex": "^0.16.47",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "react-markdown": "^10.1.0",
+    "rehype-katex": "^7.0.1",
+    "rehype-raw": "^7.0.0",
+    "rehype-sanitize": "^6.0.0",
+    "remark-gfm": "^4.0.1",
+    "remark-math": "^6.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.0",
+    "@types/react": "^19.1.8",
+    "@types/react-dom": "^19.1.6",
+    "@vitejs/plugin-react": "^5.0.2",
+    "typescript": "^5.8.3",
+    "vite": "^7.3.6"
+  }
+}
