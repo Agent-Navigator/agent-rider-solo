@@ -4717,30 +4717,8 @@ body.pane-resizing-y * {
   min-height: 0;
 }
 
-.agent-app-panel > .win-titlebar {
-  position: relative;
-}
-
 .agent-app-title-input {
   max-width: min(190px, 27%);
-}
-
-.agent-app-kind-title {
-  position: absolute;
-  left: 50%;
-  z-index: 0;
-  max-width: 22%;
-  overflow: hidden;
-  color: var(--win-mid);
-  font-family: var(--win-mono);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-overflow: ellipsis;
-  text-transform: uppercase;
-  white-space: nowrap;
-  pointer-events: none;
-  transform: translateX(-50%);
 }
 
 .agent-app-panel.collapsed .agent-app-body {
@@ -7703,13 +7681,6 @@ body.agent-app-resizing-y iframe {
 .app-shell.mobile .agent-app-sectionbar {
   flex-wrap: wrap;
   row-gap: 2px;
-}
-
-/* Centred absolutely inside a one-row titlebar, this decorative label lands on
-   top of the controls once the bar wraps. The window's own meta line already
-   says APP · PORT … , so drop it. */
-.app-shell.mobile .agent-app-kind-title {
-  display: none;
 }
 
 /* Splitting the App View against the TUI chat is a drag gesture on a 6px

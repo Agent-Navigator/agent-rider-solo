@@ -5129,7 +5129,6 @@ function AgentAppPanel({
           aria-label="Agent App name"
           size={Math.max(8, Math.min(32, (appName || 'New App').length + 1))}
         />
-        <span className="agent-app-kind-title">Agent App</span>
         <span className="win-meta">
           {appId ? `${appId} · ` : ''}{appPort ? `PORT ${appPort}` : portError ? 'PORT ERROR' : 'ALLOCATING PORT'} · {agentLabel}
         </span>
